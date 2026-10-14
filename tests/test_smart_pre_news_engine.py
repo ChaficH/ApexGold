@@ -273,6 +273,9 @@ async def test_trade_manager_pre_news_freeroll_lock():
     from brokers.paper_sim import PaperSimAdapter
     broker = PaperSimAdapter()
     await broker.connect()
+    if broker._tick_task:
+        broker._tick_task.cancel()
+    broker._base_prices["XAUUSD"] = 2650.0
 
     reactor = NewsReactor(enabled=True)
     reactor._is_calendar_available = True
@@ -346,6 +349,9 @@ async def test_trade_manager_pre_news_t60s_scratch():
     from brokers.paper_sim import PaperSimAdapter
     broker = PaperSimAdapter()
     await broker.connect()
+    if broker._tick_task:
+        broker._tick_task.cancel()
+    broker._base_prices["XAUUSD"] = 2650.0
 
     reactor = NewsReactor(enabled=True)
     reactor._is_calendar_available = True
