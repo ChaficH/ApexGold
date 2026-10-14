@@ -55,8 +55,12 @@ data/*.sqlite
 data/*.sqlite3
 !data/.gitkeep
 
-# Logs & temp files
+# Research data
+data/research/
+data/research/**
+
 *.log
 logs/
 tmp/
+docs/diagnostics_raw.json
 

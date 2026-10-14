@@ -131,7 +131,7 @@ class BacktestEngine:
         bars_1h = await data_hub.get_dataframe(symbol, "1H", count=days * 24)
         bars_15m = await data_hub.get_dataframe(symbol, "15m", count=days * 24 * 4)
         bars_5m = await data_hub.get_dataframe(symbol, "5m", count=days * 24 * 12)
-        bars_1m = await data_hub.get_dataframe(symbol, "1m", count=min(10080, days * 24 * 60))
+        bars_1m = await data_hub.get_dataframe(symbol, "1m", count=days * 24 * 60)
 
         # Check for insufficient data: NEVER return fabricated / fallback trades!
         if bars_5m is None or len(bars_5m) < 50:
@@ -209,6 +209,11 @@ class BacktestEngine:
         n_bars = len(df_5m)
         i = 50  # Start after warmup window
 
+        # Precompute monotonic time arrays for ultra-fast binary search (zero lookahead)
+        times_1h = df_1h["time"].to_numpy() if df_1h is not None and not df_1h.empty else None
+        times_15m = df_15m["time"].to_numpy() if df_15m is not None and not df_15m.empty else None
+        times_1m = df_1m["time"].to_numpy() if df_1m is not None and not df_1m.empty else None
+
         while i < n_bars - 1:
             current_bar = df_5m.iloc[i]
             bar_start_time = float(current_bar["time"])
@@ -216,21 +221,26 @@ class BacktestEngine:
 
             # -------------------------------------------------------------
             # Prevent Look-Ahead Bias: Only use completed higher-TF candles
+            # Using O(log N) binary search with bounded history windows matching
+            # real-time DataHub memory buffers (eliminates quadratic indicator recalculations)
             # -------------------------------------------------------------
-            hist_5m = df_5m.iloc[:i + 1]
+            hist_5m = df_5m.iloc[max(0, i + 1 - 250):i + 1]
 
-            if df_1h is not None and not df_1h.empty:
-                hist_1h = df_1h[df_1h["time"] + 3600.0 <= decision_time]
+            if times_1h is not None:
+                idx_1h = int(np.searchsorted(times_1h, decision_time - 3600.0, side="right"))
+                hist_1h = df_1h.iloc[max(0, idx_1h - 150):idx_1h]
             else:
                 hist_1h = hist_5m
 
-            if df_15m is not None and not df_15m.empty:
-                hist_15m = df_15m[df_15m["time"] + 900.0 <= decision_time]
+            if times_15m is not None:
+                idx_15m = int(np.searchsorted(times_15m, decision_time - 900.0, side="right"))
+                hist_15m = df_15m.iloc[max(0, idx_15m - 200):idx_15m]
             else:
                 hist_15m = hist_5m
 
-            if df_1m is not None and not df_1m.empty:
-                hist_1m = df_1m[df_1m["time"] + 60.0 <= decision_time]
+            if times_1m is not None:
+                idx_1m = int(np.searchsorted(times_1m, decision_time - 60.0, side="right"))
+                hist_1m = df_1m.iloc[max(0, idx_1m - 100):idx_1m]
             else:
                 hist_1m = hist_5m
 
