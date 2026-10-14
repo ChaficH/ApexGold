@@ -74,6 +74,7 @@ class ServerContext:
         self.manage_manual_positions: bool = False
         self.bridge_token: str = ""
         self.allow_pre_news_trajectory: bool = True
+        self.latest_broker_time: float = 0.0
         
         # macOS Wine MT5 Bridge Pending Queue
         self.mt5_pending_actions: List[Dict[str, Any]] = []
@@ -477,7 +478,9 @@ async def action_set_risk_profile(payload: Dict[str, Any]):
 async def get_trade_history(limit: int = 50):
     """Retrieve persistent completed trade history from SQLite."""
     if not ctx.history_store:
-        return []
+        from engine.trade_history_store import TradeHistoryStore
+        ctx.history_store = TradeHistoryStore()
+        await ctx.history_store.initialize()
     return await ctx.history_store.get_history(limit=limit)
 
 
@@ -485,7 +488,9 @@ async def get_trade_history(limit: int = 50):
 async def get_trade_stats():
     """Retrieve persistent lifetime and daily win rates and performance analytics."""
     if not ctx.history_store:
-        return {}
+        from engine.trade_history_store import TradeHistoryStore
+        ctx.history_store = TradeHistoryStore()
+        await ctx.history_store.initialize()
     return await ctx.history_store.get_stats()
 
 
@@ -493,12 +498,32 @@ async def get_trade_stats():
 async def action_clear_history():
     """Purge all recorded trade history and reset win rate / P&L statistics."""
     if not ctx.history_store:
-        raise HTTPException(status_code=500, detail="History store not initialized")
-    fresh_stats = await ctx.history_store.clear_history()
+        from engine.trade_history_store import TradeHistoryStore
+        ctx.history_store = TradeHistoryStore()
+        await ctx.history_store.initialize()
+    broker_t = getattr(ctx, "latest_broker_time", None)
+    fresh_stats = await ctx.history_store.clear_history(broker_time=broker_t)
     if ctx.trade_manager:
         ctx.trade_manager._daily_losses_count = 0
         ctx.trade_manager._daily_realized_pnl = 0.0
     return {"status": "OK", "message": "History cleared and win rate reset to 0%", "stats": fresh_stats}
+
+
+class DeleteTradePayload(BaseModel):
+    ticket: int
+
+
+@app.post("/api/actions/delete_trade")
+async def action_delete_trade(payload: DeleteTradePayload):
+    """Permanently delete an individual trade from history and mark ticket as purged."""
+    if not ctx.history_store:
+        from engine.trade_history_store import TradeHistoryStore
+        ctx.history_store = TradeHistoryStore()
+        await ctx.history_store.initialize()
+    ticket = int(payload.ticket)
+    await ctx.history_store.delete_trade(ticket)
+    fresh_stats = await ctx.history_store.get_stats(force_refresh=True)
+    return {"status": "OK", "ticket": ticket, "stats": fresh_stats}
 
 
 @app.post("/api/actions/close_position")
@@ -769,6 +794,8 @@ async def mt5_bridge_tick(payload: Dict[str, Any], request: Request = None):
         now_ts = float(payload.get("time", time.time()))
         if now_ts < 1000000000:
             now_ts = time.time()
+        else:
+            ctx.latest_broker_time = max(getattr(ctx, "latest_broker_time", 0.0), now_ts)
 
         tick_obj = Tick(
             symbol=sym,
@@ -933,8 +960,13 @@ async def mt5_bridge_tick(payload: Dict[str, Any], request: Request = None):
                 d_ticket = int(raw_d_ticket) if str(raw_d_ticket).isdigit() else int(time.time())
                 if hasattr(ctx.history_store, "_known_tickets") and d_ticket in ctx.history_store._known_tickets:
                     continue
+                if hasattr(ctx.history_store, "_purged_tickets") and d_ticket in ctx.history_store._purged_tickets:
+                    continue
 
                 d_close_t = float(deal.get("close_time", time.time()))
+                if d_close_t > 1000000000:
+                    ctx.latest_broker_time = max(getattr(ctx, "latest_broker_time", 0.0), d_close_t)
+
                 # Ignore deals that closed before history was cleared by the user
                 if hasattr(ctx.history_store, "_cleared_cutoff_time") and d_close_t <= ctx.history_store._cleared_cutoff_time:
                     continue
