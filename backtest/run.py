@@ -33,6 +33,11 @@ from research.data import (
     RESEARCH_DATA_DIR,
 )
 from strategy.confluence_scorer import ConfluenceScorer
+try:
+    from strategy.v2.strategy_v2 import ApexStrategyV2
+    HAS_STRATEGY_V2 = True
+except ImportError:
+    HAS_STRATEGY_V2 = False
 
 try:
     import quantstats as qs
@@ -49,8 +54,11 @@ def calculate_advanced_metrics(trades: List[Dict[str, Any]], initial_balance: fl
     if not trades:
         return {
             "total_trades": 0,
+            "winning_trades": 0,
+            "losing_trades": 0,
             "win_rate_pct": 0.0,
             "profit_factor": 0.0,
+            "net_profit_usd": 0.0,
             "expectancy_r": 0.0,
             "avg_win_r": 0.0,
             "avg_loss_r": 0.0,
@@ -226,6 +234,10 @@ def run_backtest_suite(
     slippage: float = 0.05,
     commission: float = 7.0,
     scorer_override: Optional[ConfluenceScorer] = None,
+    v2: bool = False,
+    regime_filter: bool = True,
+    dynamic_exits: bool = True,
+    meta_labeler: bool = True,
 ) -> Dict[str, Any]:
     """Execute complete backtest suite matching CLI specification."""
     # Enforce realistic cost modeling: fail if zero costs configured
@@ -246,7 +258,19 @@ def run_backtest_suite(
         ts_end = int(datetime.datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=datetime.timezone.utc).timestamp()) + 86400
         dfs = {tf: df[df["time"] <= ts_end].reset_index(drop=True) for tf, df in dfs.items()}
 
-    scorer = scorer_override or ConfluenceScorer(mode=mode)
+    if scorer_override:
+        scorer = scorer_override
+    elif v2 and HAS_STRATEGY_V2:
+        logger.info(f"Activating ApexStrategyV2 (Regime Filter: {regime_filter}, Dynamic Exits: {dynamic_exits}, Meta-Labeler: {meta_labeler})")
+        scorer = ApexStrategyV2(
+            mode=mode,
+            regime_filter_enabled=regime_filter,
+            dynamic_exits_enabled=dynamic_exits,
+            meta_labeler_enabled=meta_labeler,
+        )
+    else:
+        scorer = ConfluenceScorer(mode=mode)
+
     engine = BacktestEngine(
         scorer=scorer,
         initial_balance=initial_balance,
@@ -264,8 +288,22 @@ def run_backtest_suite(
         fold_results = []
         all_oos_trades = []
 
-        for idx, (f_train, f_test) in enumerate(folds):
-            res_fold = engine._simulate("XAUUSD", scorer, f_test.get("1H"), f_test.get("15m"), f_test["5m"], f_test.get("1m"))
+        for idx, fold_entry in enumerate(folds):
+            if len(fold_entry) == 3:
+                f_train, f_test, test_start_ts = fold_entry
+            else:
+                f_train, f_test = fold_entry
+                test_start_ts = None
+
+            res_fold = engine._simulate(
+                "XAUUSD",
+                scorer,
+                f_test.get("1H"),
+                f_test.get("15m"),
+                f_test["5m"],
+                f_test.get("1m"),
+                start_trade_time=test_start_ts,
+            )
             fold_metrics = calculate_advanced_metrics(res_fold.trades, initial_balance=initial_balance)
             fold_results.append({
                 "fold": idx + 1,
@@ -383,6 +421,10 @@ def main():
     parser.add_argument("--spread", type=float, default=0.25)
     parser.add_argument("--slippage", type=float, default=0.05)
     parser.add_argument("--commission", type=float, default=7.0)
+    parser.add_argument("--v2", action="store_true", help="Enable V2 Strategy enhancements (Regime, Dynamic Exits, Meta-Labeler)")
+    parser.add_argument("--disable-regime", action="store_true", help="Disable Regime Detection in V2")
+    parser.add_argument("--disable-dynamic-exits", action="store_true", help="Disable Dynamic Exits in V2")
+    parser.add_argument("--disable-meta-labeler", action="store_true", help="Disable Meta-Labeler in V2")
 
     args = parser.parse_args()
 
@@ -398,6 +440,10 @@ def main():
         spread=args.spread,
         slippage=args.slippage,
         commission=args.commission,
+        v2=args.v2,
+        regime_filter=not args.disable_regime,
+        dynamic_exits=not args.disable_dynamic_exits,
+        meta_labeler=not args.disable_meta_labeler,
     )
 
     print_summary_report(results)

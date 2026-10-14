@@ -397,9 +397,11 @@ def generate_walk_forward_folds(
     train_bars: int = 1500,  # ~15 trading days
     test_bars: int = 400,    # ~4 trading days
     step_bars: int = 400,
-) -> List[Tuple[Dict[str, pd.DataFrame], Dict[str, pd.DataFrame]]]:
+    warmup_bars: int = 300,  # ~25 hours of warmup so indicators are fully initialized
+) -> List[Tuple[Dict[str, pd.DataFrame], Dict[str, pd.DataFrame], float]]:
     """
     Generate rolling walk-forward folds on the TRAIN/VALIDATE partition.
+    Includes causal warmup window for test folds so indicators (1H EMA50, ADX) are fully initialized.
     Never touches holdout data.
     """
     primary_df = train_dfs["5m"]
@@ -416,13 +418,16 @@ def generate_walk_forward_folds(
         test_t_start = primary_df["time"].iloc[train_end]
         test_t_end = primary_df["time"].iloc[test_end - 1]
 
+        warmup_idx = max(0, train_end - warmup_bars)
+        warmup_t_start = primary_df["time"].iloc[warmup_idx]
+
         fold_train = {}
         fold_test = {}
         for tf, df in train_dfs.items():
             fold_train[tf] = df[(df["time"] >= train_t_start) & (df["time"] <= train_t_end)].copy().reset_index(drop=True)
-            fold_test[tf] = df[(df["time"] >= test_t_start) & (df["time"] <= test_t_end)].copy().reset_index(drop=True)
+            fold_test[tf] = df[(df["time"] >= warmup_t_start) & (df["time"] <= test_t_end)].copy().reset_index(drop=True)
 
-        folds.append((fold_train, fold_test))
+        folds.append((fold_train, fold_test, float(test_t_start)))
         start += step_bars
 
     logger.info(f"Generated {len(folds)} rolling walk-forward folds.")

@@ -170,6 +170,7 @@ class BacktestEngine:
         df_15m: Optional[pd.DataFrame],
         df_5m: pd.DataFrame,
         df_1m: Optional[pd.DataFrame],
+        start_trade_time: Optional[float] = None,
     ) -> BacktestResult:
         """
         Chronological multi-timeframe simulation.
@@ -218,6 +219,10 @@ class BacktestEngine:
             current_bar = df_5m.iloc[i]
             bar_start_time = float(current_bar["time"])
             decision_time = bar_start_time + 300.0  # Decision made at 5m close
+
+            if start_trade_time is not None and decision_time < start_trade_time:
+                i += 1
+                continue
 
             # -------------------------------------------------------------
             # Prevent Look-Ahead Bias: Only use completed higher-TF candles
@@ -362,20 +367,33 @@ class BacktestEngine:
                         highest_r = cur_r
 
                     # Ratchet Floor: One-Way Stop Protection (never loosens)
-                    if ratchet_stage < 1 and cur_r >= 0.65:
-                        ratchet_stage = 1
-                        new_sl = round(entry_p + self.spread_points if direction == "BUY" else entry_p - self.spread_points, digits)
-                        sl_p = max(sl_p, new_sl) if direction == "BUY" else min(sl_p, new_sl)
+                    if hasattr(bt_scorer, "exit_manager") and getattr(bt_scorer, "dynamic_exits_enabled", False):
+                        ratchet_stage, sl_p = bt_scorer.exit_manager.evaluate_ratchet(
+                            current_r=cur_r,
+                            ratchet_stage=ratchet_stage,
+                            entry_price=entry_p,
+                            current_sl=sl_p,
+                            risk_dist=risk_dist,
+                            direction=direction,
+                            spread_points=self.spread_points,
+                            digits=digits,
+                        )
+                    else:
+                        # Legacy ratchet fallback
+                        if ratchet_stage < 1 and cur_r >= 0.65:
+                            ratchet_stage = 1
+                            new_sl = round(entry_p + self.spread_points if direction == "BUY" else entry_p - self.spread_points, digits)
+                            sl_p = max(sl_p, new_sl) if direction == "BUY" else min(sl_p, new_sl)
 
-                    elif ratchet_stage < 2 and cur_r >= 1.00:
-                        ratchet_stage = 2
-                        new_sl = round(entry_p + (0.45 * risk_dist) if direction == "BUY" else entry_p - (0.45 * risk_dist), digits)
-                        sl_p = max(sl_p, new_sl) if direction == "BUY" else min(sl_p, new_sl)
+                        elif ratchet_stage < 2 and cur_r >= 1.00:
+                            ratchet_stage = 2
+                            new_sl = round(entry_p + (0.45 * risk_dist) if direction == "BUY" else entry_p - (0.45 * risk_dist), digits)
+                            sl_p = max(sl_p, new_sl) if direction == "BUY" else min(sl_p, new_sl)
 
-                    elif ratchet_stage < 3 and cur_r >= 1.50:
-                        ratchet_stage = 3
-                        new_sl = round(entry_p + (0.85 * risk_dist) if direction == "BUY" else entry_p - (0.85 * risk_dist), digits)
-                        sl_p = max(sl_p, new_sl) if direction == "BUY" else min(sl_p, new_sl)
+                        elif ratchet_stage < 3 and cur_r >= 1.50:
+                            ratchet_stage = 3
+                            new_sl = round(entry_p + (0.85 * risk_dist) if direction == "BUY" else entry_p - (0.85 * risk_dist), digits)
+                            sl_p = max(sl_p, new_sl) if direction == "BUY" else min(sl_p, new_sl)
 
                     # ---------------------------------------------------------
                     # Check Intrabar SL / TP Hits with Conservative Collision

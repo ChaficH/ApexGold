@@ -1,0 +1,25 @@
+{
+  "model_name": "ApexGold_MetaLabeler_V1",
+  "version": "1.0.0",
+  "algorithm": "LightGBM",
+  "features": [
+    "score",
+    "h1_macro",
+    "m15_wave",
+    "m5_setup",
+    "m1_trigger",
+    "smc_institutional",
+    "quant_alpha",
+    "adx_15m",
+    "choppiness_index",
+    "atr_percentile",
+    "h1_ema_slope",
+    "hour",
+    "session_code",
+    "is_zone_reversal",
+    "regime_code"
+  ],
+  "optimal_threshold": 0.52,
+  "cv_accuracy_mean": 0.5368,
+  "created_at": "2026-10-14T23:12:12.827315+00:00"
+}
