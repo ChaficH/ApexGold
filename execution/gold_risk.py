@@ -54,7 +54,7 @@ class GoldRiskEngine:
             "name": "Aggressive",
             "base_risk_pct": 6.0,
             "max_risk_pct": 15.0,
-            "small_account_max_risk_pct": 28.0,  # Explicit allowance for small ($10-$20) test accounts
+            "small_account_max_risk_pct": 45.0,  # Explicit allowance for small ($10-$20) test accounts
             "max_open_positions": 2,
             "confidence_multipliers": {
                 "TIER_1_SNIPER": 1.35,
@@ -184,8 +184,8 @@ class GoldRiskEngine:
         # Small account special allowance (under aggressive profile for <= $25 balances)
         max_pct = prof["max_risk_pct"]
         if self.risk_profile == "aggressive" and effective_budget <= 25.0:
-            base_pct = max(base_pct, prof.get("small_account_max_risk_pct", 28.0))
-            max_pct = prof.get("small_account_max_risk_pct", 28.0)
+            base_pct = max(base_pct, prof.get("small_account_max_risk_pct", 45.0))
+            max_pct = prof.get("small_account_max_risk_pct", 45.0)
 
         effective_pct = min(base_pct * conf_mult * streak_mult, max_pct)
         return round(effective_budget * (effective_pct / 100.0), 2)
@@ -269,8 +269,8 @@ class GoldRiskEngine:
 
             max_pct = prof["max_risk_pct"]
             if self.risk_profile == "aggressive" and effective_budget <= 25.0:
-                base_pct = max(base_pct, prof.get("small_account_max_risk_pct", 28.0))
-                max_pct = prof.get("small_account_max_risk_pct", 28.0)
+                base_pct = max(base_pct, prof.get("small_account_max_risk_pct", 45.0))
+                max_pct = prof.get("small_account_max_risk_pct", 45.0)
 
             effective_pct = min(base_pct * conf_mult * streak_mult, max_pct)
             risk_amount = round(effective_budget * (effective_pct / 100.0), 2)

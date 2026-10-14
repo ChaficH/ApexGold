@@ -717,16 +717,26 @@ class TradeManager:
 
         total_exposure = all_positions_count + total_pending_count
 
-        # Absolute rule: Any micro/small account under $150 balance MUST NEVER open more than 1 trade or pending order!
+        # Exposure limit: respect configured max_open_positions (up to 2 for micro accounts)
         if eff_balance < 150.0:
-            allowed_max = 1
+            allowed_max = min(self.max_open_positions, 2 if self.max_open_positions > 1 else 1)
         elif eff_balance < 300.0:
             allowed_max = 2 if (signal.score >= 82 and (signal.tier == "TIER_1_SNIPER")) else 1
         else:
             allowed_max = 3 if (signal.score >= 82 and (signal.tier == "TIER_1_SNIPER")) else 1
 
         if total_exposure >= allowed_max:
-            return False, f"Maximum exposure reached ({total_exposure}/{allowed_max}) including {total_pending_count} pending order(s) for balance ${eff_balance:.2f}"
+            # If 0 open positions and an incoming high-confluence MARKET order is blocked by a pending limit,
+            # auto-clear the pending limit order to prioritize immediate market execution
+            if all_positions_count == 0 and not is_limit and total_pending_count > 0:
+                logger.info(f"Auto-clearing pending limit order(s) to execute high-probability market signal {signal.direction}")
+                for p_t in list(self._pending_limit_orders.keys()):
+                    await self.broker.cancel_order(p_t)
+                    self._pending_limit_orders.pop(p_t, None)
+                total_pending_count = 0
+                total_exposure = all_positions_count + total_pending_count
+            if total_exposure >= allowed_max:
+                return False, f"Maximum exposure reached ({total_exposure}/{allowed_max}) including {total_pending_count} pending order(s) for balance ${eff_balance:.2f}"
 
         # Stacking limit orders is strictly forbidden:
         is_limit = getattr(signal, "order_type", "MARKET") in ["BUY_LIMIT", "SELL_LIMIT"]
@@ -782,7 +792,12 @@ class TradeManager:
                 sl_distance=signal.risk_r_dist
             )
             total_projected_risk_pct = ((total_open_risk_usd + cand_risk) / eff_balance) * 100.0
-            allowed_max_risk = max(self.max_total_open_risk_pct, 30.0 if eff_balance <= 35.0 else self.max_total_open_risk_pct)
+            if eff_balance <= 35.0 and total_open_risk_usd == 0.0:
+                allowed_max_risk = max(self.max_total_open_risk_pct, 60.0)
+            elif eff_balance <= 35.0:
+                allowed_max_risk = max(self.max_total_open_risk_pct, 30.0)
+            else:
+                allowed_max_risk = self.max_total_open_risk_pct
             if total_projected_risk_pct > allowed_max_risk:
                 return False, f"Total open risk limit reached ({total_projected_risk_pct:.1f}% > {allowed_max_risk:.1f}% allowed)"
 

@@ -60,8 +60,8 @@ trading:
   live_trading_enabled: true
 
   # Protect Manually Opened MT5 Positions:
-  # When false (default), the bot will NEVER modify, trail, or close trades opened manually by the user.
-  manage_manual_positions: false
+  # When true, the bot dynamically trails, protects, and manages trades opened manually as well.
+  manage_manual_positions: true
 
   # Execution Modes:
   #   - "scanner"    : Read-only live technical scanner & confluence analyzer (Default safe mode)
@@ -89,7 +89,7 @@ trading:
   compounding_enabled: true # Automatically scales budget as balance grows
 
   # Risk Guards & Circuit Breakers:
-  max_open_positions: 1     # Strict focus on 1 high-probability trade at a time
+  max_open_positions: 2     # Allows up to 2 concurrent positions (e.g. 1 auto + 1 manual or 2 setups)
   max_daily_losses: 0       # 0 = disabled (no daily loss limit)
   max_daily_drawdown_pct: 25.0
   correlation_guard: true   # Block opposing/redundant USD exposure across pairs

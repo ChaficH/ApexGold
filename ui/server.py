@@ -540,17 +540,18 @@ async def action_close_position(ticket: int):
     if not ctx.broker:
         raise HTTPException(status_code=500, detail="Broker not ready")
     success = await ctx.broker.close_position(ticket)
-    # Re-query broker state to verify actual closure
-    open_positions = await ctx.broker.get_open_positions()
-    still_open = any((int(p.ticket) if str(p.ticket).isdigit() else p.ticket) == ticket for p in open_positions)
-    if not success or still_open:
-        if ctx.trade_manager:
-            ctx.trade_manager._contradictory_state_active = True
-            ctx.trade_manager._contradictory_state_reason = f"CRITICAL: Emergency close failed for position #{ticket}! Still open on broker."
-            ctx.trade_manager.pause_trading(minutes=1440)
-            if ctx.history_store:
-                await ctx.history_store.record_audit_event("CRITICAL_CLOSE_FAILED", ctx.trade_manager._contradictory_state_reason)
-        return {"status": "ERROR", "message": f"Broker failed to close position #{ticket}", "ticket": ticket}
+    # Re-query broker state to verify actual closure (only on synchronous brokers)
+    if not getattr(ctx.broker, "_use_http_queue", False):
+        open_positions = await ctx.broker.get_open_positions()
+        still_open = any((int(p.ticket) if str(p.ticket).isdigit() else p.ticket) == ticket for p in open_positions)
+        if not success or still_open:
+            if ctx.trade_manager:
+                ctx.trade_manager._contradictory_state_active = True
+                ctx.trade_manager._contradictory_state_reason = f"CRITICAL: Emergency close failed for position #{ticket}! Still open on broker."
+                ctx.trade_manager.pause_trading(minutes=1440)
+                if ctx.history_store:
+                    await ctx.history_store.record_audit_event("CRITICAL_CLOSE_FAILED", ctx.trade_manager._contradictory_state_reason)
+            return {"status": "ERROR", "message": f"Broker failed to close position #{ticket}", "ticket": ticket}
     if ctx.trade_manager and hasattr(ctx.trade_manager, "_managed_positions"):
         ctx.trade_manager._managed_positions.pop(ticket, None)
     return {"status": "OK", "ticket": ticket}
@@ -1172,10 +1173,12 @@ async def action_test_trade(direction: str = "BUY", volume: float = 0.01):
         if acc:
             budget = ctx.risk_engine.calculate_risk_budget(acc)
             monetary_risk = ctx.risk_engine.calculate_monetary_risk(sym_info, volume, abs(cur_p - sl))
-            if monetary_risk > budget:
+            is_small_acc = (acc.balance <= 35.0) or (getattr(ctx.risk_engine, "account_type", "") in ["micro", "cent"])
+            max_allowed = max(budget, (acc.balance * 0.60) if is_small_acc else budget)
+            if monetary_risk > max_allowed:
                 return {
                     "status": "REJECTED",
-                    "message": f"Monetary risk (${monetary_risk:.2f}) exceeds allowed budget (${budget:.2f}).",
+                    "message": f"Monetary risk (${monetary_risk:.2f}) exceeds allowed budget (${max_allowed:.2f}).",
                 }
 
     # 5. Execution
