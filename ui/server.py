@@ -81,6 +81,7 @@ class ServerContext:
         self.mt5_last_seen = 0.0
         self.mt5_algo_trading_allowed = True
         self.planned_limits: Dict[str, Any] = {}
+        self.auto_limits_enabled: bool = True
 
     def is_live_trading_active(self) -> bool:
         """Returns True only when live trading is explicitly enabled on a real MT5 broker adapter."""
@@ -295,6 +296,7 @@ async def get_status():
         "tf_trends": auto_brain.get("tf_trends", {"1H": "NEUTRAL", "15m": "NEUTRAL", "5m": "NEUTRAL", "1m": "NEUTRAL"}),
         "feed_logs": ctx.news_reactor.get_feed_logs(15) if ctx.news_reactor else [],
         "allow_pre_news_trajectory": getattr(ctx, "allow_pre_news_trajectory", True),
+        "auto_limits_enabled": getattr(ctx, "auto_limits_enabled", True),
         "planned_limits": getattr(ctx, "planned_limits", {}),
         "pre_news_trajectory": ctx.news_reactor.evaluate_pre_news_trajectory(
             symbol=ctx.active_symbol,
@@ -357,6 +359,7 @@ class SettingsPayload(BaseModel):
     telegram_token: Optional[str] = None
     telegram_chat_id: Optional[str] = None
     telegram_enabled: Optional[bool] = None
+    auto_limits_enabled: Optional[bool] = None
 
 
 @app.post("/api/settings")
@@ -365,6 +368,9 @@ async def update_settings(payload: SettingsPayload):
     if payload.execution_mode:
         ctx.execution_mode = payload.execution_mode.lower()
     
+    if payload.auto_limits_enabled is not None:
+        ctx.auto_limits_enabled = bool(payload.auto_limits_enabled)
+
     if payload.strategy_mode or payload.aggressiveness_pct is not None:
         target_mode = payload.strategy_mode.lower() if payload.strategy_mode else (ctx.scorer.mode if ctx.scorer else ctx.strategy_mode)
         ctx.strategy_mode = target_mode
@@ -767,6 +773,14 @@ async def action_stage_limit(payload: StageLimitPayload):
     if res.success:
         return {"status": "OK", "ticket": res.ticket, "price": res.price, "message": f"Limit order #{res.ticket} staged successfully @ {res.price}"}
     return {"status": "ERROR", "message": res.error or "Failed to stage limit order"}
+
+
+@app.post("/api/actions/toggle_auto_limits")
+async def action_toggle_auto_limits():
+    """Toggle autonomous limits engine on/off."""
+    ctx.auto_limits_enabled = not getattr(ctx, "auto_limits_enabled", True)
+    logger.info(f"[ACTION] Toggled autonomous limit staging to {ctx.auto_limits_enabled}")
+    return {"status": "OK", "auto_limits_enabled": ctx.auto_limits_enabled}
 
 
 @app.post("/api/backtest")

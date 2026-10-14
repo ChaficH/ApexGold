@@ -218,6 +218,38 @@ async def autonomous_trading_loop(
                         current_ask=tick.ask,
                     )
 
+                # Autonomous Institutional Limits Placement
+                # When waiting in full_auto mode with no active positions or pending limits,
+                # automatically stage the highest scoring studied limit setup without requiring user input!
+                if getattr(ctx, "auto_limits_enabled", True) and ctx.execution_mode == "full_auto" and trade_manager:
+                    active_pos_count = len(trade_manager._managed_positions)
+                    pending_lo_count = len(trade_manager._pending_limit_orders)
+                    if active_pos_count == 0 and pending_lo_count == 0 and not trade_manager.is_paused():
+                        candidate_limits = []
+                        p_buy = planned_limits.get("planned_buy")
+                        p_sell = planned_limits.get("planned_sell")
+                        active_thresh = scorer.get_active_threshold()
+
+                        if p_buy and p_buy.get("status") == "READY" and p_buy.get("score", 0) >= active_thresh:
+                            dist = float(p_buy.get("distance_points", 999))
+                            if 0.50 <= dist <= 3.50:
+                                candidate_limits.append(p_buy)
+
+                        if p_sell and p_sell.get("status") == "READY" and p_sell.get("score", 0) >= active_thresh:
+                            dist = float(p_sell.get("distance_points", 999))
+                            if 0.50 <= dist <= 3.50:
+                                candidate_limits.append(p_sell)
+
+                        if candidate_limits:
+                            best_limit = max(candidate_limits, key=lambda x: x.get("score", 0))
+                            logger.info(
+                                f"[AUTONOMOUS LIMIT STAGING] Staging {best_limit.get('order_type')} @ {best_limit.get('limit_price'):.2f} "
+                                f"(Score: {best_limit.get('score')}/{active_thresh}, Dist: {best_limit.get('distance_points')} pts)"
+                            )
+                            lo_res = await trade_manager.execute_planned_limit(best_limit, scorer)
+                            if lo_res.success:
+                                best_limit["status"] = "ACTIVE_ON_BROKER"
+
                 # Prioritize highest scoring signal
                 candidate_signal = None
                 if buy_sig and sell_sig:

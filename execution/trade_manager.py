@@ -782,8 +782,9 @@ class TradeManager:
                 sl_distance=signal.risk_r_dist
             )
             total_projected_risk_pct = ((total_open_risk_usd + cand_risk) / eff_balance) * 100.0
-            if total_projected_risk_pct > self.max_total_open_risk_pct:
-                return False, f"Total open risk limit reached ({total_projected_risk_pct:.1f}% > {self.max_total_open_risk_pct:.1f}% allowed)"
+            allowed_max_risk = max(self.max_total_open_risk_pct, 30.0 if eff_balance <= 35.0 else self.max_total_open_risk_pct)
+            if total_projected_risk_pct > allowed_max_risk:
+                return False, f"Total open risk limit reached ({total_projected_risk_pct:.1f}% > {allowed_max_risk:.1f}% allowed)"
 
         return True, "Execution approved"
 

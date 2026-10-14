@@ -297,8 +297,8 @@ class GoldRiskEngine:
             }
 
         is_gold = any(k in symbol_info.symbol.upper() for k in ["XAU", "GOLD"])
-        # Minimum SL distance: 2.50 for standard gold, but allow 1.20-1.50 for small accounts (<= $25) or micro-scalps
-        min_sl = 1.50 if (is_gold and effective_budget <= 25.0) else (2.50 if is_gold else 0.0010)
+        # Minimum SL distance: 2.50 for standard gold, but allow 1.20-1.50 for small accounts (<= $35) or micro-scalps
+        min_sl = 1.50 if (is_gold and (effective_budget <= 35.0 or self.account_type in ["micro", "cent"])) else (2.50 if is_gold else 0.0010)
         actual_sl_dist = max(sl_distance, min_sl)
         contract_size = symbol_info.contract_size
 

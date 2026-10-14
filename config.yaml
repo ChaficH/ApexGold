@@ -84,8 +84,8 @@ trading:
   #   - "paper"    : Simulated virtual money
   account_type: "micro"
   budget_usd: 10.00
-  risk_per_trade_pct: 2.0   # Conservative 2.0% risk per trade (safe small-account scaling)
-  risk_profile: "balanced"  # "conservative", "balanced", or "aggressive"
+  risk_per_trade_pct: 6.0   # Dynamic risk per trade (enables small account 0.01 lot scaling on $10-$20 accounts)
+  risk_profile: "aggressive" # "conservative", "balanced", or "aggressive"
   compounding_enabled: true # Automatically scales budget as balance grows
 
   # Risk Guards & Circuit Breakers:

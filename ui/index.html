@@ -358,7 +358,9 @@
           <div class="flex items-center justify-between text-[11px] font-bold text-gray-300">
             <div class="flex items-center space-x-1.5">
               <span class="text-amber-400">🎯 Planned Limits Engine</span>
-              <span class="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">RECALCULATING LIVE</span>
+              <button id="btn-toggle-auto-limits" onclick="toggleAutoLimits()" title="Toggle autonomous limit placement when waiting" class="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold uppercase transition bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/40">
+                AUTO LIMITS: ON
+              </button>
             </div>
             <span id="planned-limits-recal-time" class="text-[9px] font-mono text-gray-500">Active</span>
           </div>
@@ -583,6 +585,8 @@
     let chartLines = {};
     let cachedNewsState = null;
     let isUserDraggingSlider = false;
+    let sliderDebounceTimer = null;
+    let sliderDragLockUntil = 0;
     let currentMode = 'auto_adaptive';
     window.currentSymbol = 'XAUUSD.m';
     window.userSelectedTimeframe = false;
@@ -967,15 +971,13 @@
         }
       });
 
-      // Update Slider without interrupting user drags
-      if (isAuto && !isUserDraggingSlider) {
+      // Update Slider without interrupting user drags or post-drag settle time
+      const isSliderLocked = isUserDraggingSlider || (Date.now() < sliderDragLockUntil);
+      if (!isSliderLocked) {
         const dialPct = Math.round(data.aggressiveness_pct || 65);
         document.getElementById('slider-aggressiveness').value = dialPct;
         document.getElementById('label-scroller-pct').innerText = `${dialPct}%`;
         document.getElementById('label-scroller-threshold').innerText = data.threshold || calcThresholdFromPct(dialPct);
-      } else if (!isUserDraggingSlider) {
-        document.getElementById('label-scroller-pct').innerText = `${Math.round(data.aggressiveness_pct)}%`;
-        document.getElementById('label-scroller-threshold').innerText = data.threshold;
       }
 
       // 6. Market Brain Sub-Regime & Anti-Revenge Cooldown Display
@@ -1211,6 +1213,15 @@
       syncAllChartLines(data.positions || [], data.pending_orders || []);
 
       // 7d. Institutional Planned Limits Engine Rendering
+      const isAutoLimits = (data.auto_limits_enabled !== false);
+      const btnAutoLim = document.getElementById('btn-toggle-auto-limits');
+      if (btnAutoLim) {
+        btnAutoLim.innerText = isAutoLimits ? 'AUTO LIMITS: ON' : 'AUTO LIMITS: OFF';
+        btnAutoLim.className = isAutoLimits
+          ? 'px-1.5 py-0.2 rounded text-[9px] font-mono font-bold uppercase transition bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/40'
+          : 'px-1.5 py-0.2 rounded text-[9px] font-mono font-bold uppercase transition bg-gray-800 text-gray-400 border border-gray-700 hover:bg-gray-700';
+      }
+
       if (data.planned_limits) {
         const pl = data.planned_limits;
         const pBuy = pl.planned_buy;
@@ -1416,20 +1427,66 @@
       }
     }
 
-    // Slider user input handlers
+    async function toggleAutoLimits() {
+      try {
+        const res = await fetch('/api/actions/toggle_auto_limits', { method: 'POST' });
+        const resData = await res.json();
+        showToast(`Auto limits: ${resData.auto_limits_enabled ? 'ENABLED' : 'DISABLED'}`);
+        fetchStatus();
+      } catch (err) {
+        showToast(`Failed: ${err.message}`, 'error');
+      }
+    }
+
+    // Slider user input handlers with anti-jitter debouncing and lock-out
     function onSliderInput(val) {
       isUserDraggingSlider = true;
+      sliderDragLockUntil = Date.now() + 2000; // Hold slider lock for 2.0s
       document.getElementById('label-scroller-pct').innerText = `${val}%`;
       document.getElementById('label-scroller-threshold').innerText = calcThresholdFromPct(val);
+
+      if (sliderDebounceTimer) clearTimeout(sliderDebounceTimer);
+      sliderDebounceTimer = setTimeout(() => {
+        applySliderValue(val);
+      }, 200);
+    }
+
+    async function applySliderValue(val) {
+      currentMode = 'manual';
+      sliderDragLockUntil = Date.now() + 1500;
+      try {
+        const res = await fetch('/api/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ strategy_mode: 'manual', aggressiveness_pct: parseFloat(val) })
+        });
+        const resData = await res.json();
+        if (resData && resData.status === 'OK') {
+          const dialVal = Math.round(resData.aggressiveness_pct);
+          document.getElementById('slider-aggressiveness').value = dialVal;
+          document.getElementById('label-scroller-pct').innerText = `${dialVal}%`;
+          document.getElementById('label-scroller-threshold').innerText = resData.threshold;
+          const scrollerStatus = document.getElementById('badge-scroller-status');
+          if (scrollerStatus) {
+            scrollerStatus.innerText = 'MANUAL';
+            scrollerStatus.className = 'px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-amber-500/20 text-amber-400';
+          }
+        }
+      } catch (e) {
+        console.error(e);
+      } finally {
+        setTimeout(() => {
+          if (Date.now() >= sliderDragLockUntil) {
+            isUserDraggingSlider = false;
+          }
+        }, 500);
+      }
     }
 
     async function onSliderChange(val) {
-      isUserDraggingSlider = false;
-      await fetch('/api/settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ strategy_mode: 'manual', aggressiveness_pct: parseFloat(val) })
-      });
+      if (sliderDebounceTimer) clearTimeout(sliderDebounceTimer);
+      sliderDragLockUntil = Date.now() + 1500;
+      await applySliderValue(val);
       appendLog('TRANSMISSION', `Aggressiveness dialed to ${val}% (Min Score: ${calcThresholdFromPct(val)})`);
     }
 
@@ -1439,6 +1496,13 @@
       else if (mode === 'standard') pct = 55.0;
       else if (mode === 'aggressive') pct = 75.0;
       else if (mode === 'hyper') pct = 92.0;
+
+      sliderDragLockUntil = Date.now() + 1500;
+      if (pct !== null) {
+        document.getElementById('slider-aggressiveness').value = pct;
+        document.getElementById('label-scroller-pct').innerText = `${pct}%`;
+        document.getElementById('label-scroller-threshold').innerText = calcThresholdFromPct(pct);
+      }
 
       await fetch('/api/settings', {
         method: 'POST',

@@ -702,26 +702,30 @@ class ConfluenceScorer:
         # PROVEN SYSTEMIC HARD FILTERS: Eliminate False Trend Knife-Catching
         # =============================================================
 
+        active_aggressiveness = self.get_active_aggressiveness_pct()
+        is_aggressive_scalp = (active_aggressiveness >= 72.0) or (self.mode in ["aggressive", "hyper"])
+
         # 1. Battle-Tested 5m SuperTrend Directional Gate
-        # Strictly blocks trend-following trades opposing SuperTrend, but ALLOWS confirmed zone reversals!
+        # Strictly blocks trend-following trades opposing SuperTrend, but ALLOWS confirmed zone reversals or confirmed 1m pullbacks in aggressive mode!
         st_5m = TechnicalIndicators.calculate_supertrend(
             df_5m["high"], df_5m["low"], df_5m["close"], period=10, multiplier=2.5
         )
         if st_5m.get("valid"):
-            if direction == "BUY" and st_5m.get("is_bear") and not is_demand_reversal:
+            if direction == "BUY" and st_5m.get("is_bear") and not is_demand_reversal and not (is_aggressive_scalp and (is_green_1m or is_hammer_1m)):
                 logger.debug(f"[{symbol} BUY] Blocked: 5m SuperTrend is BEAR ({st_5m.get('line')}).")
                 return None
-            if direction == "SELL" and st_5m.get("is_bull") and not is_supply_reversal:
+            if direction == "SELL" and st_5m.get("is_bull") and not is_supply_reversal and not (is_aggressive_scalp and (is_red_1m or is_star_1m)):
                 logger.debug(f"[{symbol} SELL] Blocked: 5m SuperTrend is BULL ({st_5m.get('line')}).")
                 return None
 
         # 2. 15m SuperTrend Macro Trend Gate
+        # In aggressive scalp mode (>=72%), allow pullbacks rather than dropping the trade
         st_15m = {"valid": False, "is_bull": False, "is_bear": False}
         if df_15m is not None and len(df_15m) >= 20:
             st_15m = TechnicalIndicators.calculate_supertrend(
                 df_15m["high"], df_15m["low"], df_15m["close"], period=10, multiplier=2.5
             )
-            if st_15m.get("valid") and not is_impulse_active and not is_zone_reversal:
+            if st_15m.get("valid") and not is_impulse_active and not is_zone_reversal and not is_aggressive_scalp:
                 if direction == "BUY" and st_15m.get("is_bear"):
                     logger.debug(f"[{symbol} BUY] Blocked: 15m SuperTrend is BEAR ({st_15m.get('line')}).")
                     return None
@@ -731,7 +735,7 @@ class ConfluenceScorer:
 
         # 3. Stochastic RSI Momentum Exhaustion Gate (ta.momentum.StochRSIIndicator)
         stoch_5m = TechnicalIndicators.calculate_stoch_rsi(df_5m["close"])
-        if stoch_5m.get("valid") and not is_impulse_active and not is_pre_news_aligned:
+        if stoch_5m.get("valid") and not is_impulse_active and not is_pre_news_aligned and not is_aggressive_scalp:
             if direction == "BUY" and stoch_5m.get("is_overbought"):
                 logger.debug(f"[{symbol} BUY] Blocked: 5m StochRSI Overbought (K={stoch_5m.get('k'):.1f} > 80).")
                 return None
@@ -1261,11 +1265,14 @@ class ConfluenceScorer:
         # -------------------------------------------------------------
         # Institutional Multi-Timeframe Trend Confluence Filter
         # -------------------------------------------------------------
-        # 1. HARD COUNTER-TREND GATE: Never take a trade opposing BOTH 1H and 15m trends UNLESS it's a confirmed Zone Reversal!
+        # 1. HARD COUNTER-TREND GATE: Never take a trade opposing BOTH 1H and 15m trends UNLESS it's a confirmed Zone Reversal or Aggressive Scalp!
         if not h1_ema50_aligned and not m15_trend_aligned:
             if is_zone_reversal:
                 breakdown["htf_divergence"] = -8
                 reasons.append("Institutional Zone Reversal (Bypassed HTF Divergence) (-8)")
+            elif is_aggressive_scalp:
+                breakdown["htf_divergence"] = -15
+                reasons.append("Aggressive Scalp Pullback (Bypassed HTF Hard Gate) (-15)")
             else:
                 logger.debug(f"[{symbol} {direction}] Filtered: Hard counter-trend opposing both 1H and 15m HTF.")
                 return None
@@ -1276,13 +1283,16 @@ class ConfluenceScorer:
             if is_zone_reversal:
                 breakdown["htf_divergence"] = -5
                 reasons.append("Zone Reversal Divergence Offset (-5)")
+            elif is_aggressive_scalp:
+                breakdown["htf_divergence"] = -12
+                reasons.append("Aggressive Mode HTF Divergence Offset (-12)")
             else:
                 breakdown["htf_divergence"] = -25
                 reasons.append("Higher-Timeframe Trend Divergence (-25 Penalty)")
 
         # Total Confluence Score
         total_score = sum(breakdown.values())
-        if htf_diverged and not is_zone_reversal:
+        if htf_diverged and not is_zone_reversal and not is_aggressive_scalp:
             # Strictly cap total score at 68 when HTF is not unanimous (NO SNIPER ALLOWED)
             total_score = min(total_score, 68)
         total_score = min(100, max(0, total_score))
