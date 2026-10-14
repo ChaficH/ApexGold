@@ -88,6 +88,7 @@ class TradeManager:
         max_total_open_risk_pct: float = 10.0,
         max_open_positions: int = 1,
         history_store: Optional[Any] = None,
+        manage_manual_positions: bool = False,
     ):
         self.broker = broker
         self.data_hub = data_hub
@@ -100,6 +101,7 @@ class TradeManager:
         self.max_total_open_risk_pct = max_total_open_risk_pct
         self.max_open_positions = max_open_positions
         self.history_store = history_store
+        self.manage_manual_positions = manage_manual_positions
 
         self._managed_positions: Dict[Union[int, str], ManagedPosition] = {}
         self._pending_limit_orders: Dict[Union[int, str], Any] = {}
@@ -592,9 +594,47 @@ class TradeManager:
                     if not lo:
                         continue
 
-                    # If order filled by broker into an active position, remove from pending
-                    if p_ticket in broker_pos_map:
+                    # If order filled by broker into an active position, enroll into managed positions!
+                    matched_pos = broker_pos_map.get(p_ticket)
+                    if not matched_pos:
+                        for bp in broker_positions:
+                            bp_t = int(bp.ticket) if str(bp.ticket).isdigit() else bp.ticket
+                            if bp_t not in self._managed_positions and bp.symbol == lo.symbol:
+                                lo_dir = "BUY" if "BUY" in str(lo.order_type).upper() else "SELL"
+                                bp_dir = bp.type.value if hasattr(bp.type, "value") else str(bp.type).upper()
+                                if lo_dir == bp_dir and abs(bp.open_price - lo.price) <= 2.0:
+                                    matched_pos = bp
+                                    break
+
+                    if matched_pos:
+                        pos_ticket = int(matched_pos.ticket) if str(matched_pos.ticket).isdigit() else matched_pos.ticket
                         async with self._lock:
+                            # Avoid duplicate registration
+                            if pos_ticket not in self._managed_positions:
+                                risk_dist = abs(matched_pos.open_price - lo.sl) if lo.sl > 0 else (abs(lo.price - lo.sl) if lo.sl > 0 else 2.50)
+                                lo_dir = "BUY" if "BUY" in str(lo.order_type).upper() else "SELL"
+                                managed = ManagedPosition(
+                                    ticket=pos_ticket,
+                                    symbol=lo.symbol,
+                                    direction=lo_dir,
+                                    volume=matched_pos.volume if matched_pos.volume > 0 else lo.volume,
+                                    open_price=matched_pos.open_price if matched_pos.open_price > 0 else lo.price,
+                                    sl=lo.sl,
+                                    tp=lo.tp,
+                                    entry_time=time.time(),
+                                    risk_r_dist=risk_dist,
+                                    initial_regime="SMART_LIMIT_FILL",
+                                    current_regime="SMART_LIMIT_FILL",
+                                    sub_regime="SMART_LIMIT",
+                                    be_lock_r=0.65,
+                                    stall_exit_seconds=min(getattr(lo, "timeout_seconds", 60.0), 60.0),
+                                    highest_r_reached=0.0,
+                                )
+                                self._managed_positions[pos_ticket] = managed
+                                logger.info(
+                                    f"[PENDING ORDER FILLED & ENROLLED] Limit #{p_ticket} executed as Managed Position #{pos_ticket} "
+                                    f"@ {matched_pos.open_price:.2f} | SL: {lo.sl:.2f} | TP: {lo.tp:.2f}"
+                                )
                             self._pending_limit_orders.pop(p_ticket, None)
                         continue
 
@@ -661,6 +701,10 @@ class TradeManager:
                         if ticket not in self._managed_positions:
                             continue
                         pos = self._managed_positions[ticket]
+
+                    if getattr(pos, "is_user_manual", False) and not self.manage_manual_positions:
+                        # Skip automated management of user manual trades
+                        continue
 
                     # 1. Check if position was closed at broker level (SL or TP hit, or after close_position)
                     if ticket not in broker_pos_map:
@@ -757,13 +801,19 @@ class TradeManager:
                     if is_news_freeze:
                         # 1. If in profit, lock to Breakeven so it rides news safely with ZERO risk
                         if floating_r >= 0.15 and pos.ratchet_stage < 1:
-                            pos.ratchet_stage = 1
                             is_gold = any(k in pos.symbol.upper() for k in ["XAU", "GOLD"])
                             spread_buf = 0.25 if is_gold else 0.0002
                             new_sl = round(pos.open_price + spread_buf if pos.direction == "BUY" else pos.open_price - spread_buf, 2 if is_gold else 5)
-                            pos.sl = new_sl
-                            await self.broker.modify_position(pos.ticket, sl=new_sl, tp=pos.tp)
-                            logger.info(f"[CALCULATED NEWS PROTECTION] #{ticket} locked SL to Breakeven ({new_sl}) to ride news safely without closing!")
+                            is_tighter = (new_sl > pos.sl) if pos.direction == "BUY" else (new_sl < pos.sl if pos.sl > 0 else True)
+                            if is_tighter:
+                                ok = await self.broker.modify_position(pos.ticket, sl=new_sl, tp=pos.tp)
+                                if ok:
+                                    pos.sl = new_sl
+                                    pos.ratchet_stage = 1
+                                    pos.last_mod_time = time.time()
+                                    logger.info(f"[CALCULATED NEWS PROTECTION] #{ticket} locked SL to Breakeven ({new_sl}) to ride news safely without closing!")
+                                else:
+                                    logger.warning(f"[CALCULATED NEWS PROTECTION FAILED] Broker rejected SL modify to {new_sl} for #{ticket}")
 
                         # 2. Study fundamental news bias
                         bias_data = self.news_reactor.analyze_news_fundamental_bias(pos.symbol) if self.news_reactor else {}
@@ -935,14 +985,17 @@ class TradeManager:
 
                     if new_tp != pos.tp:
                         old_tp = pos.tp
-                        pos.tp = new_tp
-                        pos.current_regime = "ADAPTIVE_RUNNER"
-                        pos.last_mod_time = time.time()
-                        await self.broker.modify_position(pos.ticket, sl=pos.sl, tp=pos.tp)
-                        logger.info(
-                            f"[DYNAMIC TP EXPANSION] #{pos.ticket} surging strongly (+{floating_r:.2f}R)! "
-                            f"Extended TP from {old_tp:.2f} to {new_tp:.2f} (+{new_target_r:.1f}R) to capture maximum profit!"
-                        )
+                        ok = await self.broker.modify_position(pos.ticket, sl=pos.sl, tp=new_tp)
+                        if ok:
+                            pos.tp = new_tp
+                            pos.current_regime = "ADAPTIVE_RUNNER"
+                            pos.last_mod_time = time.time()
+                            logger.info(
+                                f"[DYNAMIC TP EXPANSION] #{pos.ticket} surging strongly (+{floating_r:.2f}R)! "
+                                f"Extended TP from {old_tp:.2f} to {new_tp:.2f} (+{new_target_r:.1f}R) to capture maximum profit!"
+                            )
+                        else:
+                            logger.warning(f"[DYNAMIC TP EXPANSION FAILED] Broker rejected TP modify to {new_tp} for #{pos.ticket}")
 
     async def _evaluate_ratchet_floor(self, pos: ManagedPosition, floating_r: float, current_price: float) -> None:
         """
@@ -958,49 +1011,47 @@ class TradeManager:
         spread_buf = 0.25 if is_gold else 0.0002
         new_sl = None
 
+        candidate_stage = pos.ratchet_stage
+
         # Stage 1: Breakeven Lock at +0.65R (or higher depending on strategy regime)
         trigger_be = max(0.65, pos.be_lock_r)
         if pos.ratchet_stage < 1 and floating_r >= trigger_be:
-            pos.ratchet_stage = 1
+            candidate_stage = 1
             if pos.direction == "BUY":
                 new_sl = round(pos.open_price + spread_buf, 2 if is_gold else 5)
             else:
                 new_sl = round(pos.open_price - spread_buf, 2 if is_gold else 5)
-            logger.info(f"[RATCHET BE LOCK] #{pos.ticket} hit +{floating_r:.2f}R -> SL moved to Breakeven {new_sl:.2f}")
 
         # Stage 2: Lock Profit at +1.00R (Locks +0.45R)
         elif pos.ratchet_stage < 2 and floating_r >= 1.00:
-            pos.ratchet_stage = 2
+            candidate_stage = 2
             lock_dist = pos.risk_r_dist * 0.45
             if pos.direction == "BUY":
                 new_sl = round(pos.open_price + lock_dist, 2 if is_gold else 5)
             else:
                 new_sl = round(pos.open_price - lock_dist, 2 if is_gold else 5)
-            logger.info(f"[RATCHET LOCK +0.45R] #{pos.ticket} hit +{floating_r:.2f}R -> SL locked at {new_sl:.2f}")
 
         # Stage 3: Lock Profit at +1.50R (Locks +0.85R)
         elif pos.ratchet_stage < 3 and floating_r >= 1.50:
-            pos.ratchet_stage = 3
+            candidate_stage = 3
             lock_dist = pos.risk_r_dist * 0.85
             if pos.direction == "BUY":
                 new_sl = round(pos.open_price + lock_dist, 2 if is_gold else 5)
             else:
                 new_sl = round(pos.open_price - lock_dist, 2 if is_gold else 5)
-            logger.info(f"[RATCHET LOCK +0.85R] #{pos.ticket} hit +{floating_r:.2f}R -> SL locked at {new_sl:.2f}")
 
         # Stage 4: Lock Profit at +2.00R (Locks +1.35R)
         elif pos.ratchet_stage < 4 and floating_r >= 2.00:
-            pos.ratchet_stage = 4
+            candidate_stage = 4
             lock_dist = pos.risk_r_dist * 1.35
             if pos.direction == "BUY":
                 new_sl = round(pos.open_price + lock_dist, 2 if is_gold else 5)
             else:
                 new_sl = round(pos.open_price - lock_dist, 2 if is_gold else 5)
-            logger.info(f"[RATCHET LOCK +1.35R] #{pos.ticket} hit +{floating_r:.2f}R -> SL locked at {new_sl:.2f}")
 
         # Stage 5: Dynamic Structural Trailing at +2.50R+
         elif floating_r >= 2.50:
-            pos.ratchet_stage = 5
+            candidate_stage = 5
             trail_dist = pos.risk_r_dist * 0.85
             if pos.direction == "BUY":
                 candidate_sl = round(current_price - trail_dist, 2 if is_gold else 5)
@@ -1008,13 +1059,26 @@ class TradeManager:
                     new_sl = candidate_sl
             else:
                 candidate_sl = round(current_price + trail_dist, 2 if is_gold else 5)
-                if candidate_sl < pos.sl:
+                if pos.sl <= 0 or candidate_sl < pos.sl:
                     new_sl = candidate_sl
 
-        if new_sl is not None and new_sl != pos.sl:
-            pos.sl = new_sl
-            pos.last_mod_time = time.time()
-            await self.broker.modify_position(pos.ticket, sl=pos.sl, tp=pos.tp)
+        if new_sl is not None:
+            # Enforce protective stop: NEVER loosen an existing stop loss!
+            is_tightening = False
+            if pos.direction == "BUY" and new_sl > pos.sl:
+                is_tightening = True
+            elif pos.direction == "SELL" and (pos.sl <= 0 or new_sl < pos.sl):
+                is_tightening = True
+
+            if is_tightening:
+                ok = await self.broker.modify_position(pos.ticket, sl=new_sl, tp=pos.tp)
+                if ok:
+                    pos.sl = new_sl
+                    pos.ratchet_stage = candidate_stage
+                    pos.last_mod_time = time.time()
+                    logger.info(f"[RATCHET SL UPDATED] #{pos.ticket} SL moved to {new_sl:.2f} (Stage {candidate_stage})")
+                else:
+                    logger.warning(f"[RATCHET SL REJECTED] Broker rejected SL modify to {new_sl:.2f} for #{pos.ticket}")
 
     async def _on_position_closed(
         self,
@@ -1036,34 +1100,52 @@ class TradeManager:
         pos.close_reason = reason
         now = time.time()
 
-        close_p = current_price if (current_price and current_price > 0) else getattr(pos, "close_trigger_price", None)
-        if close_p is None:
-            tick = await self.broker.get_tick(pos.symbol)
-            if tick and tick.bid > 0:
-                close_p = tick.bid if pos.direction == "BUY" else tick.ask
-            elif "Stop Loss" in reason or "SL" in reason:
-                close_p = pos.sl if pos.sl > 0 else pos.open_price
-            elif "Take Profit" in reason or "TP" in reason:
-                close_p = pos.tp if pos.tp > 0 else pos.open_price
-            else:
-                close_p = pos.open_price
+        deal = None
+        if hasattr(self.broker, "get_closed_deal"):
+            try:
+                deal = await self.broker.get_closed_deal(pos.ticket)
+            except Exception as e:
+                logger.warning(f"Error fetching closed deal for #{pos.ticket}: {e}")
 
         is_gold = any(k in pos.symbol.upper() for k in ["XAU", "GOLD"])
         contract_size = 100.0 if is_gold else 100000.0
 
-        # If close_p ended up identical to open_price but pos.profit exists, reconstruct true exit price
-        if abs(close_p - pos.open_price) < 0.01 and abs(getattr(pos, "profit", 0.0)) > 0.05:
-            price_delta = pos.profit / (pos.volume * contract_size)
-            close_p = round(pos.open_price + price_delta if pos.direction == "BUY" else pos.open_price - price_delta, 2 if is_gold else 5)
-
-        if pos.direction == "BUY":
-            floating_dist = close_p - pos.open_price
+        if deal is not None:
+            close_p = deal.close_price
+            # Realized net P&L including broker commissions and swap
+            pnl = round(deal.profit + deal.commission + deal.swap, 2)
+            monetary_risk = max(pos.risk_r_dist * pos.volume * contract_size, 0.01)
+            pnl_r = round(pnl / monetary_risk, 2)
+            logger.info(
+                f"[BROKER EXECUTION DEAL] #{pos.ticket} executed deal confirmed: Close: {close_p:.2f} | "
+                f"Net Realized: ${pnl:+.2f} (Profit: ${deal.profit:.2f}, Comm: ${deal.commission:.2f}, Swap: ${deal.swap:.2f})"
+            )
         else:
-            floating_dist = pos.open_price - close_p
+            close_p = current_price if (current_price and current_price > 0) else getattr(pos, "close_trigger_price", None)
+            if close_p is None:
+                tick = await self.broker.get_tick(pos.symbol)
+                if tick and tick.bid > 0:
+                    close_p = tick.bid if pos.direction == "BUY" else tick.ask
+                elif "Stop Loss" in reason or "SL" in reason:
+                    close_p = pos.sl if pos.sl > 0 else pos.open_price
+                elif "Take Profit" in reason or "TP" in reason:
+                    close_p = pos.tp if pos.tp > 0 else pos.open_price
+                else:
+                    close_p = pos.open_price
 
-        pnl_r = round(floating_dist / max(pos.risk_r_dist, 0.01), 2)
-        # Mathematically exact dollar P&L
-        pnl = round(floating_dist * pos.volume * contract_size, 2)
+            # If close_p ended up identical to open_price but pos.profit exists, reconstruct true exit price
+            if abs(close_p - pos.open_price) < 0.01 and abs(getattr(pos, "profit", 0.0)) > 0.05:
+                price_delta = pos.profit / (pos.volume * contract_size)
+                close_p = round(pos.open_price + price_delta if pos.direction == "BUY" else pos.open_price - price_delta, 2 if is_gold else 5)
+
+            if pos.direction == "BUY":
+                floating_dist = close_p - pos.open_price
+            else:
+                floating_dist = pos.open_price - close_p
+
+            pnl_r = round(floating_dist / max(pos.risk_r_dist, 0.01), 2)
+            # Mathematically exact dollar P&L
+            pnl = round(floating_dist * pos.volume * contract_size, 2)
 
         # Deterministic ticket integer
         if str(pos.ticket).isdigit():

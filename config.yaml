@@ -58,6 +58,10 @@ trading:
   # When false, real broker execution is disabled and the engine defaults to paper simulation/scanner.
   live_trading_enabled: false
 
+  # Protect Manually Opened MT5 Positions:
+  # When false (default), the bot will NEVER modify, trail, or close trades opened manually by the user.
+  manage_manual_positions: false
+
   # Execution Modes:
   #   - "scanner"    : Read-only live technical scanner & confluence analyzer (Default safe mode)
   #   - "confirm"    : Emits alerts & prepares 1-click execution in the Web UI

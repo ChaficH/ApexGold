@@ -20,6 +20,7 @@ from brokers.base import (
     AbstractBrokerAdapter,
     AccountInfo,
     Bar,
+    ClosedDeal,
     OrderResult,
     OrderType,
     Position,
@@ -68,6 +69,7 @@ class PaperSimAdapter(AbstractBrokerAdapter):
         self._positions: Dict[int, Position] = {}
         self._pending_orders: Dict[int, Any] = {}
         self._closed_positions: List[Dict] = []
+        self._closed_deals: Dict[int, ClosedDeal] = {}
         self._last_ticks: Dict[str, Tick] = {}
         self._bar_cache: Dict[str, Dict[str, List[Bar]]] = {} # symbol -> tf -> List[Bar]
         
@@ -524,6 +526,20 @@ class PaperSimAdapter(AbstractBrokerAdapter):
                 "comment": pos.comment,
             }
             self._closed_positions.append(record)
+            self._closed_deals[ticket_int] = ClosedDeal(
+                ticket=ticket_int,
+                symbol=pos.symbol,
+                direction=pos.type.value if hasattr(pos.type, "value") else str(pos.type),
+                volume=pos.volume,
+                open_price=pos.open_price,
+                close_price=pos.current_price,
+                open_time=pos.open_time,
+                close_time=time.time(),
+                profit=pos.profit,
+                commission=0.0,
+                swap=0.0,
+                comment=pos.comment,
+            )
             logger.info(
                 f"[SIM CLOSED] #{ticket_int} PnL: {pos.profit:+.2f} {self.currency} | "
                 f"New Balance: {self.balance:.2f} {self.currency}"
@@ -569,6 +585,11 @@ class PaperSimAdapter(AbstractBrokerAdapter):
             if symbol is None:
                 return list(self._pending_orders.values())
             return [o for o in self._pending_orders.values() if o.symbol == symbol]
+
+    async def get_closed_deal(self, ticket: Union[int, str]) -> Optional[ClosedDeal]:
+        """Retrieve real executed closed deal history for ticket."""
+        async with self._lock:
+            return self._closed_deals.get(int(ticket))
 
     async def _simulation_loop(self) -> None:
         """

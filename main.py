@@ -248,6 +248,7 @@ async def lifespan(app_instance):
     trading_cfg = cfg.get("trading", {})
     ctx.active_symbol = trading_cfg.get("primary_symbol", "XAUUSD")
     ctx.live_trading_enabled = bool(trading_cfg.get("live_trading_enabled", False))
+    ctx.manage_manual_positions = bool(trading_cfg.get("manage_manual_positions", False))
     ctx.execution_mode = trading_cfg.get("execution_mode", "scanner")
     ctx.strategy_mode = trading_cfg.get("strategy_mode", "auto_adaptive")
 
@@ -306,6 +307,7 @@ async def lifespan(app_instance):
         max_daily_drawdown_pct=float(trading_cfg.get("max_daily_drawdown_pct", 25.0)),
         max_open_positions=int(trading_cfg.get("max_open_positions", 1)),
         history_store=history_store,
+        manage_manual_positions=ctx.manage_manual_positions,
     )
     await trade_manager.start()
     ctx.trade_manager = trade_manager

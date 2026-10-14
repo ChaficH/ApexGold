@@ -10,12 +10,15 @@ import asyncio
 import logging
 import platform
 import time
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Union
 
 from brokers.base import (
     AbstractBrokerAdapter,
     AccountInfo,
     Bar,
+    ClosedDeal,
+    LimitOrder,
     OrderResult,
     OrderType,
     Position,
@@ -516,4 +519,54 @@ class WindowsMT5Adapter(AbstractBrokerAdapter):
                 comment=str(o.comment),
             ))
         return orders
+
+    async def get_closed_deal(self, ticket: Union[int, str]) -> Optional[ClosedDeal]:
+        """Fetch executed closed deal from MT5 history if available."""
+        if not self.is_connected() or mt5 is None:
+            return None
+
+        loop = asyncio.get_running_loop()
+        def _get_deal():
+            t_int = int(ticket) if str(ticket).isdigit() else 0
+            if t_int <= 0:
+                return None
+            now_dt = datetime.now()
+            from_dt = now_dt - timedelta(days=7)
+            deals = mt5.history_deals_get(position=t_int)
+            if not deals:
+                deals = mt5.history_deals_get(from_dt, now_dt, position=t_int)
+            if not deals:
+                return None
+
+            # Find closing deal (DEAL_ENTRY_OUT or last deal)
+            exit_deal = None
+            for d in reversed(deals):
+                if getattr(d, "entry", None) == 1:
+                    exit_deal = d
+                    break
+            if not exit_deal:
+                exit_deal = deals[-1]
+
+            entry_deal = deals[0]
+            direction = "BUY" if getattr(entry_deal, "type", 0) == 0 else "SELL"
+            return ClosedDeal(
+                ticket=t_int,
+                symbol=str(getattr(exit_deal, "symbol", "")),
+                direction=direction,
+                volume=float(getattr(exit_deal, "volume", 0.0)),
+                open_price=float(getattr(entry_deal, "price", 0.0)),
+                close_price=float(getattr(exit_deal, "price", 0.0)),
+                open_time=float(getattr(entry_deal, "time", 0.0)),
+                close_time=float(getattr(exit_deal, "time", 0.0)),
+                profit=float(getattr(exit_deal, "profit", 0.0)),
+                commission=float(getattr(exit_deal, "commission", 0.0)),
+                swap=float(getattr(exit_deal, "swap", 0.0)),
+                comment=str(getattr(exit_deal, "comment", "")),
+            )
+
+        try:
+            return await loop.run_in_executor(None, _get_deal)
+        except Exception as e:
+            logger.warning(f"Error retrieving closed deal for #{ticket}: {e}")
+            return None
 

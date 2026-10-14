@@ -17,6 +17,7 @@ from brokers.base import (
     AbstractBrokerAdapter,
     AccountInfo,
     Bar,
+    ClosedDeal,
     OrderResult,
     OrderType,
     Position,
@@ -450,4 +451,26 @@ class MacSocketMT5Adapter(AbstractBrokerAdapter):
                 comment=str(o.get("comment", "")),
             ))
         return orders
+
+    async def get_closed_deal(self, ticket: Union[int, str]) -> Optional[ClosedDeal]:
+        """Retrieve real executed closed deal history for ticket via ApexBridge socket."""
+        payload = {"action": "GET_CLOSED_DEAL", "ticket": int(ticket) if str(ticket).isdigit() else 0}
+        res = await self._send_command(payload)
+        if res.get("status") != "OK" or not res.get("data"):
+            return None
+        d = res.get("data", {})
+        return ClosedDeal(
+            ticket=int(ticket),
+            symbol=str(d.get("symbol", "")),
+            direction=str(d.get("direction", "BUY")),
+            volume=float(d.get("volume", 0.0)),
+            open_price=float(d.get("open_price", 0.0)),
+            close_price=float(d.get("close_price", 0.0)),
+            open_time=float(d.get("open_time", 0.0)),
+            close_time=float(d.get("close_time", time.time())),
+            profit=float(d.get("profit", 0.0)),
+            commission=float(d.get("commission", 0.0)),
+            swap=float(d.get("swap", 0.0)),
+            comment=str(d.get("comment", "")),
+        )
 

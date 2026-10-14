@@ -61,6 +61,7 @@ class ServerContext:
         
         self.history_store: Optional[Any] = None
         self.live_trading_enabled: bool = False
+        self.manage_manual_positions: bool = False
         
         # macOS Wine MT5 Bridge Pending Queue
         self.mt5_pending_actions: List[Dict[str, Any]] = []
@@ -427,17 +428,21 @@ async def action_modify_position(payload: ModifyPositionPayload):
 
     logger.info(f"[ACTION] Modify position #{ticket}: SL={sl}, TP={tp}")
 
-    # 1. Update in-memory ManagedPosition in TradeManager
-    if ctx.trade_manager and hasattr(ctx.trade_manager, "_managed_positions"):
-        if ticket in ctx.trade_manager._managed_positions:
-            pos = ctx.trade_manager._managed_positions[ticket]
-            pos.sl = sl
-            pos.tp = tp
-            pos.last_mod_time = time.time()
-
-    # 2. Update broker position in-memory
+    # 1. Update broker position first and check confirmation
+    broker_ok = False
     if ctx.broker:
-        await ctx.broker.modify_position(ticket, sl=sl, tp=tp)
+        broker_ok = await ctx.broker.modify_position(ticket, sl=sl, tp=tp)
+
+    # 2. Update local ManagedPosition ONLY after broker confirmation
+    if broker_ok:
+        if ctx.trade_manager and hasattr(ctx.trade_manager, "_managed_positions"):
+            if ticket in ctx.trade_manager._managed_positions:
+                pos = ctx.trade_manager._managed_positions[ticket]
+                pos.sl = sl
+                pos.tp = tp
+                pos.last_mod_time = time.time()
+    elif not ctx.is_live_trading_active():
+        return {"status": "ERROR", "message": f"Broker rejected position #{ticket} modification", "ticket": ticket}
 
     # 3. Queue command for live MT5 Bridge only if live trading is active
     if ctx.is_live_trading_active() and ctx.mt5_pending_actions is not None:
@@ -602,7 +607,8 @@ async def mt5_bridge_tick(payload: Dict[str, Any]):
                 p_pnl = float(p.get("profit", 0.0))
                 p_comm = str(p.get("comment", ""))
                 p_magic = int(p.get("magic", 0)) if str(p.get("magic", "")).isdigit() else 0
-                is_manual = (not p_comm.startswith("ApexGold")) and (p_magic == 0 or p_magic != 888888)
+                is_bot_trade = (p_magic == 15555) or p_comm.startswith("ApexGold") or p_comm.startswith("Chameleon")
+                is_manual = not is_bot_trade
 
                 pos_obj = Position(
                     ticket=ticket,
@@ -623,10 +629,15 @@ async def mt5_bridge_tick(payload: Dict[str, Any]):
             if hasattr(ctx.broker, "_positions"):
                 ctx.broker._positions = synced_positions
 
-            # Auto-enroll real MT5 positions into TradeManager so Chameleon manages them safely
+            # Auto-enroll real MT5 positions into TradeManager if permitted
             if ctx.trade_manager:
                 from execution.trade_manager import ManagedPosition
                 for t_key, pos_obj in synced_positions.items():
+                    if pos_obj.is_user_manual and not ctx.manage_manual_positions:
+                        # Strictly protect manual MT5 trades: do NOT enroll into automated position management!
+                        logger.debug(f"[MANUAL POSITION PROTECTED] #{t_key} opened manually by user. Skipping automated management.")
+                        continue
+
                     if t_key not in ctx.trade_manager._managed_positions:
                         dist = abs(pos_obj.open_price - pos_obj.sl) if pos_obj.sl > 0 else 2.50
                         ctx.trade_manager._managed_positions[t_key] = ManagedPosition(
@@ -650,6 +661,8 @@ async def mt5_bridge_tick(payload: Dict[str, Any]):
                         )
                     else:
                         m_pos = ctx.trade_manager._managed_positions[t_key]
+                        if m_pos.is_user_manual and not ctx.manage_manual_positions:
+                            continue
                         if pos_obj.sl > 0:
                             m_pos.sl = pos_obj.sl
                         if pos_obj.tp > 0:

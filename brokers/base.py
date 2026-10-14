@@ -146,6 +146,22 @@ class OrderResult:
     volume: float = 0.0
     error: Optional[str] = None
 
+@dataclass
+class ClosedDeal:
+    """Historical closed deal record from broker."""
+    ticket: Union[int, str]
+    symbol: str
+    direction: str
+    volume: float
+    open_price: float
+    close_price: float
+    open_time: float
+    close_time: float
+    profit: float
+    commission: float = 0.0
+    swap: float = 0.0
+    comment: str = ""
+
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
@@ -245,4 +261,8 @@ class AbstractBrokerAdapter(ABC):
     async def get_pending_orders(self, symbol: Optional[str] = None) -> List[LimitOrder]:
         """Retrieve all currently active pending orders."""
         return []
+
+    async def get_closed_deal(self, ticket: Union[int, str]) -> Optional[ClosedDeal]:
+        """Retrieve real executed closed deal history for ticket if supported."""
+        return None
 
