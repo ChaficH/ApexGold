@@ -17,7 +17,7 @@ broker:
   #   - "paper_sim"       : Real-time paper simulator with live/synthetic tick engine (works out-of-the-box)
   #   - "mt5_mac_socket"  : Connects to local MT5 on macOS/Windows via ApexBridge.mq5 socket (127.0.0.1:15555)
   #   - "mt5_windows"     : Native MetaTrader5 Python package on Windows
-  active_broker: "paper_sim"
+  active_broker: "mt5_mac_socket"
   bridge_token: "apex_secret_2026"          # Secret token for MT5 bridge authentication (matches ApexBridge.mq5 default)
 
   mac_socket:
