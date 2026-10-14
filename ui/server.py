@@ -297,10 +297,8 @@ async def get_status():
         "pre_news_trajectory": ctx.news_reactor.evaluate_pre_news_trajectory(
             symbol=ctx.active_symbol,
             dfs={
-                "1m": ctx.data_hub.get_df(ctx.active_symbol, "1m") if ctx.data_hub else None,
-                "5m": ctx.data_hub.get_df(ctx.active_symbol, "5m") if ctx.data_hub else None,
-                "15m": ctx.data_hub.get_df(ctx.active_symbol, "15m") if ctx.data_hub else None,
-                "1H": ctx.data_hub.get_df(ctx.active_symbol, "1H") if ctx.data_hub else None,
+                tf: (ctx.data_hub.get_df(ctx.active_symbol, tf) if (ctx.data_hub and hasattr(ctx.data_hub, "get_df")) else None)
+                for tf in ["1m", "5m", "15m", "1H"]
             },
             tick_velocity=getattr(ctx.news_reactor, "_latest_velocity", 0.0),
         ) if (ctx.news_reactor and hasattr(ctx.news_reactor, "evaluate_pre_news_trajectory")) else {},
@@ -1228,7 +1226,8 @@ async def websocket_telemetry(websocket: WebSocket):
 
     # If live trading is active and a bridge token is configured, enforce token
     required = (getattr(ctx, "bridge_token", "") or os.environ.get("APEX_BRIDGE_TOKEN", "")).strip()
-    if ctx.is_live_trading_active() and required:
+    is_trusted_origin = origin and (origin.rstrip("/") in [o.rstrip("/") for o in ALLOWED_ORIGINS])
+    if ctx.is_live_trading_active() and required and not is_trusted_origin:
         token = websocket.query_params.get("token") or websocket.headers.get("x-bridge-token")
         if token != required:
             logger.warning("[WEBSOCKET REJECTED] Missing or invalid authentication token for live trading telemetry stream.")

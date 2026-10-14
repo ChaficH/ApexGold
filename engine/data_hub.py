@@ -368,6 +368,26 @@ class DataHub:
         }
         return pd.DataFrame(data)
 
+    def get_df(self, symbol: str, timeframe: str) -> pd.DataFrame:
+        """
+        Synchronously retrieve DataFrame directly from in-memory candle cache.
+        Fast, zero-await helper for telemetry, pre-news trajectory, and UI dashboards.
+        """
+        bars = self._memory_cache.get(symbol, {}).get(timeframe, [])
+        if not bars:
+            return pd.DataFrame(columns=["time", "open", "high", "low", "close", "volume", "is_synthetic", "source"])
+        data = {
+            "time": [b.time for b in bars],
+            "open": [b.open for b in bars],
+            "high": [b.high for b in bars],
+            "low": [b.low for b in bars],
+            "close": [b.close for b in bars],
+            "volume": [b.volume for b in bars],
+            "is_synthetic": [getattr(b, "is_synthetic", False) for b in bars],
+            "source": [getattr(b, "source", "BROKER") for b in bars],
+        }
+        return pd.DataFrame(data)
+
     async def get_multi_timeframe_data(
         self,
         symbol: str,
