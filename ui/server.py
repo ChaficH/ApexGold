@@ -659,7 +659,12 @@ async def mt5_bridge_tick(payload: Dict[str, Any], request: Request = None):
     immediately returns pending trade/modify/close orders in sub-2ms.
     """
     verify_bridge_token(request, payload)
-    ctx.mt5_last_seen = asyncio.get_event_loop().time()
+    now_loop = asyncio.get_event_loop().time()
+    was_disconnected = (now_loop - ctx.mt5_last_seen) > 10.0 and (ctx.mt5_last_seen > 0)
+    ctx.mt5_last_seen = now_loop
+    if was_disconnected and ctx.trade_manager:
+        logger.info("[MT5 RECONNECTED] MetaTrader 5 bridge reconnected. Triggering broker state reconciliation...")
+        asyncio.create_task(ctx.trade_manager.reconcile_broker_state())
     
     sym = payload.get("symbol", ctx.active_symbol)
     bid = float(payload.get("bid", 0.0))

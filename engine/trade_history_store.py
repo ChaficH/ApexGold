@@ -76,6 +76,19 @@ class TradeHistoryStore:
                 CREATE INDEX IF NOT EXISTS idx_trade_history_close_time 
                 ON trade_history(close_time DESC);
             """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS audit_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    event_type TEXT NOT NULL,
+                    details TEXT NOT NULL,
+                    timestamp REAL NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp
+                ON audit_log(timestamp DESC);
+            """)
             # Auto-purge any duplicate trades on startup
             # Safe deduplication: Only remove duplicate entries sharing the exact same ticket, or merge simulated placeholders
             cursor.execute("""
@@ -338,4 +351,37 @@ class TradeHistoryStore:
             logger.info(f"[TRADE HISTORY CLEARED] All past trade records deleted from SQLite. Cutoff timestamp set to {now_ts}.")
 
         return await self.get_stats(force_refresh=True)
+
+    async def record_audit_event(self, event_type: str, details: str) -> None:
+        """Persist safety, operational recovery, and emergency action audit log events."""
+        now_ts = time.time()
+        loop = asyncio.get_running_loop()
+
+        def _insert():
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "INSERT INTO audit_log (event_type, details, timestamp) VALUES (?, ?, ?);",
+                    (event_type, details, now_ts),
+                )
+                conn.commit()
+
+        await loop.run_in_executor(None, _insert)
+        logger.info(f"[AUDIT EVENT: {event_type}] {details}")
+
+    async def get_audit_events(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """Retrieve recent persistent audit events."""
+        loop = asyncio.get_running_loop()
+
+        def _fetch():
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT event_type, details, timestamp, created_at FROM audit_log ORDER BY timestamp DESC LIMIT ?;",
+                    (limit,),
+                )
+                return [dict(r) for r in cursor.fetchall()]
+
+        return await loop.run_in_executor(None, _fetch)
 

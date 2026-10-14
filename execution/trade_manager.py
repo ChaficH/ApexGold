@@ -128,6 +128,10 @@ class TradeManager:
         self._start_of_day_balance: float = 0.0
         self._today_date_str: str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
+        # Operational State Reconciliation & Contradictory Safety Guards
+        self._contradictory_state_active: bool = False
+        self._contradictory_state_reason: str = ""
+
     async def sync_daily_risk_state(self) -> None:
         """
         Reconstruct daily risk metrics from persistent trade history and broker account info.
@@ -172,10 +176,224 @@ class TradeManager:
         except Exception as e:
             logger.warning(f"Could not fetch account info for risk state sync: {e}")
 
+    async def reconcile_broker_state(self) -> Dict[str, Any]:
+        """
+        Reconcile local trade manager state with broker state on startup, reconnection,
+        or recovery. Enrolls bot-owned positions and pending orders, verifies protective
+        stop losses, and detects contradictory or unmanaged risk.
+        """
+        async with self._lock:
+            try:
+                broker_positions = await self.broker.get_open_positions()
+                broker_orders = await self.broker.get_pending_orders()
+            except Exception as e:
+                logger.error(f"[RECONCILE ERROR] Failed to fetch broker state: {e}")
+                self._contradictory_state_active = True
+                self._contradictory_state_reason = f"Broker query failed during state reconciliation: {e}"
+                return {"status": "ERROR", "error": str(e), "is_contradictory": True}
+
+            broker_pos_by_ticket = {}
+            for p in broker_positions:
+                if str(p.ticket).isdigit():
+                    broker_pos_by_ticket[int(p.ticket)] = p
+
+            broker_orders_by_ticket = {}
+            for o in broker_orders:
+                if str(o.ticket).isdigit():
+                    broker_orders_by_ticket[int(o.ticket)] = o
+
+            enrolled_positions = []
+            unprotected_positions = []
+
+            for ticket, p in broker_pos_by_ticket.items():
+                is_manual = getattr(p, "is_user_manual", False)
+                magic = getattr(p, "magic", 0)
+                comment = getattr(p, "comment", "")
+                is_bot_owned = (magic == 15555) or ("ApexGold" in comment) or ("Paper" in comment)
+
+                # Skip manual positions if policy dictates not to manage them
+                if is_manual and not self.manage_manual_positions:
+                    continue
+                if not is_bot_owned and not self.manage_manual_positions:
+                    continue
+
+                # Verify protective stop loss
+                if p.sl <= 0.0:
+                    unprotected_positions.append(ticket)
+                    logger.warning(f"[RECONCILE WARNING] Active position #{ticket} has no protective stop loss!")
+
+                if ticket not in self._managed_positions:
+                    # Enroll into managed positions
+                    direction_str = p.type.value if hasattr(p.type, "value") else str(p.type)
+                    sl_dist = abs(p.open_price - p.sl) if p.sl > 0 else 2.50
+                    m = ManagedPosition(
+                        ticket=ticket,
+                        symbol=p.symbol,
+                        direction=direction_str.upper(),
+                        volume=p.volume,
+                        open_price=p.open_price,
+                        sl=p.sl,
+                        tp=p.tp,
+                        entry_time=p.open_time or time.time(),
+                        risk_r_dist=sl_dist,
+                        initial_regime="RECOVERED",
+                        current_regime="RECOVERED",
+                        sub_regime="RECOVERED",
+                        is_user_manual=is_manual,
+                        current_price=getattr(p, "current_price", p.open_price),
+                    )
+                    self._managed_positions[ticket] = m
+                    enrolled_positions.append(ticket)
+                    logger.info(f"[RECONCILE] Enrolled active position #{ticket} into live management (SL={p.sl}, TP={p.tp}).")
+
+            # Check if any local managed positions no longer exist on broker
+            disappeared_tickets = []
+            for ticket in list(self._managed_positions.keys()):
+                if ticket not in broker_pos_by_ticket:
+                    disappeared_tickets.append(ticket)
+                    pos = self._managed_positions.pop(ticket)
+                    logger.info(f"[RECONCILE] Position #{ticket} closed while offline. Reconciling closed deal...")
+                    deal = await self.broker.get_closed_deal(ticket)
+                    if deal and self.history_store:
+                        await self.history_store.record_trade(
+                            ticket=ticket,
+                            symbol=deal.symbol,
+                            direction=deal.direction,
+                            volume=deal.volume,
+                            open_price=deal.open_price,
+                            close_price=deal.close_price,
+                            open_time=deal.open_time,
+                            close_time=deal.close_time,
+                            pnl=round(deal.profit + getattr(deal, "commission", 0.0) + getattr(deal, "swap", 0.0), 2),
+                            pnl_r=0.0,
+                            regime=pos.initial_regime,
+                            sub_regime=pos.sub_regime,
+                            close_reason="Closed While Offline",
+                        )
+
+            # Reconcile pending limit orders
+            for ticket, o in broker_orders_by_ticket.items():
+                if ticket not in self._pending_limit_orders:
+                    self._pending_limit_orders[ticket] = o
+                    logger.info(f"[RECONCILE] Enrolled pending order #{ticket} into live tracking.")
+
+            # If there are unprotected positions, flag contradictory state
+            if unprotected_positions:
+                self._contradictory_state_active = True
+                self._contradictory_state_reason = f"Position(s) #{unprotected_positions} missing protective stop loss"
+                if self.history_store:
+                    await self.history_store.record_audit_event("UNPROTECTED_POSITION_ALERT", self._contradictory_state_reason)
+            else:
+                self._contradictory_state_active = False
+                self._contradictory_state_reason = ""
+
+            return {
+                "status": "OK",
+                "enrolled": enrolled_positions,
+                "disappeared": disappeared_tickets,
+                "unprotected": unprotected_positions,
+                "is_contradictory": self._contradictory_state_active,
+            }
+
+    async def _reconcile_post_order_failure(
+        self,
+        symbol: str,
+        direction: str,
+        lot_size: float,
+        target_entry: float,
+        padded_sl: float,
+        suggested_tp: float,
+        comment: str,
+        signal: ConfluenceSignal,
+    ) -> Optional[ManagedPosition]:
+        """
+        Post-order failure recovery:
+        Queries broker to verify whether an order was accepted despite dispatch errors or timeouts.
+        Verifies protective SL/TP, enforces emergency close policy if protection cannot be confirmed,
+        and logs audit trail.
+        """
+        try:
+            await asyncio.sleep(0.5)
+            open_positions = await self.broker.get_open_positions()
+            now = time.time()
+            match_pos: Optional[Position] = None
+
+            for p in open_positions:
+                ticket_int = int(p.ticket) if str(p.ticket).isdigit() else p.ticket
+                if ticket_int in self._managed_positions:
+                    continue
+                p_dir = p.type.value if hasattr(p.type, "value") else str(p.type)
+                if p.symbol == symbol and p_dir.upper() == direction.upper():
+                    is_recent = abs(now - getattr(p, "open_time", now)) < 15.0
+                    vol_match = abs(p.volume - lot_size) < 0.001
+                    if is_recent or vol_match or (comment and getattr(p, "comment", "") == comment):
+                        match_pos = p
+                        break
+
+            if not match_pos:
+                logger.info("[POST-ORDER RECOVERY] Confirmed no ghost position was opened by broker.")
+                return None
+
+            ticket = int(match_pos.ticket)
+            logger.warning(f"[POST-ORDER RECOVERY] Unregistered position #{ticket} detected on broker. Verifying protective stop loss...")
+
+            # Protection verification
+            sl_confirmed = (match_pos.sl > 0.0)
+            if not sl_confirmed:
+                logger.warning(f"[POST-ORDER RECOVERY] Position #{ticket} has no confirmed SL. Attempting to attach protective SL={padded_sl}...")
+                mod_ok = await self.broker.modify_position(ticket, sl=padded_sl, tp=suggested_tp)
+                if not mod_ok:
+                    # EMERGENCY POLICY: Position exists without protective SL and cannot be modified!
+                    logger.critical(f"[EMERGENCY POLICY] Could not verify/attach protective stop loss to position #{ticket}! Closing immediately.")
+                    await self.broker.close_position(ticket)
+                    if self.history_store:
+                        await self.history_store.record_audit_event(
+                            "EMERGENCY_CLOSE",
+                            f"Closed position #{ticket} because protective stop-loss could not be verified."
+                        )
+                    self._contradictory_state_active = True
+                    self._contradictory_state_reason = f"Emergency close triggered on unprotected position #{ticket}"
+                    return None
+                sl_confirmed = True
+
+            # Register recovered position safely into management
+            recovered_managed = ManagedPosition(
+                ticket=ticket,
+                symbol=symbol,
+                direction=direction,
+                volume=match_pos.volume if match_pos.volume > 0 else lot_size,
+                open_price=match_pos.open_price if match_pos.open_price > 0 else target_entry,
+                sl=padded_sl,
+                tp=suggested_tp,
+                entry_time=getattr(match_pos, "open_time", now) or now,
+                risk_r_dist=abs(target_entry - padded_sl),
+                initial_regime=signal.regime,
+                current_regime=signal.regime,
+                sub_regime=signal.sub_regime,
+                be_lock_r=signal.be_lock_r,
+                stall_exit_seconds=signal.stall_exit_seconds,
+            )
+            async with self._lock:
+                self._managed_positions[ticket] = recovered_managed
+
+            if self.history_store:
+                await self.history_store.record_audit_event(
+                    "POST_ORDER_RECOVERY",
+                    f"Recovered position #{ticket} ({symbol} {direction} {match_pos.volume}) with confirmed SL={padded_sl}"
+                )
+
+            logger.info(f"[POST-ORDER RECOVERY] Successfully enrolled recovered position #{ticket} into Chameleon management.")
+            return recovered_managed
+
+        except Exception as e:
+            logger.critical(f"[POST-ORDER RECOVERY ERROR] Error while recovering unconfirmed order: {e}", exc_info=True)
+            return None
+
     async def start(self) -> None:
         """Start the 250ms live position management loop."""
         self._running = True
         await self.sync_daily_risk_state()
+        await self.reconcile_broker_state()
         if self._management_task is None or self._management_task.done():
             self._management_task = asyncio.create_task(self._management_loop())
         logger.info("TradeManager 250ms Follow-the-Market loop started.")
@@ -210,6 +428,11 @@ class TradeManager:
                 msg = f"Cannot resume: Daily drawdown ({max_dd:.1f}% >= {self.max_daily_drawdown_pct:.1f}%) still breached!"
                 logger.warning(msg)
                 return False, msg
+        rec = await self.reconcile_broker_state()
+        if rec.get("is_contradictory", False):
+            msg = f"Cannot resume: Unresolved contradictory broker state ({self._contradictory_state_reason})."
+            logger.warning(msg)
+            return False, msg
 
         self._pause_until = 0.0
         self._daily_losses_count = 0
@@ -263,6 +486,9 @@ class TradeManager:
         if cb_tripped:
             return False, f"Circuit Breaker active: {cb_reason}"
 
+        if getattr(self, "_contradictory_state_active", False):
+            return False, f"Reconciliation Alert: Unresolved contradictory broker state ({self._contradictory_state_reason}). New orders blocked."
+
         if acc and self._start_of_day_balance > 0:
             eq_dd_usd = max(0.0, self._start_of_day_balance - acc.equity)
             eq_dd_pct = (eq_dd_usd / self._start_of_day_balance) * 100.0
@@ -314,6 +540,9 @@ class TradeManager:
         acc = await self.broker.get_account_info()
         eff_balance = acc.balance if acc else 100.0
         self._reset_daily_metrics_if_new_day(current_balance=eff_balance)
+
+        if getattr(self, "_contradictory_state_active", False):
+            return False, f"Reconciliation Alert: Unresolved contradictory broker state ({self._contradictory_state_reason}). New orders blocked."
 
         if self.is_paused():
             return False, f"Trading paused (Daily losses: {self._daily_losses_count}/{self.max_daily_losses}, Consecutive: {self._consecutive_losses}/{self.max_consecutive_losses})"
@@ -621,8 +850,38 @@ class TradeManager:
                         async with self._lock:
                             self._managed_positions[fallback_managed.ticket] = fallback_managed
 
+                if not res.success or res.ticket is None:
+                    logger.warning(f"[ORDER UNCONFIRMED] Broker returned non-success ({res.error}). Checking if order was accepted anyway...")
+                    recovered = await self._reconcile_post_order_failure(
+                        symbol=signal.symbol,
+                        direction=signal.direction,
+                        lot_size=lot_size,
+                        target_entry=target_entry,
+                        padded_sl=padded_sl,
+                        suggested_tp=signal.suggested_tp,
+                        comment=order_comment,
+                        signal=signal,
+                    )
+                    if recovered:
+                        return OrderResult(success=True, ticket=recovered.ticket, price=recovered.open_price, volume=recovered.volume)
+
                 return res
 
+            except Exception as exec_err:
+                logger.error(f"[EXECUTION EXCEPTION] Order dispatch raised error: {exec_err}. Initiating post-order reconciliation...")
+                recovered = await self._reconcile_post_order_failure(
+                    symbol=signal.symbol,
+                    direction=signal.direction,
+                    lot_size=lot_size,
+                    target_entry=target_entry,
+                    padded_sl=padded_sl,
+                    suggested_tp=signal.suggested_tp,
+                    comment=order_comment,
+                    signal=signal,
+                )
+                if recovered:
+                    return OrderResult(success=True, ticket=recovered.ticket, price=recovered.open_price, volume=recovered.volume)
+                raise
             finally:
                 asyncio.create_task(self._release_in_flight_lock(delay_sec=2.5))
 
