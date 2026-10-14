@@ -72,7 +72,7 @@ class GoldRiskEngine:
         budget_usd: float = 10.00,
         risk_per_trade_pct: float = 2.0, # Configured base risk percentage
         compounding_enabled: bool = True,
-        max_daily_losses: int = 4,
+        max_daily_losses: int = 0,       # 0 = disabled (no daily loss limit)
         risk_profile: str = "balanced",   # "conservative", "balanced", "aggressive"
     ):
         self.account_type = account_type.lower()

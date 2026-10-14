@@ -1428,3 +1428,238 @@ class ConfluenceScorer:
             is_pre_news_trajectory=is_pre_news_active,
             pre_news_trajectory_confidence=float(self.auto_brain_state.get("news_confidence", 0.0)) if is_pre_news_active else 0.0,
         )
+
+    def calculate_planned_limits(
+        self,
+        symbol: str,
+        dfs: Dict[str, pd.DataFrame],
+        current_tick_bid: float,
+        current_tick_ask: float,
+        now_ts: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """
+        Institutional Planned Limits Engine.
+        Continuously calculates resting BUY_LIMIT and SELL_LIMIT setups at institutional
+        Supply/Demand zones and SuperTrend structural support/resistance.
+        Provides full mathematical transparency (entry, SL, TP, R:R, score, invalidation, and reasons)
+        so the bot displays exact planned calculations and never 'just sits there' during chop.
+        """
+        now = now_ts or time.time()
+        is_gold = any(k in symbol.upper() for k in ["XAU", "GOLD"])
+        mid_price = round((current_tick_bid + current_tick_ask) / 2.0, 2 if is_gold else 5)
+
+        df_1h = dfs.get("1H")
+        df_15m = dfs.get("15m")
+        df_5m = dfs.get("5m")
+        df_1m = dfs.get("1m")
+
+        if df_5m is None or len(df_5m) < 15 or df_1m is None or len(df_1m) < 5:
+            return {
+                "symbol": symbol,
+                "mid_price": mid_price,
+                "planned_buy": None,
+                "planned_sell": None,
+                "recalculated_at": now,
+            }
+
+        # 1. Structural Zones & Indicators
+        zones = TechnicalIndicators.detect_supply_demand_zones(df_5m, df_15m, mid_price, is_gold)
+        traps = TechnicalIndicators.detect_liquidity_traps(df_5m, mid_price, is_gold)
+        st_5m = TechnicalIndicators.calculate_supertrend(df_5m["high"], df_5m["low"], df_5m["close"], 10, 2.5) if len(df_5m) >= 20 else {}
+        st_15m = TechnicalIndicators.calculate_supertrend(df_15m["high"], df_15m["low"], df_15m["close"], 10, 2.5) if df_15m is not None and len(df_15m) >= 20 else {}
+
+        # ATR calculation for risk distance
+        atr_series = TechnicalIndicators.atr(df_5m["high"], df_5m["low"], df_5m["close"], 14)
+        atr_val = float(atr_series[-1]) if len(atr_series) > 0 and not np.isnan(atr_series[-1]) else (2.20 if is_gold else 0.0020)
+        atr_val = max(1.20 if is_gold else 0.0010, min(4.50 if is_gold else 0.0045, atr_val))
+
+        # -------------------------------------------------------------
+        # 2. Institutional BUY LIMIT Calculation
+        # -------------------------------------------------------------
+        cand_buy_level = current_tick_ask - (atr_val * 0.75)
+        buy_source = "ATR Pullback Level"
+        if st_5m.get("is_bull") and st_5m.get("line", 0) < (current_tick_ask - 0.40):
+            cand_buy_level = float(st_5m["line"])
+            buy_source = f"5m SuperTrend Support (${cand_buy_level:.2f})"
+        elif zones.get("valid") and zones.get("demand_ceiling", 0) < (current_tick_ask - 0.40):
+            cand_buy_level = float(zones["demand_ceiling"])
+            buy_source = f"Demand Ceiling (${cand_buy_level:.2f})"
+
+        buy_limit_price = min(round(cand_buy_level, 2 if is_gold else 5), round(current_tick_ask - 0.45, 2 if is_gold else 5))
+        buy_dist = round(current_tick_ask - buy_limit_price, 2 if is_gold else 5)
+
+        # SL placed below Demand floor or 1.1x ATR
+        dem_floor = float(zones.get("demand_floor", buy_limit_price - atr_val)) if zones.get("valid") else (buy_limit_price - atr_val)
+        raw_buy_sl = min(buy_limit_price - (atr_val * 1.1), dem_floor - (0.50 if is_gold else 0.0005))
+        min_sl_dist = 1.80 if is_gold else 0.0015
+        max_sl_dist = 4.50 if is_gold else 0.0040
+        buy_sl = round(max(buy_limit_price - max_sl_dist, min(buy_limit_price - min_sl_dist, raw_buy_sl)), 2 if is_gold else 5)
+        buy_risk = round(buy_limit_price - buy_sl, 2 if is_gold else 5)
+
+        # TP placed at Mid-Range or 1.8R/2.2R
+        target_rr = 2.0
+        mid_target = float(zones.get("mid_range", buy_limit_price + (buy_risk * target_rr)))
+        cand_tp = max(buy_limit_price + (buy_risk * 1.8), mid_target)
+        if st_15m.get("line", 0) > (buy_limit_price + 1.50):
+            cand_tp = min(cand_tp, float(st_15m["line"]) - (0.30 if is_gold else 0.0003))
+        buy_tp = round(max(buy_limit_price + (buy_risk * 1.5), cand_tp), 2 if is_gold else 5)
+        buy_reward = round(buy_tp - buy_limit_price, 2 if is_gold else 5)
+        buy_rr = round(buy_reward / buy_risk, 2) if buy_risk > 0 else target_rr
+
+        buy_invalidation = round(buy_sl - (0.50 if is_gold else 0.0005), 2 if is_gold else 5)
+
+        # Confluence / Readiness Score
+        b_score = 52
+        if st_5m.get("is_bull"):
+            b_score += 15
+        if zones.get("valid") and abs(buy_limit_price - zones.get("demand_ceiling", 0)) < 2.0:
+            b_score += 12
+        if buy_rr >= 2.0:
+            b_score += 8
+        if traps.get("is_bear_trap"):
+            b_score += 15
+        if st_15m.get("is_bull"):
+            b_score += 10
+        b_score = min(95, max(30, b_score))
+
+        buy_status = "WAITING_PULLBACK"
+        if buy_dist <= 3.50 and b_score >= 60:
+            buy_status = "READY_TO_STAGE"
+
+        planned_buy = {
+            "symbol": symbol,
+            "direction": "BUY",
+            "order_type": "BUY_LIMIT",
+            "limit_price": float(buy_limit_price),
+            "current_price": float(current_tick_ask),
+            "distance_pts": float(buy_dist),
+            "sl": float(buy_sl),
+            "tp": float(buy_tp),
+            "risk_pts": float(buy_risk),
+            "reward_pts": float(buy_reward),
+            "target_rr": float(buy_rr),
+            "invalidation_price": float(buy_invalidation),
+            "score": int(b_score),
+            "source": buy_source,
+            "status": buy_status,
+            "reason": f"BUY_LIMIT @ {buy_limit_price:.2f} ({buy_source}) | SL: {buy_sl:.2f} (${buy_risk:.2f}) | TP: {buy_tp:.2f} (${buy_reward:.2f}, {buy_rr:.1f}R) | Inval < {buy_invalidation:.2f}",
+        }
+
+        # -------------------------------------------------------------
+        # 3. Institutional SELL LIMIT Calculation
+        # -------------------------------------------------------------
+        cand_sell_level = current_tick_bid + (atr_val * 0.75)
+        sell_source = "ATR Pullback Level"
+        if st_15m.get("is_bear") and st_15m.get("line", 0) > (current_tick_bid + 0.40):
+            cand_sell_level = float(st_15m["line"])
+            sell_source = f"15m SuperTrend Resistance (${cand_sell_level:.2f})"
+        elif zones.get("valid") and zones.get("supply_floor", 0) > (current_tick_bid + 0.40):
+            cand_sell_level = float(zones["supply_floor"])
+            sell_source = f"Supply Floor (${cand_sell_level:.2f})"
+
+        sell_limit_price = max(round(cand_sell_level, 2 if is_gold else 5), round(current_tick_bid + 0.45, 2 if is_gold else 5))
+        sell_dist = round(sell_limit_price - current_tick_bid, 2 if is_gold else 5)
+
+        sup_ceiling = float(zones.get("supply_ceiling", sell_limit_price + atr_val)) if zones.get("valid") else (sell_limit_price + atr_val)
+        raw_sell_sl = max(sell_limit_price + (atr_val * 1.1), sup_ceiling + (0.60 if is_gold else 0.0005))
+        sell_sl = round(min(sell_limit_price + max_sl_dist, max(sell_limit_price + min_sl_dist, raw_sell_sl)), 2 if is_gold else 5)
+        sell_risk = round(sell_sl - sell_limit_price, 2 if is_gold else 5)
+
+        mid_target_sell = float(zones.get("mid_range", sell_limit_price - (sell_risk * target_rr)))
+        cand_sell_tp = min(sell_limit_price - (sell_risk * 1.8), mid_target_sell)
+        if st_5m.get("line", 0) < (sell_limit_price - 1.50):
+            cand_sell_tp = max(cand_sell_tp, float(st_5m["line"]) + (0.30 if is_gold else 0.0003))
+        sell_tp = round(min(sell_limit_price - (sell_risk * 1.5), cand_sell_tp), 2 if is_gold else 5)
+        sell_reward = round(sell_limit_price - sell_tp, 2 if is_gold else 5)
+        sell_rr = round(sell_reward / sell_risk, 2) if sell_risk > 0 else target_rr
+
+        sell_invalidation = round(sell_sl + (0.50 if is_gold else 0.0005), 2 if is_gold else 5)
+
+        s_score = 52
+        if st_15m.get("is_bear"):
+            s_score += 15
+        if zones.get("valid") and abs(sell_limit_price - zones.get("supply_floor", 0)) < 2.0:
+            s_score += 12
+        if sell_rr >= 2.0:
+            s_score += 8
+        if traps.get("is_bull_trap"):
+            s_score += 15
+        if st_5m.get("is_bear"):
+            s_score += 10
+        s_score = min(95, max(30, s_score))
+
+        sell_status = "WAITING_RETEST"
+        if sell_dist <= 3.50 and s_score >= 60:
+            sell_status = "READY_TO_STAGE"
+
+        planned_sell = {
+            "symbol": symbol,
+            "direction": "SELL",
+            "order_type": "SELL_LIMIT",
+            "limit_price": float(sell_limit_price),
+            "current_price": float(current_tick_bid),
+            "distance_pts": float(sell_dist),
+            "sl": float(sell_sl),
+            "tp": float(sell_tp),
+            "risk_pts": float(sell_risk),
+            "reward_pts": float(sell_reward),
+            "target_rr": float(sell_rr),
+            "invalidation_price": float(sell_invalidation),
+            "score": int(s_score),
+            "source": sell_source,
+            "status": sell_status,
+            "reason": f"SELL_LIMIT @ {sell_limit_price:.2f} ({sell_source}) | SL: {sell_sl:.2f} (${sell_risk:.2f}) | TP: {sell_tp:.2f} (${sell_reward:.2f}, {sell_rr:.1f}R) | Inval > {sell_invalidation:.2f}",
+        }
+
+        res = {
+            "symbol": symbol,
+            "mid_price": float(mid_price),
+            "planned_buy": planned_buy,
+            "planned_sell": planned_sell,
+            "zones": {
+                "demand_floor": float(zones.get("demand_floor", 0.0)) if zones.get("demand_floor") is not None else None,
+                "demand_ceiling": float(zones.get("demand_ceiling", 0.0)) if zones.get("demand_ceiling") is not None else None,
+                "supply_floor": float(zones.get("supply_floor", 0.0)) if zones.get("supply_floor") is not None else None,
+                "supply_ceiling": float(zones.get("supply_ceiling", 0.0)) if zones.get("supply_ceiling") is not None else None,
+                "mid_range": float(zones.get("mid_range", 0.0)) if zones.get("mid_range") is not None else None,
+            },
+            "recalculated_at": float(now),
+        }
+        self.latest_planned_limits = res
+        return res
+
+    def create_signal_from_planned_limit(self, planned_limit: Dict[str, Any]) -> ConfluenceSignal:
+        """Construct full ConfluenceSignal from a planned limit dictionary."""
+        direction = planned_limit["direction"]
+        order_type = planned_limit["order_type"]
+        limit_price = planned_limit["limit_price"]
+        sl = planned_limit["sl"]
+        tp = planned_limit["tp"]
+        risk_dist = planned_limit["risk_pts"]
+        rr = planned_limit["target_rr"]
+        score = planned_limit["score"]
+        inval = planned_limit["invalidation_price"]
+        reason = planned_limit["reason"]
+
+        tier = "TIER_2_BALANCED" if score >= 68 else "TIER_3_AGGRESSIVE"
+        return ConfluenceSignal(
+            symbol=planned_limit.get("symbol", "GOLD"),
+            direction=direction,
+            score=score,
+            tier=tier,
+            regime="ADAPTIVE_LIMIT_STAGING",
+            sub_regime="ZONE_BOUND_SETUP",
+            target_rr=rr,
+            entry_price=limit_price,
+            suggested_sl=sl,
+            suggested_tp=tp,
+            risk_r_dist=risk_dist,
+            be_lock_r=0.60,
+            stall_exit_seconds=90.0,
+            breakdown={"limit_setup": score},
+            reason=f"🎯 PLANNED {order_type} | {reason}",
+            time=time.time(),
+            order_type=order_type,
+            limit_price=limit_price,
+            invalidation_price=inval,
+        )

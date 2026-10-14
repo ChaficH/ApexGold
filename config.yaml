@@ -90,11 +90,21 @@ trading:
 
   # Risk Guards & Circuit Breakers:
   max_open_positions: 1     # Strict focus on 1 high-probability trade at a time
-  max_daily_losses: 4       # Pause trading after 4 consecutive daily losses
+  max_daily_losses: 0       # 0 = disabled (no daily loss limit)
   max_daily_drawdown_pct: 25.0
   correlation_guard: true   # Block opposing/redundant USD exposure across pairs
   post_loss_buffer_seconds: 12.0       # Fast broker settlement buffer (not a 2m/5m freeze)
   anti_revenge_window_seconds: 45.0    # Structural window preventing repeating same losing trade at same level
+
+  # Institutional Planned Limits Engine:
+  limits:
+    enabled: true             # Enable institutional limit order calculations & staging
+    auto_place: true          # Auto-place limit orders on MT5 when score threshold is crossed in full_auto
+    min_score: 60             # Minimum confluence score required to place limit order
+    min_distance_points: 0.50 # Minimum distance from current market price (points)
+    max_distance_points: 4.50 # Maximum distance to place pending limit (points)
+    timeout_seconds: 90.0     # Time to cancel limit order if not filled
+    max_drift_points: 3.00    # If price moves away by > 3.00 pts, cancel limit
 
 # ------------------------------------------------------------------------------
 # Confluence & Strategy Scoring Engine (100-Point System)

@@ -80,6 +80,7 @@ class ServerContext:
         self.mt5_pending_actions: List[Dict[str, Any]] = []
         self.mt5_last_seen = 0.0
         self.mt5_algo_trading_allowed = True
+        self.planned_limits: Dict[str, Any] = {}
 
     def is_live_trading_active(self) -> bool:
         """Returns True only when live trading is explicitly enabled on a real MT5 broker adapter."""
@@ -294,6 +295,7 @@ async def get_status():
         "tf_trends": auto_brain.get("tf_trends", {"1H": "NEUTRAL", "15m": "NEUTRAL", "5m": "NEUTRAL", "1m": "NEUTRAL"}),
         "feed_logs": ctx.news_reactor.get_feed_logs(15) if ctx.news_reactor else [],
         "allow_pre_news_trajectory": getattr(ctx, "allow_pre_news_trajectory", True),
+        "planned_limits": getattr(ctx, "planned_limits", {}),
         "pre_news_trajectory": ctx.news_reactor.evaluate_pre_news_trajectory(
             symbol=ctx.active_symbol,
             dfs={
@@ -740,6 +742,33 @@ async def action_modify_order(payload: ModifyOrderPayload):
     return {"status": "OK", "ticket": ticket, "price": price, "sl": sl, "tp": tp}
 
 
+@app.get("/api/planned_limits")
+async def get_planned_limits():
+    """Return live institutional planned BUY_LIMIT and SELL_LIMIT calculations."""
+    return getattr(ctx, "planned_limits", {})
+
+
+class StageLimitPayload(BaseModel):
+    direction: str = "BUY"
+
+
+@app.post("/api/actions/stage_limit")
+async def action_stage_limit(payload: StageLimitPayload):
+    """1-Click Action: Manually stage the currently calculated institutional limit order."""
+    dir_clean = payload.direction.upper().strip()
+    limits = getattr(ctx, "planned_limits", {})
+    key = "planned_buy" if dir_clean == "BUY" else "planned_sell"
+    target_limit = limits.get(key)
+    if not target_limit:
+        return {"status": "ERROR", "message": f"No active planned {dir_clean} limit setup calculated"}
+    if not ctx.trade_manager or not ctx.scorer:
+        return {"status": "ERROR", "message": "Trade manager or scorer not ready"}
+    res = await ctx.trade_manager.execute_planned_limit(target_limit, ctx.scorer)
+    if res.success:
+        return {"status": "OK", "ticket": res.ticket, "price": res.price, "message": f"Limit order #{res.ticket} staged successfully @ {res.price}"}
+    return {"status": "ERROR", "message": res.error or "Failed to stage limit order"}
+
+
 @app.post("/api/backtest")
 async def run_backtest(days: int = 30, mode: str = "auto_adaptive"):
     """Trigger 30-day historical multi-timeframe backtest on active symbol."""
@@ -817,6 +846,10 @@ async def mt5_bridge_tick(payload: Dict[str, Any], request: Request = None):
                 ctx.broker.balance = balance
             if ctx.risk_engine:
                 ctx.risk_engine.base_budget_usd = balance
+            if ctx.trade_manager:
+                if ctx.trade_manager._start_of_day_balance <= 1.0 or ctx.trade_manager._start_of_day_balance < balance:
+                    ctx.trade_manager._start_of_day_balance = balance
+                    ctx.trade_manager.reset_cooldown()
         if equity > 0 and hasattr(ctx.broker, "equity"):
             ctx.broker.equity = equity
         if hasattr(ctx.broker, "_override_free_margin") and free_margin > 0:
@@ -1392,6 +1425,7 @@ async def broadcast_loop():
                 "news_state": ctx.news_reactor.get_complete_news_state() if ctx.news_reactor else {},
                 "daily_stats": ctx.trade_manager.get_daily_status() if ctx.trade_manager else {},
                 "feed_logs": ctx.news_reactor.get_feed_logs(10) if ctx.news_reactor else [],
+                "planned_limits": getattr(ctx, "planned_limits", {}),
             }
 
             await ws_manager.broadcast(packet)

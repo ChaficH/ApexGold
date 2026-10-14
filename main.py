@@ -190,6 +190,34 @@ async def autonomous_trading_loop(
                     utc_timestamp=now,
                 )
 
+                # Institutional Planned Limits Engine (Calculate Buy Limit & Sell Limit Setups)
+                planned_limits = scorer.calculate_planned_limits(
+                    symbol=cur_sym,
+                    dfs=dfs,
+                    current_tick_bid=tick.bid,
+                    current_tick_ask=tick.ask,
+                    now_ts=now,
+                )
+                ctx.planned_limits = planned_limits
+
+                # Sync Active Status with MT5 Pending Orders
+                mt5_orders = getattr(ctx, "mt5_pending_orders", []) or []
+                active_limit_types = [str(o.get("type", "")).upper() for o in mt5_orders]
+                if planned_limits.get("planned_buy"):
+                    if any("BUY_LIMIT" in t for t in active_limit_types):
+                        planned_limits["planned_buy"]["status"] = "ACTIVE_ON_BROKER"
+                if planned_limits.get("planned_sell"):
+                    if any("SELL_LIMIT" in t for t in active_limit_types):
+                        planned_limits["planned_sell"]["status"] = "ACTIVE_ON_BROKER"
+
+                # Reconcile & remove any pending limits that no longer work after recalculation
+                if trade_manager:
+                    await trade_manager.reconcile_planned_limits(
+                        planned_limits=planned_limits,
+                        current_bid=tick.bid,
+                        current_ask=tick.ask,
+                    )
+
                 # Prioritize highest scoring signal
                 candidate_signal = None
                 if buy_sig and sell_sig:
@@ -231,6 +259,30 @@ async def autonomous_trading_loop(
                             )
                         elif mode == "scanner":
                             logger.info(f"[SCANNER FLOW] {candidate_signal.direction} {primary_symbol} Score: {candidate_signal.score}/100 ({candidate_signal.regime})")
+                elif ctx.execution_mode == "full_auto" and trade_manager and ctx.is_live_trading_active():
+                    # If no market execution, check if planned limits are ready to stage at institutional zones
+                    open_pos_count = len(getattr(trade_manager, "_managed_positions", {}))
+                    if open_pos_count == 0:
+                        p_buy = planned_limits.get("planned_buy")
+                        p_sell = planned_limits.get("planned_sell")
+                        limits_cfg = ctx.config.get("trading", {}).get("limits", {})
+                        auto_place = limits_cfg.get("auto_place", True)
+
+                        if auto_place:
+                            # Prioritize highest scored planned limit setup
+                            best_limit = None
+                            if p_buy and p_buy.get("status") == "READY_TO_STAGE" and p_sell and p_sell.get("status") == "READY_TO_STAGE":
+                                best_limit = p_buy if p_buy.get("score", 0) >= p_sell.get("score", 0) else p_sell
+                            elif p_buy and p_buy.get("status") == "READY_TO_STAGE":
+                                best_limit = p_buy
+                            elif p_sell and p_sell.get("status") == "READY_TO_STAGE":
+                                best_limit = p_sell
+
+                            if best_limit and best_limit.get("score", 0) >= limits_cfg.get("min_score", 60):
+                                res_lim = await trade_manager.execute_planned_limit(best_limit, scorer)
+                                if res_lim.success:
+                                    best_limit["status"] = "ACTIVE_ON_BROKER"
+                                    logger.info(f"[INSTITUTIONAL LIMIT AUTO-STAGED] {best_limit['order_type']} #{res_lim.ticket} @ {best_limit['limit_price']}")
 
         except asyncio.CancelledError:
             break
@@ -295,7 +347,7 @@ async def lifespan(app_instance):
         budget_usd=float(trading_cfg.get("budget_usd", 10.0)),
         risk_per_trade_pct=float(trading_cfg.get("risk_per_trade_pct", 2.0)),
         compounding_enabled=trading_cfg.get("compounding_enabled", True),
-        max_daily_losses=int(trading_cfg.get("max_daily_losses", 4)),
+        max_daily_losses=int(trading_cfg.get("max_daily_losses", 0)),
         risk_profile=trading_cfg.get("risk_profile", "balanced"),
     )
     ctx.risk_engine = risk_engine
@@ -307,7 +359,7 @@ async def lifespan(app_instance):
         news_reactor=news_reactor,
         risk_engine=risk_engine,
         correlation_guard=trading_cfg.get("correlation_guard", True),
-        max_daily_losses=int(trading_cfg.get("max_daily_losses", 4)),
+        max_daily_losses=int(trading_cfg.get("max_daily_losses", 0)),
         max_daily_drawdown_pct=float(trading_cfg.get("max_daily_drawdown_pct", 25.0)),
         max_open_positions=int(trading_cfg.get("max_open_positions", 1)),
         history_store=history_store,

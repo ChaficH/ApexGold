@@ -85,7 +85,7 @@ class TradeManager:
         news_reactor: Optional[NewsReactor] = None,
         risk_engine: Optional[GoldRiskEngine] = None,
         correlation_guard: bool = True,
-        max_daily_losses: int = 4,
+        max_daily_losses: int = 0,       # 0 = disabled (no daily loss limit)
         max_consecutive_losses: int = 3,
         max_daily_drawdown_pct: float = 25.0,
         max_total_open_risk_pct: float = 10.0,
@@ -564,7 +564,7 @@ class TradeManager:
         if getattr(self, "_contradictory_state_active", False):
             return False, f"Reconciliation Alert: Unresolved contradictory broker state ({self._contradictory_state_reason}). New orders blocked."
 
-        if acc and self._start_of_day_balance > 0:
+        if acc and getattr(acc, "equity", 0.0) > 0 and self._start_of_day_balance > 1.0:
             eq_dd_usd = max(0.0, self._start_of_day_balance - acc.equity)
             eq_dd_pct = (eq_dd_usd / self._start_of_day_balance) * 100.0
             real_dd_usd = max(0.0, -self._daily_realized_pnl)
@@ -620,10 +620,11 @@ class TradeManager:
             return False, f"Reconciliation Alert: Unresolved contradictory broker state ({self._contradictory_state_reason}). New orders blocked."
 
         if self.is_paused():
-            return False, f"Trading paused (Daily losses: {self._daily_losses_count}/{self.max_daily_losses}, Consecutive: {self._consecutive_losses}/{self.max_consecutive_losses})"
+            daily_str = f"Daily losses: {self._daily_losses_count}/{self.max_daily_losses}" if self.max_daily_losses > 0 else "Daily losses: Unlimited"
+            return False, f"Trading paused ({daily_str}, Consecutive: {self._consecutive_losses}/{self.max_consecutive_losses})"
 
         # 0. Daily Drawdown Circuit Breaker Enforcement
-        if acc and self._start_of_day_balance > 0:
+        if acc and getattr(acc, "equity", 0.0) > 0 and self._start_of_day_balance > 1.0:
             eq_dd_usd = max(0.0, self._start_of_day_balance - acc.equity)
             eq_dd_pct = (eq_dd_usd / self._start_of_day_balance) * 100.0
             real_dd_usd = max(0.0, -self._daily_realized_pnl)
@@ -1642,7 +1643,7 @@ class TradeManager:
             logger.warning(
                 f"[POST-LOSS BUFFER] Trade #{pos.ticket} closed with loss (${pnl:.2f}). "
                 f"Consecutive losses: {self._consecutive_losses}/{self.max_consecutive_losses}, "
-                f"Daily losses: {self._daily_losses_count}/{self.max_daily_losses}. Buffer active for {self.post_loss_buffer_seconds}s."
+                f"Daily losses: {self._daily_losses_count}/{self.max_daily_losses if self.max_daily_losses > 0 else 'Unlimited'}. Buffer active for {self.post_loss_buffer_seconds}s."
             )
             if self.max_consecutive_losses > 0 and self._consecutive_losses >= self.max_consecutive_losses:
                 self.pause_trading(minutes=15)
@@ -1718,3 +1719,94 @@ class TradeManager:
             "pause_seconds_left": max(0, int(self._pause_until - now)),
             "post_loss_cooldown_seconds_left": max(0, int(self._post_loss_cooldown_until - now)),
         }
+
+    async def execute_planned_limit(
+        self,
+        planned_limit: Dict[str, Any],
+        scorer: Any,
+    ) -> OrderResult:
+        """
+        Execute an institutional planned BUY_LIMIT or SELL_LIMIT order.
+        Verifies no duplicate pending order is already active for this direction.
+        """
+        if not planned_limit or not planned_limit.get("limit_price"):
+            return OrderResult(success=False, error="Invalid planned limit payload")
+
+        limit_type = planned_limit.get("order_type", "BUY_LIMIT")
+
+        # Check existing pending limit orders to avoid duplicates
+        async with self._lock:
+            for lo in self._pending_limit_orders.values():
+                if getattr(lo, "order_type", "") == limit_type:
+                    return OrderResult(success=False, error=f"{limit_type} already active on broker (#{getattr(lo, 'ticket', '')})")
+
+        from ui.server import ctx as s_ctx
+        mt5_orders = getattr(s_ctx, "mt5_pending_orders", []) or []
+        for mo in mt5_orders:
+            if limit_type in str(mo.get("type", "")).upper():
+                return OrderResult(success=False, error=f"{limit_type} already pending on MT5 (#{mo.get('ticket')})")
+
+        sig = scorer.create_signal_from_planned_limit(planned_limit)
+        return await self.execute_trade(sig)
+
+    async def reconcile_planned_limits(
+        self,
+        planned_limits: Dict[str, Any],
+        current_bid: float,
+        current_ask: float,
+    ) -> List[int]:
+        """
+        Recalculate and remove pending limit orders if market conditions invalidate them.
+        If price has drifted away, broken invalidation, or the newly recalculated optimal
+        institutional level has shifted away by > $1.50, cancels the order on MT5.
+        """
+        cancelled_tickets: List[int] = []
+        now = time.time()
+        p_buy = planned_limits.get("planned_buy") if planned_limits else None
+        p_sell = planned_limits.get("planned_sell") if planned_limits else None
+
+        async with self._lock:
+            current_pending = list(self._pending_limit_orders.items())
+
+        for p_ticket, lo in current_pending:
+            order_type = getattr(lo, "order_type", "")
+            o_price = float(getattr(lo, "price", 0.0))
+            cancel_reason = None
+
+            # 1. Check recalculation shift
+            if order_type == "BUY_LIMIT" and p_buy:
+                new_opt_price = float(p_buy.get("limit_price", 0.0))
+                if abs(new_opt_price - o_price) >= 1.50:
+                    cancel_reason = f"Recalculated Buy Limit level shifted from {o_price:.2f} to {new_opt_price:.2f}"
+            elif order_type == "SELL_LIMIT" and p_sell:
+                new_opt_price = float(p_sell.get("limit_price", 0.0))
+                if abs(new_opt_price - o_price) >= 1.50:
+                    cancel_reason = f"Recalculated Sell Limit level shifted from {o_price:.2f} to {new_opt_price:.2f}"
+
+            # 2. Check drift from current market
+            mid_now = (current_bid + current_ask) / 2.0
+            if abs(mid_now - o_price) > 3.50:
+                cancel_reason = f"Price drifted {abs(mid_now - o_price):.2f} pts away from limit {o_price:.2f}"
+
+            # 3. Check invalidation level
+            inval = float(getattr(lo, "invalidation_price", 0.0))
+            if inval > 0:
+                if order_type == "BUY_LIMIT" and current_bid <= inval:
+                    cancel_reason = f"Market breached Buy Invalidation level {inval:.2f}"
+                elif order_type == "SELL_LIMIT" and current_ask >= inval:
+                    cancel_reason = f"Market breached Sell Invalidation level {inval:.2f}"
+
+            # 4. Timeout (90s)
+            c_time = float(getattr(lo, "created_time", now))
+            if (now - c_time) > 90.0:
+                cancel_reason = "Order timed out after 90s without fill"
+
+            if cancel_reason:
+                logger.info(f"[LIMIT RECALCULATED & REMOVED] Order #{p_ticket} {order_type} @ {o_price:.2f} removed: {cancel_reason}")
+                ok = await self.broker.cancel_order(p_ticket)
+                if ok:
+                    cancelled_tickets.append(int(p_ticket))
+                    async with self._lock:
+                        self._pending_limit_orders.pop(p_ticket, None)
+
+        return cancelled_tickets

@@ -585,13 +585,38 @@ class MacSocketMT5Adapter(AbstractBrokerAdapter):
 
     async def get_pending_orders(self, symbol: Optional[str] = None) -> List[Any]:
         """Retrieve active pending limit orders from MT5 via ApexBridge."""
+        from brokers.base import LimitOrder
+        if self._use_http_queue:
+            try:
+                from ui.server import ctx as s_ctx
+                raw = getattr(s_ctx, "mt5_pending_orders", []) or []
+                orders: List[LimitOrder] = []
+                for o in raw:
+                    o_sym = str(o.get("symbol", ""))
+                    if symbol and o_sym and o_sym != symbol:
+                        continue
+                    orders.append(LimitOrder(
+                        ticket=int(o.get("ticket", 0)),
+                        symbol=o_sym,
+                        order_type=str(o.get("type", "BUY_LIMIT")),
+                        price=float(o.get("price", 0.0)),
+                        volume=float(o.get("volume", 0.0)),
+                        sl=float(o.get("sl", 0.0)),
+                        tp=float(o.get("tp", 0.0)),
+                        created_time=float(o.get("time", time.time())),
+                        comment=str(o.get("comment", "")),
+                    ))
+                return orders
+            except Exception as e:
+                logger.debug(f"HTTP pending orders read error: {e}")
+                return []
+
         payload = {"action": "GET_PENDING_ORDERS"}
         if symbol:
             payload["symbol"] = symbol
         res = await self._send_command(payload)
         if res.get("status") != "OK":
             return []
-        from brokers.base import LimitOrder
         raw = res.get("data", [])
         orders: List[LimitOrder] = []
         for o in raw:

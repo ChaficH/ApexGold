@@ -353,6 +353,88 @@
           <div id="pending-orders-container" class="space-y-1.5 max-h-[180px] overflow-y-auto pr-1"></div>
         </div>
 
+        <!-- Institutional Planned Limits Engine (Live Calculated Buy/Sell Limits) -->
+        <div id="planned-limits-wrapper" class="space-y-2 pt-2 border-t border-[#1A2333]">
+          <div class="flex items-center justify-between text-[11px] font-bold text-gray-300">
+            <div class="flex items-center space-x-1.5">
+              <span class="text-amber-400">🎯 Planned Limits Engine</span>
+              <span class="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">RECALCULATING LIVE</span>
+            </div>
+            <span id="planned-limits-recal-time" class="text-[9px] font-mono text-gray-500">Active</span>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-2 text-[10px] font-mono">
+            <!-- Planned BUY LIMIT Card -->
+            <div id="card-planned-buy" class="p-2.5 rounded bg-[#0A121E] border border-emerald-900/40 hover:border-emerald-600 transition space-y-1.5 shadow-sm">
+              <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-1.5">
+                  <span class="px-1.5 py-0.2 rounded text-[9px] font-black bg-emerald-500/20 text-emerald-400 border border-emerald-500/40">BUY LIMIT</span>
+                  <span id="planned-buy-status" class="px-1.5 py-0.2 rounded text-[8px] font-bold uppercase bg-gray-800 text-gray-400">CALCULATING</span>
+                </div>
+                <div class="flex items-center space-x-1">
+                  <span class="text-gray-400 text-[9px]">Score:</span>
+                  <span id="planned-buy-score" class="font-bold text-emerald-400">--/100</span>
+                </div>
+              </div>
+              <div class="flex items-baseline justify-between pt-0.5">
+                <div>
+                  <span class="text-[8px] text-gray-500 block uppercase font-sans">Target Entry</span>
+                  <span id="planned-buy-entry" class="text-xs font-black text-gray-100">$0.00</span>
+                </div>
+                <div class="text-right">
+                  <span class="text-[8px] text-gray-500 block uppercase font-sans">Distance to Ask</span>
+                  <span id="planned-buy-dist" class="text-[11px] font-bold text-blue-400">-- pts</span>
+                </div>
+              </div>
+              <div class="grid grid-cols-3 gap-1 pt-0.5 text-[9px] border-t border-gray-800/60 text-gray-400">
+                <div>SL: <span id="planned-buy-sl" class="text-red-400 font-bold">--</span></div>
+                <div>TP: <span id="planned-buy-tp" class="text-emerald-400 font-bold">--</span></div>
+                <div class="text-right">R:R: <span id="planned-buy-rr" class="text-amber-400 font-bold">--</span></div>
+              </div>
+              <div class="text-[9px] text-gray-500 leading-tight border-t border-gray-800/40 pt-1 flex items-center justify-between">
+                <span id="planned-buy-reason" class="truncate pr-1">Analyzing institutional support...</span>
+                <button onclick="stagePlannedLimit('BUY')" title="Stage Buy Limit immediately" class="px-2 py-0.5 rounded bg-emerald-700/80 hover:bg-emerald-600 text-white font-bold text-[8px] uppercase tracking-wider shrink-0 transition shadow">Stage</button>
+              </div>
+            </div>
+
+            <!-- Planned SELL LIMIT Card -->
+            <div id="card-planned-sell" class="p-2.5 rounded bg-[#160D15] border border-rose-900/40 hover:border-rose-600 transition space-y-1.5 shadow-sm">
+              <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-1.5">
+                  <span class="px-1.5 py-0.2 rounded text-[9px] font-black bg-rose-500/20 text-rose-400 border border-rose-500/40">SELL LIMIT</span>
+                  <span id="planned-sell-status" class="px-1.5 py-0.2 rounded text-[8px] font-bold uppercase bg-gray-800 text-gray-400">CALCULATING</span>
+                </div>
+                <div class="flex items-center space-x-1">
+                  <span class="text-gray-400 text-[9px]">Score:</span>
+                  <span id="planned-sell-score" class="font-bold text-rose-400">--/100</span>
+                </div>
+              </div>
+              <div class="flex items-baseline justify-between pt-0.5">
+                <div>
+                  <span class="text-[8px] text-gray-500 block uppercase font-sans">Target Entry</span>
+                  <span id="planned-sell-entry" class="text-xs font-black text-gray-100">$0.00</span>
+                </div>
+                <div class="text-right">
+                  <span class="text-[8px] text-gray-500 block uppercase font-sans">Distance to Bid</span>
+                  <span id="planned-sell-dist" class="text-[11px] font-bold text-blue-400">-- pts</span>
+                </div>
+              </div>
+              <div class="grid grid-cols-3 gap-1 pt-0.5 text-[9px] border-t border-gray-800/60 text-gray-400">
+                <div>SL: <span id="planned-sell-sl" class="text-red-400 font-bold">--</span></div>
+                <div>TP: <span id="planned-sell-tp" class="text-emerald-400 font-bold">--</span></div>
+                <div class="text-right">R:R: <span id="planned-sell-rr" class="text-amber-400 font-bold">--</span></div>
+              </div>
+              <div class="text-[9px] text-gray-500 leading-tight border-t border-gray-800/40 pt-1 flex items-center justify-between">
+                <span id="planned-sell-reason" class="truncate pr-1">Analyzing institutional resistance...</span>
+                <button onclick="stagePlannedLimit('SELL')" title="Stage Sell Limit immediately" class="px-2 py-0.5 rounded bg-rose-700/80 hover:bg-rose-600 text-white font-bold text-[8px] uppercase tracking-wider shrink-0 transition shadow">Stage</button>
+              </div>
+            </div>
+          </div>
+          <div class="text-[9px] text-gray-500 italic text-center pt-0.5">
+            ⚡ Limits dynamically recalculate with live order-flow — automatically staged at key zones and cancelled if price drifts or invalidates.
+          </div>
+        </div>
+
         <!-- Global Action Bar (accessible when trades open) -->
         <div id="pos-global-actions" class="hidden grid grid-cols-2 gap-2 pt-1">
           <button onclick="emergencyAction('close_all')" class="py-1 rounded bg-red-600 hover:bg-red-500 text-white font-bold text-xs transition shadow">
@@ -1128,6 +1210,77 @@
       // 7c. Synchronize Chart Lines for ALL Open Trades and Pending Orders
       syncAllChartLines(data.positions || [], data.pending_orders || []);
 
+      // 7d. Institutional Planned Limits Engine Rendering
+      if (data.planned_limits) {
+        const pl = data.planned_limits;
+        const pBuy = pl.planned_buy;
+        const pSell = pl.planned_sell;
+
+        // Render Planned BUY LIMIT
+        if (pBuy) {
+          const buyEntry = document.getElementById('planned-buy-entry');
+          const buyDist = document.getElementById('planned-buy-dist');
+          const buySl = document.getElementById('planned-buy-sl');
+          const buyTp = document.getElementById('planned-buy-tp');
+          const buyRr = document.getElementById('planned-buy-rr');
+          const buyScore = document.getElementById('planned-buy-score');
+          const buyStatus = document.getElementById('planned-buy-status');
+          const buyReason = document.getElementById('planned-buy-reason');
+
+          if (buyEntry) buyEntry.innerText = `$${Number(pBuy.limit_price || 0).toFixed(2)}`;
+          if (buyDist) buyDist.innerText = `-${Number(pBuy.distance_pts || 0).toFixed(2)} pts`;
+          if (buySl) buySl.innerText = `$${Number(pBuy.sl || 0).toFixed(2)}`;
+          if (buyTp) buyTp.innerText = `$${Number(pBuy.tp || 0).toFixed(2)}`;
+          if (buyRr) buyRr.innerText = `${Number(pBuy.target_rr || 2.0).toFixed(1)}R`;
+          if (buyScore) buyScore.innerText = `${pBuy.score || 0}/100`;
+          if (buyReason) buyReason.innerText = pBuy.reason || pBuy.source || 'Calculating...';
+
+          if (buyStatus) {
+            const st = pBuy.status || 'CALCULATING';
+            buyStatus.innerText = st.replace(/_/g, ' ');
+            if (st === 'ACTIVE_ON_BROKER') {
+              buyStatus.className = 'px-1.5 py-0.2 rounded text-[8px] font-black uppercase bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 animate-pulse';
+            } else if (st === 'READY_TO_STAGE') {
+              buyStatus.className = 'px-1.5 py-0.2 rounded text-[8px] font-black uppercase bg-blue-500/20 text-blue-400 border border-blue-500/40';
+            } else {
+              buyStatus.className = 'px-1.5 py-0.2 rounded text-[8px] font-bold uppercase bg-gray-800 text-gray-400';
+            }
+          }
+        }
+
+        // Render Planned SELL LIMIT
+        if (pSell) {
+          const sellEntry = document.getElementById('planned-sell-entry');
+          const sellDist = document.getElementById('planned-sell-dist');
+          const sellSl = document.getElementById('planned-sell-sl');
+          const sellTp = document.getElementById('planned-sell-tp');
+          const sellRr = document.getElementById('planned-sell-rr');
+          const sellScore = document.getElementById('planned-sell-score');
+          const sellStatus = document.getElementById('planned-sell-status');
+          const sellReason = document.getElementById('planned-sell-reason');
+
+          if (sellEntry) sellEntry.innerText = `$${Number(pSell.limit_price || 0).toFixed(2)}`;
+          if (sellDist) sellDist.innerText = `+${Number(pSell.distance_pts || 0).toFixed(2)} pts`;
+          if (sellSl) sellSl.innerText = `$${Number(pSell.sl || 0).toFixed(2)}`;
+          if (sellTp) sellTp.innerText = `$${Number(pSell.tp || 0).toFixed(2)}`;
+          if (sellRr) sellRr.innerText = `${Number(pSell.target_rr || 2.0).toFixed(1)}R`;
+          if (sellScore) sellScore.innerText = `${pSell.score || 0}/100`;
+          if (sellReason) sellReason.innerText = pSell.reason || pSell.source || 'Calculating...';
+
+          if (sellStatus) {
+            const st = pSell.status || 'CALCULATING';
+            sellStatus.innerText = st.replace(/_/g, ' ');
+            if (st === 'ACTIVE_ON_BROKER') {
+              sellStatus.className = 'px-1.5 py-0.2 rounded text-[8px] font-black uppercase bg-rose-500/20 text-rose-400 border border-rose-500/40 animate-pulse';
+            } else if (st === 'READY_TO_STAGE') {
+              sellStatus.className = 'px-1.5 py-0.2 rounded text-[8px] font-black uppercase bg-blue-500/20 text-blue-400 border border-blue-500/40';
+            } else {
+              sellStatus.className = 'px-1.5 py-0.2 rounded text-[8px] font-bold uppercase bg-gray-800 text-gray-400';
+            }
+          }
+        }
+      }
+
       // 8. Persistent Performance Stats
       if (data.stats) {
         const s = data.stats;
@@ -1646,6 +1799,25 @@
         }
       } catch (err) {
         appendLog('ERROR', `Cancel limit error: ${err.message}`);
+      }
+    }
+
+    async function stagePlannedLimit(dir) {
+      try {
+        appendLog('EXECUTION', `Staging planned ${dir} limit order...`);
+        const res = await fetch('/api/actions/stage_limit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ direction: dir })
+        });
+        const d = await res.json();
+        if (d.status === 'OK') {
+          appendLog('EXECUTION', `✅ ${dir} Limit Order #${d.ticket} Staged @ ${d.price}`);
+        } else {
+          appendLog('ERROR', `⚠️ Failed to stage ${dir} limit: ${d.message}`);
+        }
+      } catch (err) {
+        appendLog('ERROR', `Stage limit error: ${err.message}`);
       }
     }
 
