@@ -60,11 +60,25 @@ class ServerContext:
         self.aggressiveness_pct = 65.0      # 1% to 100% continuous dial
         
         self.history_store: Optional[Any] = None
+        self.live_trading_enabled: bool = False
         
         # macOS Wine MT5 Bridge Pending Queue
         self.mt5_pending_actions: List[Dict[str, Any]] = []
         self.mt5_last_seen = 0.0
         self.mt5_algo_trading_allowed = True
+
+    def is_live_trading_active(self) -> bool:
+        """Returns True only when live trading is explicitly enabled on a real MT5 broker adapter."""
+        if not self.live_trading_enabled:
+            return False
+        if not self.broker:
+            return False
+        if getattr(self.broker, "is_paper", False):
+            return False
+        from brokers.paper_sim import PaperSimAdapter
+        if isinstance(self.broker, PaperSimAdapter):
+            return False
+        return True
 
 ctx = ServerContext()
 
@@ -373,7 +387,7 @@ async def action_cancel_limit(ticket: int):
     success = await ctx.broker.cancel_order(ticket)
     if ctx.trade_manager and hasattr(ctx.trade_manager, "_pending_limit_orders"):
         ctx.trade_manager._pending_limit_orders.pop(ticket, None)
-    if ctx.mt5_pending_actions is not None:
+    if ctx.is_live_trading_active() and ctx.mt5_pending_actions is not None:
         ctx.mt5_pending_actions.append({"action": "ORDER_CANCEL", "ticket": ticket})
     return {"status": "OK" if success else "ERROR", "ticket": ticket}
 
@@ -391,7 +405,7 @@ async def action_cancel_all_limits():
     if hasattr(ctx, "mt5_pending_orders") and ctx.mt5_pending_orders:
         for o in ctx.mt5_pending_orders:
             t = o.get("ticket")
-            if t and ctx.mt5_pending_actions is not None:
+            if t and ctx.is_live_trading_active() and ctx.mt5_pending_actions is not None:
                 ctx.mt5_pending_actions.append({"action": "ORDER_CANCEL", "ticket": int(t)})
                 count += 1
         ctx.mt5_pending_orders = []
@@ -425,8 +439,8 @@ async def action_modify_position(payload: ModifyPositionPayload):
     if ctx.broker:
         await ctx.broker.modify_position(ticket, sl=sl, tp=tp)
 
-    # 3. Queue command for live MT5 Bridge
-    if ctx.mt5_pending_actions is not None:
+    # 3. Queue command for live MT5 Bridge only if live trading is active
+    if ctx.is_live_trading_active() and ctx.mt5_pending_actions is not None:
         ctx.mt5_pending_actions.append({
             "action": "ORDER_MODIFY",
             "ticket": ticket,
@@ -461,7 +475,7 @@ async def action_modify_order(payload: ModifyOrderPayload):
             if sl > 0: o.sl = sl
             if tp > 0: o.tp = tp
 
-    if ctx.mt5_pending_actions is not None:
+    if ctx.is_live_trading_active() and ctx.mt5_pending_actions is not None:
         ctx.mt5_pending_actions.append({
             "action": "ORDER_MODIFY",
             "ticket": ticket,
@@ -782,6 +796,12 @@ async def mt5_bridge_tick(payload: Dict[str, Any]):
                     asyncio.create_task(ctx.data_hub.inject_bars(ctx.active_symbol, tf_code, p_bars))
 
     next_action = {"action": "NONE"}
+    if not ctx.is_live_trading_active():
+        # Hard separation: Paper mode or disabled live trading NEVER sends actions to MT5
+        if ctx.mt5_pending_actions:
+            ctx.mt5_pending_actions.clear()
+        return next_action
+
     if ctx.mt5_pending_actions:
         next_action = ctx.mt5_pending_actions.pop(0)
 
@@ -790,13 +810,34 @@ async def mt5_bridge_tick(payload: Dict[str, Any]):
 
 @app.post("/api/actions/test_trade")
 async def action_test_trade(direction: str = "BUY", volume: float = 0.01):
-    """1-Click Test Button: Immediately dispatches an order directly to MetaTrader 5."""
+    """1-Click Test Button: Safely executes simulated trade if in paper mode, or MT5 only if live trading is active."""
     sym = ctx.active_symbol or "XAUUSD"
     tick = await ctx.broker.get_tick(sym) if ctx.broker else None
     cur_p = (tick.ask if direction.upper() == "BUY" else tick.bid) if tick else 4143.0
     sl_dist = 2.50
     sl = round(cur_p - sl_dist, 2) if direction.upper() == "BUY" else round(cur_p + sl_dist, 2)
     tp = round(cur_p + (sl_dist * 2.0), 2) if direction.upper() == "BUY" else round(cur_p - (sl_dist * 2.0), 2)
+
+    if not ctx.is_live_trading_active():
+        # Execute safely in paper simulator without dispatching to MT5
+        if ctx.broker:
+            from brokers.base import OrderType
+            order_type = OrderType.BUY if direction.upper() == "BUY" else OrderType.SELL
+            res = await ctx.broker.open_order(
+                symbol=sym,
+                order_type=order_type,
+                volume=volume,
+                price=cur_p,
+                sl=sl,
+                tp=tp,
+                comment="Paper_TestTrade",
+            )
+            return {
+                "status": "OK",
+                "message": f"Simulated {direction.upper()} {volume} executed on PaperSimAdapter (Live MT5 trading disabled)",
+                "ticket": res.ticket,
+            }
+        return {"status": "ERROR", "message": "Broker not available"}
 
     order_cmd = {
         "action": "ORDER_SEND",

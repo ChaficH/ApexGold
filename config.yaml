@@ -54,11 +54,15 @@ trading:
     - "GBPUSD"
     - "USDJPY"
 
+  # Explicit Live Trading Opt-In:
+  # When false, real broker execution is disabled and the engine defaults to paper simulation/scanner.
+  live_trading_enabled: false
+
   # Execution Modes:
-  #   - "full_auto"  : Executes live trades immediately when score threshold is crossed
+  #   - "scanner"    : Read-only live technical scanner & confluence analyzer (Default safe mode)
   #   - "confirm"    : Emits alerts & prepares 1-click execution in the Web UI
-  #   - "scanner"    : Read-only live technical scanner & confluence analyzer
-  execution_mode: "full_auto"
+  #   - "full_auto"  : Executes live trades immediately when score threshold is crossed (requires live_trading_enabled: true)
+  execution_mode: "scanner"
 
   # Strategy Transmission Modes:
   #   - "auto_adaptive" : Flagship Smart Auto-Pilot Brain (Default: auto-dials 1%-100% every 5s)

@@ -413,3 +413,41 @@ class MacSocketMT5Adapter(AbstractBrokerAdapter):
             ))
         return positions
 
+    async def cancel_order(self, ticket: Union[int, str]) -> bool:
+        """Cancel pending order in MT5 via ApexBridge."""
+        payload = {
+            "action": "ORDER_CANCEL",
+            "ticket": int(ticket),
+        }
+        res = await self._send_command(payload)
+        if res.get("status") == "OK":
+            logger.info(f"[ApexBridge CANCEL OK] #{ticket}")
+            return True
+        logger.error(f"[ApexBridge CANCEL FAILED] #{ticket}: {res.get('error')}")
+        return False
+
+    async def get_pending_orders(self, symbol: Optional[str] = None) -> List[Any]:
+        """Retrieve active pending limit orders from MT5 via ApexBridge."""
+        payload = {"action": "GET_PENDING_ORDERS"}
+        if symbol:
+            payload["symbol"] = symbol
+        res = await self._send_command(payload)
+        if res.get("status") != "OK":
+            return []
+        from brokers.base import LimitOrder
+        raw = res.get("data", [])
+        orders: List[LimitOrder] = []
+        for o in raw:
+            orders.append(LimitOrder(
+                ticket=int(o.get("ticket", 0)),
+                symbol=str(o.get("symbol", "")),
+                order_type=str(o.get("type", "BUY_LIMIT")),
+                price=float(o.get("price", 0.0)),
+                volume=float(o.get("volume", 0.0)),
+                sl=float(o.get("sl", 0.0)),
+                tp=float(o.get("tp", 0.0)),
+                created_time=float(o.get("time", time.time())),
+                comment=str(o.get("comment", "")),
+            ))
+        return orders
+

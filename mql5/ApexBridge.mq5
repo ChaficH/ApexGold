@@ -185,18 +185,7 @@ string ExecuteCommand(const string action, const string json_line)
       double tp    = JsonExtractDouble(json_line, "tp");
       double price = JsonExtractDouble(json_line, "price");
 
-      bool is_pos = false;
       if(ticket > 0 && PositionSelectByTicket(ticket))
-      {
-         is_pos = true;
-      }
-      else if(PositionSelect(_Symbol))
-      {
-         ticket = PositionGetTicket(0);
-         is_pos = true;
-      }
-
-      if(is_pos)
       {
          if(g_trade.PositionModify(ticket, sl, tp))
          {
@@ -232,11 +221,9 @@ string ExecuteCommand(const string action, const string json_line)
       ulong ticket = JsonExtractULong(json_line, "ticket");
       double vol   = JsonExtractDouble(json_line, "volume");
 
-      if(ticket > 0 && !PositionSelectByTicket(ticket))
+      if(ticket <= 0 || !PositionSelectByTicket(ticket))
       {
-         // Fail-safe: if ticket was not found by exact number, check if chart symbol has an open position
-         if(PositionSelect(_Symbol))
-            ticket = PositionGetTicket(0);
+         return StringFormat("{\"status\":\"ERROR\",\"error\":\"Position #%s not found in active positions\"}", IntegerToString(ticket));
       }
 
       bool res = (vol > 0.0) ? g_trade.PositionClosePartial(ticket, vol) : g_trade.PositionClose(ticket);

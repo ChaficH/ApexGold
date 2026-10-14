@@ -54,9 +54,19 @@ def load_config(config_path: str = "config.yaml") -> dict:
 async def create_broker_adapter(cfg: dict) -> AbstractBrokerAdapter:
     """Instantiate broker adapter according to configuration or OS environment."""
     broker_cfg = cfg.get("broker", {})
-    active = broker_cfg.get("active_broker", "paper_sim").lower()
     trading_cfg = cfg.get("trading", {})
-    account_type = trading_cfg.get("account_type", "cent")
+    live_trading_enabled = trading_cfg.get("live_trading_enabled", False)
+    active = broker_cfg.get("active_broker", "paper_sim").lower()
+    account_type = trading_cfg.get("account_type", "micro")
+
+    # Explicit live-trading opt-in requirement:
+    if active in ["mt5_mac_socket", "mt5_windows"] and not live_trading_enabled:
+        logger.warning(
+            f"Active broker is configured as '{active}', but 'live_trading_enabled' is False. "
+            f"Enforcing safe PaperSimAdapter operation to protect real funds. "
+            f"To enable live execution, set 'live_trading_enabled: true' in config.yaml."
+        )
+        active = "paper_sim"
 
     if active == "mt5_mac_socket":
         mac_cfg = broker_cfg.get("mac_socket", {})
@@ -69,7 +79,7 @@ async def create_broker_adapter(cfg: dict) -> AbstractBrokerAdapter:
         connected = await adapter.connect()
         if connected:
             return adapter
-        logger.warning("Could not connect to MacSocketMT5Adapter. Falling back cleanly to PaperSimAdapter.")
+        logger.warning("Could not connect to MacSocketMT5Adapter. Falling back cleanly and safely to PaperSimAdapter.")
 
     elif active == "mt5_windows":
         win_cfg = broker_cfg.get("windows_mt5", {})
@@ -86,9 +96,9 @@ async def create_broker_adapter(cfg: dict) -> AbstractBrokerAdapter:
             if connected:
                 return adapter
         except Exception as e:
-            logger.warning(f"Windows MT5 connection error ({e}). Falling back to PaperSimAdapter.")
+            logger.warning(f"Windows MT5 connection error ({e}). Falling back cleanly and safely to PaperSimAdapter.")
 
-    # Default Out-of-the-box Paper Simulator
+    # Default Out-of-the-box Pure Paper Simulator
     sim_cfg = broker_cfg.get("paper_sim", {})
     adapter = PaperSimAdapter(
         initial_balance=float(sim_cfg.get("initial_balance", 10.0)),
@@ -237,14 +247,13 @@ async def lifespan(app_instance):
 
     trading_cfg = cfg.get("trading", {})
     ctx.active_symbol = trading_cfg.get("primary_symbol", "XAUUSD")
-    ctx.execution_mode = trading_cfg.get("execution_mode", "full_auto")
+    ctx.live_trading_enabled = bool(trading_cfg.get("live_trading_enabled", False))
+    ctx.execution_mode = trading_cfg.get("execution_mode", "scanner")
     ctx.strategy_mode = trading_cfg.get("strategy_mode", "auto_adaptive")
 
-    # 1. Connect Broker
+    # 1. Connect Broker (Strict Paper/Live separation)
     broker = await create_broker_adapter(cfg)
     ctx.broker = broker
-    if hasattr(broker, "set_mt5_bridge_queue"):
-        broker.set_mt5_bridge_queue(ctx.mt5_pending_actions)
 
     # 2. Initialize Data Hub & SQLite Store
     data_cfg = cfg.get("data_hub", {})

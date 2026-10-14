@@ -83,12 +83,7 @@ class PaperSimAdapter(AbstractBrokerAdapter):
 
         self._tick_task: Optional[asyncio.Task] = None
         self._lock = asyncio.Lock()
-        self._mt5_queue: Optional[List[Dict[str, Any]]] = None
-
-    def set_mt5_bridge_queue(self, queue: List[Dict[str, Any]]) -> None:
-        """Connect live MT5 bridge action queue to route orders directly to MetaTrader 5."""
-        self._mt5_queue = queue
-        logger.info("PaperSim linked to live MT5 execution queue.")
+        self.is_paper: bool = True
 
     async def connect(self) -> bool:
         """Initialize the simulator and start the live price generator."""
@@ -427,20 +422,6 @@ class PaperSimAdapter(AbstractBrokerAdapter):
                     f"| SL: {lo.sl:.2f} | TP: {lo.tp:.2f} | Comment: {comment}"
                 )
 
-                if self._mt5_queue is not None:
-                    bridge_sym = getattr(self, "_active_broker_symbol", None) or symbol
-                    self._mt5_queue.append({
-                        "action": "ORDER_SEND",
-                        "symbol": bridge_sym,
-                        "type": order_type.value,
-                        "price": lo.price,
-                        "volume": round(volume, 2),
-                        "sl": lo.sl,
-                        "tp": lo.tp,
-                        "comment": comment,
-                    })
-                    logger.info(f"[MT5 BRIDGE] Dispatched {order_type.value} to MT5: {bridge_sym} @ {lo.price:.2f}")
-
                 return OrderResult(
                     success=True,
                     ticket=ticket,
@@ -491,20 +472,6 @@ class PaperSimAdapter(AbstractBrokerAdapter):
                 f"| SL: {pos.sl:.2f} | TP: {pos.tp:.2f} | Comment: {comment}"
             )
 
-            # Auto-dispatch to MT5 Live Bridge if connected
-            if self._mt5_queue is not None:
-                bridge_sym = getattr(self, "_active_broker_symbol", None) or symbol
-                self._mt5_queue.append({
-                    "action": "ORDER_SEND",
-                    "symbol": bridge_sym,
-                    "type": order_type.value if hasattr(order_type, "value") else str(order_type),
-                    "volume": round(volume, 2),
-                    "sl": round(sl, spec["digits"]) if sl else 0.0,
-                    "tp": round(tp, spec["digits"]) if tp else 0.0,
-                    "comment": comment,
-                })
-                logger.info(f"[MT5 BRIDGE] Dispatched ORDER_SEND to MT5: {bridge_sym} {order_type} {volume} lots")
-
             return OrderResult(
                 success=True,
                 ticket=ticket,
@@ -522,15 +489,6 @@ class PaperSimAdapter(AbstractBrokerAdapter):
         """Modify position SL and TP."""
         async with self._lock:
             ticket_int = int(ticket)
-            if self._mt5_queue is not None and ticket_int > 1000000:
-                self._mt5_queue.append({
-                    "action": "ORDER_MODIFY",
-                    "ticket": ticket_int,
-                    "sl": float(sl),
-                    "tp": float(tp),
-                })
-                logger.info(f"[MT5 BRIDGE] Dispatched ORDER_MODIFY to MT5: #{ticket} SL: {sl} TP: {tp}")
-
             if ticket_int in self._positions:
                 pos = self._positions[ticket_int]
                 spec = self._get_contract_spec(pos.symbol)
@@ -548,14 +506,6 @@ class PaperSimAdapter(AbstractBrokerAdapter):
         """Close position and realize P&L."""
         async with self._lock:
             ticket_int = int(ticket)
-            if self._mt5_queue is not None and ticket_int > 1000000:
-                self._mt5_queue.append({
-                    "action": "ORDER_CLOSE",
-                    "ticket": ticket_int,
-                    "volume": float(volume or 0.0),
-                })
-                logger.info(f"[MT5 BRIDGE] Dispatched ORDER_CLOSE to MT5: #{ticket}")
-
             if ticket_int not in self._positions:
                 return True
 
@@ -582,13 +532,6 @@ class PaperSimAdapter(AbstractBrokerAdapter):
 
     async def close_all_positions(self, symbol: Optional[str] = None) -> int:
         """Close all positions matching symbol (or all if None)."""
-        if self._mt5_queue is not None:
-            self._mt5_queue.append({
-                "action": "CLOSE_ALL",
-                "symbol": symbol or "",
-            })
-            logger.info("[MT5 BRIDGE] Dispatched CLOSE_ALL to MT5")
-
         tickets_to_close = []
         async with self._lock:
             for t, p in self._positions.items():
@@ -609,21 +552,13 @@ class PaperSimAdapter(AbstractBrokerAdapter):
             return [p for p in self._positions.values() if p.symbol == symbol]
 
     async def cancel_order(self, ticket: Union[int, str]) -> bool:
-        """Cancel a pending simulated limit order and dispatch to MT5."""
+        """Cancel a pending simulated limit order."""
         async with self._lock:
             int_ticket = int(ticket) if str(ticket).isdigit() else ticket
             canceled = False
             if int_ticket in self._pending_orders:
                 del self._pending_orders[int_ticket]
                 logger.info(f"[SIM LIMIT DELETED] #{ticket} cancelled.")
-                canceled = True
-
-            if self._mt5_queue is not None and isinstance(int_ticket, int) and int_ticket > 1000000:
-                self._mt5_queue.append({
-                    "action": "ORDER_CANCEL",
-                    "ticket": int_ticket,
-                })
-                logger.info(f"[MT5 BRIDGE] Dispatched ORDER_CANCEL to MT5: #{ticket}")
                 canceled = True
 
             return canceled
