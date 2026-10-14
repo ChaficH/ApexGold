@@ -378,6 +378,7 @@ class PaperSimAdapter(AbstractBrokerAdapter):
                 low=round(low_p, 2 if "XAU" in symbol else 5),
                 close=round(close_p, 2 if "XAU" in symbol else 5),
                 volume=volume,
+                is_synthetic=True,
             ))
             price = close_p
 

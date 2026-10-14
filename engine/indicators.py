@@ -558,16 +558,23 @@ class TechnicalIndicators:
             return {"vwap": 0.0, "is_above": False, "is_below": False, "slope": 0.0, "valid": False}
         try:
             import ta
+            h = df["high"].ffill().bfill()
+            l = df["low"].ffill().bfill()
+            c = df["close"].ffill().bfill()
+            v = df["volume"].fillna(1.0).clip(lower=1.0)
             vwap_series = ta.volume.VolumeWeightedAveragePrice(
-                high=df["high"],
-                low=df["low"],
-                close=df["close"],
-                volume=df["volume"].fillna(1.0).clip(lower=1.0),
+                high=h,
+                low=l,
+                close=c,
+                volume=v,
                 window=min(len(df), 40)
             ).volume_weighted_average_price()
-            val = float(vwap_series.iloc[-1])
-            prev_val = float(vwap_series.iloc[-2]) if len(vwap_series) >= 2 else val
-            curr_c = float(df["close"].iloc[-1])
+            vwap_clean = vwap_series.dropna()
+            if len(vwap_clean) < 1:
+                return {"vwap": 0.0, "is_above": False, "is_below": False, "slope": 0.0, "valid": False}
+            val = float(vwap_clean.iloc[-1])
+            prev_val = float(vwap_clean.iloc[-2]) if len(vwap_clean) >= 2 else val
+            curr_c = float(c.iloc[-1])
             slope = val - prev_val
             return {
                 "vwap": round(val, 2),
@@ -589,14 +596,18 @@ class TechnicalIndicators:
             return {"kama": 0.0, "is_above": False, "is_below": False, "valid": False}
         try:
             import ta
+            c = df["close"].ffill().bfill()
             kama_series = ta.momentum.KAMAIndicator(
-                close=df["close"],
+                close=c,
                 window=window,
                 pow1=2,
                 pow2=30
             ).kama()
-            val = float(kama_series.iloc[-1])
-            curr_c = float(df["close"].iloc[-1])
+            kama_clean = kama_series.dropna()
+            if len(kama_clean) < 1:
+                return {"kama": 0.0, "is_above": False, "is_below": False, "valid": False}
+            val = float(kama_clean.iloc[-1])
+            curr_c = float(c.iloc[-1])
             return {
                 "kama": round(val, 2),
                 "is_above": (curr_c >= val),
@@ -614,11 +625,12 @@ class TechnicalIndicators:
         R^2 < 0.25 indicates high-entropy random walk (chop).
         """
         arr = cls._to_numpy(close_prices)
-        if len(arr) < window:
+        valid = arr[~np.isnan(arr)]
+        if len(valid) < window:
             return {"r_squared": 0.0, "slope": 0.0, "is_strong_trend": False, "is_random_walk": False, "valid": False}
         try:
             from scipy import stats
-            subset = arr[-window:]
+            subset = valid[-window:]
             x = np.arange(len(subset))
             res = stats.linregress(x, subset)
             r2 = float(res.rvalue ** 2) if not np.isnan(res.rvalue) else 0.0
@@ -641,10 +653,11 @@ class TechnicalIndicators:
         Identifies high-probability discount/premium pullback zones.
         """
         arr = cls._to_numpy(close_prices)
-        if len(arr) < window:
+        valid = arr[~np.isnan(arr)]
+        if len(valid) < window:
             return {"zscore": 0.0, "is_extreme_overbought": False, "is_extreme_oversold": False, "is_bull_discount": False, "is_bear_premium": False, "valid": False}
         try:
-            subset = arr[-window:]
+            subset = valid[-window:]
             mean_val = np.mean(subset)
             std_val = np.std(subset)
             if std_val < 1e-6:
@@ -670,8 +683,11 @@ class TechnicalIndicators:
             return {"is_squeeze": False, "bandwidth": 0.0, "valid": False}
         try:
             import ta
-            bb = ta.volatility.BollingerBands(close=df["close"], window=window, window_dev=2)
-            bw = bb.bollinger_wband()
+            c = df["close"].ffill().bfill()
+            bb = ta.volatility.BollingerBands(close=c, window=window, window_dev=2)
+            bw = bb.bollinger_wband().dropna()
+            if len(bw) < 1:
+                return {"is_squeeze": False, "bandwidth": 0.0, "valid": False}
             val = float(bw.iloc[-1])
             is_squeeze = (val < 0.012)
             return {
@@ -700,8 +716,13 @@ class TechnicalIndicators:
         l = cls._to_numpy(low)
         c = cls._to_numpy(close)
         n = len(c)
-        if n < period + 2:
+        if n < period + 2 or len(h) != n or len(l) != n:
             return {"direction": 0, "trend_name": "NEUTRAL", "line": 0.0, "is_bull": False, "is_bear": False, "valid": False}
+
+        # Clean NaNs
+        if np.isnan(h).any(): h = pd.Series(h).ffill().bfill().values
+        if np.isnan(l).any(): l = pd.Series(l).ffill().bfill().values
+        if np.isnan(c).any(): c = pd.Series(c).ffill().bfill().values
 
         tr = np.maximum(h - l, np.maximum(np.abs(h - np.roll(c, 1)), np.abs(l - np.roll(c, 1))))
         tr[0] = h[0] - l[0]
@@ -713,9 +734,10 @@ class TechnicalIndicators:
         hl2 = (h + l) / 2.0
         bu = hl2 + (multiplier * atr)
         bl = hl2 - (multiplier * atr)
-        fu = np.zeros(n, dtype=np.float64)
-        fl = np.zeros(n, dtype=np.float64)
+        fu = np.copy(bu)
+        fl = np.copy(bl)
         trd = np.zeros(n, dtype=int)
+        trd[period - 1] = 1 if c[period - 1] >= hl2[period - 1] else -1
 
         for i in range(period, n):
             fu[i] = bu[i] if (bu[i] < fu[i - 1] or c[i - 1] > fu[i - 1]) else fu[i - 1]
@@ -729,6 +751,8 @@ class TechnicalIndicators:
 
         d = int(trd[-1])
         line = float(fl[-1] if d == 1 else fu[-1])
+        if np.isnan(line):
+            return {"direction": 0, "trend_name": "NEUTRAL", "line": 0.0, "is_bull": False, "is_bear": False, "valid": False}
         return {
             "direction": d,
             "trend_name": "BULL" if d == 1 else ("BEAR" if d == -1 else "NEUTRAL"),
@@ -752,13 +776,19 @@ class TechnicalIndicators:
         """
         try:
             import ta
-            s = pd.Series(cls._to_numpy(close))
-            if len(s) < period + smooth_k + smooth_d + 2:
+            arr = cls._to_numpy(close)
+            valid_arr = arr[~np.isnan(arr)]
+            if len(valid_arr) < (period * 2 + smooth_k + smooth_d):
                 return {"k": 50.0, "d": 50.0, "is_overbought": False, "is_oversold": False, "bullish_cross": False, "bearish_cross": False, "valid": False}
 
+            s = pd.Series(valid_arr)
             stoch = ta.momentum.StochRSIIndicator(close=s, window=period, smooth1=smooth_k, smooth2=smooth_d)
-            k_s = stoch.stochrsi_k()
-            d_s = stoch.stochrsi_d()
+            k_s = stoch.stochrsi_k().dropna()
+            d_s = stoch.stochrsi_d().dropna()
+
+            if len(k_s) < 2 or len(d_s) < 2:
+                return {"k": 50.0, "d": 50.0, "is_overbought": False, "is_oversold": False, "bullish_cross": False, "bearish_cross": False, "valid": False}
+
             k = float(k_s.iloc[-1] * 100.0)
             d = float(d_s.iloc[-1] * 100.0)
             prev_k = float(k_s.iloc[-2] * 100.0)

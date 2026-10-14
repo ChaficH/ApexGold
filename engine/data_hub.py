@@ -172,10 +172,20 @@ class DataHub:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, _query)
 
+    TF_SECONDS = {
+        "1m": 60,
+        "5m": 300,
+        "15m": 900,
+        "1H": 3600,
+        "1h": 3600,
+        "4H": 14400,
+        "1D": 86400,
+    }
+
     async def append_bar(self, symbol: str, timeframe: str, bar: Bar) -> None:
         """
         Append a new closed candle or update the in-progress candle.
-        Maintains memory cache and updates SQLite asynchronously.
+        Ensures strict timestamp deduplication and monotonic chronological sorting.
         """
         async with self._lock:
             if symbol not in self._memory_cache:
@@ -185,15 +195,26 @@ class DataHub:
 
             bars = self._memory_cache[symbol][timeframe]
 
-            if bars and bars[-1].time == bar.time:
-                # Update existing candle
+            if not bars or bar.time > bars[-1].time:
+                bars.append(bar)
+            elif bars[-1].time == bar.time:
                 bars[-1] = bar
             else:
-                bars.append(bar)
-                # Keep cache capped to prevent memory leak
-                max_bars = self.WARMUP_BAR_COUNTS.get(timeframe, 1000) + 200
-                if len(bars) > max_bars:
-                    self._memory_cache[symbol][timeframe] = bars[-max_bars:]
+                # Out-of-order or duplicate timestamp in past
+                updated = False
+                for idx, existing_bar in enumerate(bars):
+                    if existing_bar.time == bar.time:
+                        bars[idx] = bar
+                        updated = True
+                        break
+                if not updated:
+                    bars.append(bar)
+                    bars.sort(key=lambda b: b.time)
+
+            # Keep cache capped to prevent memory leak
+            max_bars = self.WARMUP_BAR_COUNTS.get(timeframe, 1000) + 200
+            if len(bars) > max_bars:
+                self._memory_cache[symbol][timeframe] = bars[-max_bars:]
 
         # Asynchronously store to DB
         await self._save_bars_to_db(symbol, timeframe, [bar])
@@ -201,7 +222,8 @@ class DataHub:
     async def inject_bars(self, symbol: str, timeframe: str, bars: List[Bar]) -> None:
         """
         Inject a sequence of authentic broker bars (e.g. from MT5).
-        Merges with memory cache and updates SQLite database.
+        Merges with memory cache, strictly deduplicates by timestamp,
+        guarantees monotonic ordering, and updates SQLite database.
         """
         if not bars:
             return
@@ -209,21 +231,17 @@ class DataHub:
             if symbol not in self._memory_cache:
                 self._memory_cache[symbol] = {}
             existing = self._memory_cache[symbol].get(timeframe, [])
-            if existing:
-                first_new_time = bars[0].time
-                # Only keep existing bars if their price matches the new bars scale (within 15%)
-                avg_new = sum(b.close for b in bars[:10]) / min(len(bars), 10)
-                valid_existing = [
-                    b for b in existing 
-                    if b.time < first_new_time and abs(b.close - avg_new) / max(avg_new, 1.0) < 0.15
-                ]
-                merged = valid_existing + bars
-                max_bars = max(self.WARMUP_BAR_COUNTS.get(timeframe, 1000) + 500, 3000)
-                if len(merged) > max_bars:
-                    merged = merged[-max_bars:]
-                self._memory_cache[symbol][timeframe] = merged
-            else:
-                self._memory_cache[symbol][timeframe] = bars
+
+            # Deduplicate by timestamp and maintain chronological order
+            bar_map: Dict[int, Bar] = {b.time: b for b in existing}
+            for b in bars:
+                bar_map[b.time] = b
+
+            merged = [bar_map[t] for t in sorted(bar_map.keys())]
+            max_bars = max(self.WARMUP_BAR_COUNTS.get(timeframe, 1000) + 500, 3000)
+            if len(merged) > max_bars:
+                merged = merged[-max_bars:]
+            self._memory_cache[symbol][timeframe] = merged
 
         # Debounce DB writes: only write to DB every 30 seconds per timeframe to avoid SQLite contention
         now = time.time()
@@ -232,30 +250,66 @@ class DataHub:
             self._last_db_save[db_key] = now
             await self._save_bars_to_db(symbol, timeframe, bars)
 
-    async def get_bars(self, symbol: str, timeframe: str, count: int = 100) -> List[Bar]:
-        """Fetch the last `count` bars for a symbol and timeframe."""
+    async def get_bars(
+        self,
+        symbol: str,
+        timeframe: str,
+        count: int = 100,
+        completed_only: bool = False,
+        now_ts: Optional[float] = None
+    ) -> List[Bar]:
+        """
+        Fetch the last `count` bars for a symbol and timeframe.
+        If completed_only is True, excludes incomplete (in-progress) higher timeframe bars.
+        """
+        ref_time = now_ts or time.time()
+        tf_sec = self.TF_SECONDS.get(timeframe, 60)
+
         async with self._lock:
             bars = self._memory_cache.get(symbol, {}).get(timeframe, [])
             if len(bars) >= count:
-                return bars[-count:]
+                res = bars[-count:]
+                if completed_only:
+                    res = [b for b in res if (b.time + tf_sec) <= ref_time]
+                return res
 
-        # If not sufficient in memory, fetch from DB
-        db_bars = await self._load_bars_from_db(symbol, timeframe, limit=count)
-        if db_bars:
-            async with self._lock:
-                if symbol not in self._memory_cache:
-                    self._memory_cache[symbol] = {}
-                self._memory_cache[symbol][timeframe] = db_bars
-            return db_bars[-count:]
+        # If not sufficient in memory, fetch older bars from DB and merge without losing memory bars
+        db_bars = await self._load_bars_from_db(symbol, timeframe, limit=count + 20)
+        async with self._lock:
+            mem_bars = self._memory_cache.get(symbol, {}).get(timeframe, [])
+            bar_map = {b.time: b for b in db_bars}
+            for b in mem_bars:
+                bar_map[b.time] = b # in-memory bars take precedence
 
-        return bars
+            merged = [bar_map[t] for t in sorted(bar_map.keys())]
+            if symbol not in self._memory_cache:
+                self._memory_cache[symbol] = {}
+            self._memory_cache[symbol][timeframe] = merged
 
-    async def get_dataframe(self, symbol: str, timeframe: str, count: int = 100) -> pd.DataFrame:
+            res = merged[-count:]
+            if completed_only:
+                res = [b for b in res if (b.time + tf_sec) <= ref_time]
+            return res
+
+    async def get_dataframe(
+        self,
+        symbol: str,
+        timeframe: str,
+        count: int = 100,
+        completed_only: bool = False,
+        now_ts: Optional[float] = None
+    ) -> pd.DataFrame:
         """
         Retrieve candles formatted as a pandas DataFrame ready for indicators.
         Columns: ['time', 'open', 'high', 'low', 'close', 'volume'].
         """
-        bars = await self.get_bars(symbol, timeframe, count=count)
+        bars = await self.get_bars(
+            symbol,
+            timeframe,
+            count=count,
+            completed_only=completed_only,
+            now_ts=now_ts
+        )
         if not bars:
             return pd.DataFrame(columns=["time", "open", "high", "low", "close", "volume"])
 
@@ -269,9 +323,16 @@ class DataHub:
         }
         return pd.DataFrame(data)
 
-    async def get_multi_timeframe_data(self, symbol: str, counts: Optional[Dict[str, int]] = None) -> Dict[str, pd.DataFrame]:
+    async def get_multi_timeframe_data(
+        self,
+        symbol: str,
+        counts: Optional[Dict[str, int]] = None,
+        higher_tf_completed_only: bool = True,
+        now_ts: Optional[float] = None
+    ) -> Dict[str, pd.DataFrame]:
         """
         Returns aligned DataFrames for all 4 primary timeframes (1H, 15m, 5m, 1m).
+        When higher_tf_completed_only is True, 1H and 15m candles exclude incomplete in-progress bars.
         """
         default_counts = {
             "1H": 100,
@@ -285,7 +346,31 @@ class DataHub:
         results: Dict[str, pd.DataFrame] = {}
         for tf in self.TIMEFRAMES:
             cnt = default_counts.get(tf, 100)
-            results[tf] = await self.get_dataframe(symbol, tf, count=cnt)
+            completed_flag = higher_tf_completed_only if tf in ["1H", "15m"] else False
+            results[tf] = await self.get_dataframe(
+                symbol,
+                tf,
+                count=cnt,
+                completed_only=completed_flag,
+                now_ts=now_ts
+            )
 
         return results
+
+    def is_stale(
+        self,
+        symbol: str,
+        timeframe: str,
+        max_age_seconds: Optional[float] = None,
+        now_ts: Optional[float] = None
+    ) -> bool:
+        """Check if cached market data for symbol and timeframe is stale."""
+        bars = self._memory_cache.get(symbol, {}).get(timeframe, [])
+        if not bars:
+            return True
+        latest_time = bars[-1].time
+        tf_sec = self.TF_SECONDS.get(timeframe, 60)
+        allowed_age = max_age_seconds if max_age_seconds is not None else (tf_sec * 3.0)
+        ref_time = now_ts or time.time()
+        return (ref_time - latest_time) > allowed_age
 

@@ -269,26 +269,55 @@ class ConfluenceScorer:
         news_confidence = 0.50
         news_summary = ""
 
+        is_news_freeze = False
         if news_reactor:
-            cal_state = news_reactor.check_calendar_state()
+            cal_state = news_reactor.check_calendar_state(current_utc=now)
+            is_news_freeze = cal_state.get("is_news_freeze", False)
             study = news_reactor.analyze_news_fundamental_bias(symbol)
             news_bias_direction = study.get("direction", "NEUTRAL")
             news_confidence = study.get("confidence", 0.50)
             news_summary = study.get("summary", "")
 
-            if cal_state.get("is_news_freeze", False):
+            if is_news_freeze:
                 is_near_major_news = True
-                ev = cal_state.get("event") or {}
+                ev = cal_state.get("nearest_event") or {}
                 news_name = ev.get("title", "High-Impact USD News")
             else:
                 cd = cal_state.get("countdown_seconds")
                 if cd is not None and cd <= 1200: # Within 20 min
                     is_near_major_news = True
-                    ev = cal_state.get("event") or {}
+                    ev = cal_state.get("nearest_event") or {}
                     news_name = ev.get("title", "Upcoming High-Impact USD News")
 
-        # If news is active, but we have strong fundamental study clarity (confidence >= 70%):
-        # DO NOT freeze! Dial up intelligent News Momentum Study mode!
+        # ----------------------------------------------------------------------
+        # Strict High-Impact News Freeze Gate: HARD LOCK (Cannot be bypassed)
+        # ----------------------------------------------------------------------
+        if is_news_freeze:
+            dial_pct = 10.0
+            threshold = 95
+            reason_str = f"High-Impact News Freeze Active: {news_name} — Entries Strictly Locked"
+            pill_text = f"🛑 NEWS FREEZE: {news_name} | Entries Locked"
+            full_reason = f"High-Impact News Safety Gate — {reason_str}"
+            self.auto_brain_state = {
+                "is_auto": (self.mode == "auto_adaptive"),
+                "sub_regime": "DEFENSIVE_SHIELD",
+                "dial_pct": dial_pct,
+                "active_threshold": threshold,
+                "pill_text": pill_text,
+                "full_reason": full_reason,
+                "reason": reason_str,
+                "target_rr": 2.0,
+                "be_lock_r": 0.6,
+                "stall_exit_seconds": 60.0,
+                "last_update": now,
+                "news_bias": news_bias_direction,
+                "news_confidence": news_confidence,
+                "is_news_freeze": True,
+            }
+            return self.auto_brain_state
+
+        # If news is approaching (outside freeze) and we have strong fundamental clarity (confidence >= 70%):
+        # Dial up intelligent News Momentum Study mode!
         if is_near_major_news and news_confidence >= 0.70 and news_bias_direction in ["BUY", "SELL"] and not is_wide_spread:
             dial_pct = 76.0
             threshold = 64
@@ -309,6 +338,7 @@ class ConfluenceScorer:
                 "last_update": now,
                 "news_bias": news_bias_direction,
                 "news_confidence": news_confidence,
+                "is_news_freeze": False,
             }
             return self.auto_brain_state
 
@@ -477,6 +507,11 @@ class ConfluenceScorer:
         df_1m = dfs.get("1m")
 
         if df_5m is None or len(df_5m) < 20 or df_1m is None or len(df_1m) < 10:
+            return None
+
+        # Hard Gate: Strictly block new trade evaluations during active high-impact news freeze
+        if self.auto_brain_state.get("is_news_freeze", False):
+            logger.debug(f"[{symbol} {direction}] Blocked: High-impact news freeze is active.")
             return None
 
         is_gold = any(k in symbol.upper() for k in ["XAU", "GOLD"])
@@ -729,8 +764,8 @@ class ConfluenceScorer:
 
         # Setup Type B: Consolidation Box Breakout (Only in open room, never breaking into boundary walls!)
         if breakdown["m5_setup"] < 30 and len(df_5m) >= 12:
-            recent_high = np.max(h_5m[-10:-1])
-            recent_low = np.min(l_5m[-10:-1])
+            recent_high = np.max(h_5m[-11:-1])
+            recent_low = np.min(l_5m[-11:-1])
 
             dt = datetime.fromtimestamp(utc_timestamp, tz=timezone.utc)
             hour = dt.hour + (dt.minute / 60.0)

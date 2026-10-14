@@ -51,6 +51,7 @@ class Bar:
     low: float
     close: float
     volume: float = 0.0
+    is_synthetic: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)

@@ -275,13 +275,15 @@ async def lifespan(app_instance):
     news_cfg = cfg.get("news_reactor", {})
     news_reactor = NewsReactor(
         enabled=news_cfg.get("enabled", True),
-        pre_news_freeze_seconds=news_cfg.get("pre_news_freeze_seconds", 180),
+        pre_news_freeze_seconds=news_cfg.get("pre_news_freeze_seconds", 900),
+        post_news_freeze_seconds=news_cfg.get("post_news_freeze_seconds", 900),
         post_news_momentum_window_sec=news_cfg.get("post_news_momentum_window_sec", 300),
         post_news_cooldown_seconds=news_cfg.get("post_news_cooldown_seconds", 3),
         max_spread_multiplier=news_cfg.get("max_spread_multiplier", 2.5),
         tick_velocity_window_ms=news_cfg.get("tick_velocity_window_ms", 800),
         impulse_tick_density_mult=news_cfg.get("tick_density_multiplier", 3.0),
         tracked_currencies=news_cfg.get("currencies", ["USD", "XAU"]),
+        block_on_calendar_unavailable=news_cfg.get("block_on_calendar_unavailable", False),
     )
     await news_reactor.start()
     ctx.news_reactor = news_reactor

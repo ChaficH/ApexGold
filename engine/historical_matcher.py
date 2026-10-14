@@ -154,20 +154,18 @@ class HistoricalMatcher:
 
         # Need sufficient candle history (minimum 60 bars)
         if df_5m is None or len(df_5m) < 60:
-            # Return baseline realistic expectation when history is warming up
-            default_res = HistoricalEdgeResult(
-                win_rate_pct=65.0 if current_vector.h1_trend == current_vector.direction else 58.0,
-                sample_count=15,
-                expectancy_r=0.62,
-                profit_factor=1.75,
-                confidence_grade="A" if current_vector.h1_trend == current_vector.direction else "B",
-                sample_outcomes=["WIN", "WIN", "LOSS", "WIN", "WIN"],
+            return HistoricalEdgeResult(
+                win_rate_pct=0.0,
+                sample_count=0,
+                expectancy_r=0.0,
+                profit_factor=0.0,
+                confidence_grade="INSUFFICIENT_DATA",
+                sample_outcomes=[],
             )
-            return default_res
 
-        close = df_5m["close"].values
-        high = df_5m["high"].values
-        low = df_5m["low"].values
+        close = df_5m["close"].ffill().bfill().values
+        high = df_5m["high"].ffill().bfill().values
+        low = df_5m["low"].ffill().bfill().values
         timestamps = df_5m["time"].values
 
         # Precompute indicators across historical series
@@ -253,14 +251,13 @@ class HistoricalMatcher:
         # Calculate statistics
         total = len(matches_outcomes)
         if total == 0:
-            # Fallback if no exact historical match found
             result = HistoricalEdgeResult(
-                win_rate_pct=62.5,
-                sample_count=10,
-                expectancy_r=0.55,
-                profit_factor=1.60,
-                confidence_grade="B",
-                sample_outcomes=["WIN", "WIN", "LOSS"],
+                win_rate_pct=0.0,
+                sample_count=0,
+                expectancy_r=0.0,
+                profit_factor=0.0,
+                confidence_grade="NO_MATCH",
+                sample_outcomes=[],
             )
             self._pattern_cache[cache_key] = result
             return result

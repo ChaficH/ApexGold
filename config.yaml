@@ -136,9 +136,11 @@ news_reactor:
   high_impact_only: true
   currencies: ["USD", "XAU"]
 
-  # Pre-News Lockout
-  pre_news_freeze_seconds: 180       # T-180s: Stop opening new trades before Red Folder
+  # Pre-News & Post-News Lockout (15-Minute Shield)
+  pre_news_freeze_seconds: 900       # Stop opening new trades 15m before Red Folder
+  post_news_freeze_seconds: 900      # Freeze new trades 15m after Red Folder
   lock_breakeven_on_open_trades: true # Move open profitable trades to BE before news
+  block_on_calendar_unavailable: false # If true, blocks new trades when economic calendar cannot be reached
 
   # Post-News Momentum Capture
   post_news_cooldown_seconds: 3      # Wait 3s after release for initial spike

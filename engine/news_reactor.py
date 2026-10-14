@@ -149,15 +149,24 @@ class NewsReactor:
         tick_velocity_window_ms: int = 800,
         impulse_tick_density_mult: float = 3.0,
         tracked_currencies: Optional[List[str]] = None,
+        block_on_calendar_unavailable: bool = False,
+        post_news_freeze_seconds: int = 900,
     ):
         self.enabled = enabled
         self.pre_news_freeze_seconds = pre_news_freeze_seconds
+        self.post_news_freeze_seconds = post_news_freeze_seconds
         self.post_news_momentum_window_sec = post_news_momentum_window_sec
         self.post_news_cooldown_seconds = post_news_cooldown_seconds
         self.max_spread_multiplier = max_spread_multiplier
         self.tick_velocity_window_ms = tick_velocity_window_ms
         self.impulse_tick_density_mult = impulse_tick_density_mult
         self.tracked_currencies = tracked_currencies or ["USD", "XAU", "EUR", "GBP"]
+        self.block_on_calendar_unavailable = block_on_calendar_unavailable
+
+        # Calendar and feed availability
+        self._is_calendar_available: bool = False
+        self.calendar_status: str = "INITIALIZING"
+        self.headlines_status: str = "INITIALIZING"
 
         # Timezone Setup
         self.iana_tz_name, self.local_tz, self.utc_offset_str = detect_system_timezone()
@@ -292,13 +301,19 @@ class NewsReactor:
                         raw_data = await resp.json()
                         self._parse_full_calendar(raw_data)
                         self._last_calendar_fetch = time.time()
+                        self._is_calendar_available = True
+                        self.calendar_status = "AVAILABLE"
                         logger.info(f"Loaded {len(self._all_events)} events ({len(self._major_events)} Major) into NewsReactor.")
                         return
+                    else:
+                        logger.warning(f"ForexFactory calendar endpoint returned HTTP {resp.status}.")
         except Exception as e:
-            logger.warning(f"Could not load live economic calendar ({e}). Using robust fallback schedule.")
+            logger.warning(f"Could not load live economic calendar ({e}). Feed marked UNAVAILABLE. Fake schedule generation is disabled.")
 
-        if not self._all_events:
-            self._populate_fallback_calendar()
+        self._is_calendar_available = False
+        self.calendar_status = "UNAVAILABLE"
+        self._all_events = []
+        self._major_events = []
 
     def _parse_full_calendar(self, raw_events: List[Dict[str, Any]]) -> None:
         """Parse raw calendar items into timezone-converted CalendarEvent objects."""
@@ -486,9 +501,10 @@ class NewsReactor:
         for item in reversed(new_items):
             self._headlines.appendleft(item)
 
-        # Seed realistic live market headlines if offline or feeds empty
-        if not self._headlines:
-            self._seed_fallback_headlines()
+        if self._headlines:
+            self.headlines_status = "AVAILABLE"
+        else:
+            self.headlines_status = "UNAVAILABLE"
 
     def score_gold_sentiment(self, text: str) -> Tuple[str, str]:
         """
@@ -530,16 +546,17 @@ class NewsReactor:
                 sentiment_badge=badge,
             ))
 
-    def get_complete_news_state(self) -> Dict[str, Any]:
+    def get_complete_news_state(self, current_utc: Optional[float] = None) -> Dict[str, Any]:
         """
         Generate complete real-time payload:
         1. Local Timezone info & Market Sessions
-        2. 'Happening Right Now' Active Alert (T-2m to T+15m)
+        2. 'Happening Right Now' Active Alert (T-freeze to T+cooldown)
         3. Hero Next Major News Countdown
         4. Full Timeline Table (Major + Minor)
         5. Breaking Live Headlines Stream with Gold Sentiment
+        6. Explicit Calendar Availability Status
         """
-        now = time.time()
+        now = current_utc if current_utc is not None else time.time()
         session_info = self.get_market_session_status()
 
         # Update dynamic relative times and status on all events
@@ -557,23 +574,28 @@ class NewsReactor:
                 m = int((diff % 3600) // 60)
                 ev.relative_time = f"in {h:02d}h {m:02d}m" if h > 0 else f"in {m}m"
 
-        # 1. State Machine: HAPPENING RIGHT NOW (Within T-2m to T+15m)
+        # 1. State Machine & High-Impact Freeze Detection
         happening_now_event: Optional[Dict[str, Any]] = None
-        happening_mode = "NONE" # "PRE_NEWS_SHIELD", "POST_NEWS_MOMENTUM", "COOLING"
+        happening_mode = "NONE" # "PRE_NEWS_SHIELD_LOCK", "POST_NEWS_FREEZE_LOCK", "POST_NEWS_MOMENTUM_CAPTURE", "NONE"
+        is_news_freeze = False
 
         for ev in self._all_events:
             diff = ev.timestamp_utc - now # positive = future, negative = past
-            if -900 <= diff <= 120: # -15m to +2m
+            if ev.impact == "HIGH":
+                # Strict freeze window before and after high-impact events
+                if -self.post_news_freeze_seconds <= diff <= self.pre_news_freeze_seconds:
+                    is_news_freeze = True
+                    happening_now_event = ev.to_dict()
+                    if diff >= 0:
+                        happening_mode = "PRE_NEWS_SHIELD_LOCK"
+                    elif -self.post_news_cooldown_seconds <= diff < 0:
+                        happening_mode = "WHIPSAW_SPIKE_COOLING"
+                    else:
+                        happening_mode = "POST_NEWS_FREEZE_LOCK"
+                    break
+            elif -900 <= diff <= 120:
                 happening_now_event = ev.to_dict()
-                if 0 <= diff <= 120:
-                    happening_mode = "PRE_NEWS_SHIELD_LOCK"
-                elif -self.post_news_cooldown_seconds <= diff < 0:
-                    happening_mode = "WHIPSAW_SPIKE_COOLING"
-                elif -self.post_news_momentum_window_sec <= diff < -self.post_news_cooldown_seconds:
-                    happening_mode = "POST_NEWS_MOMENTUM_CAPTURE"
-                else:
-                    happening_mode = "POST_RELEASE_SETTLING"
-                break
+                happening_mode = "POST_RELEASE_SETTLING"
 
         # 2. Hero Next Major News Countdown
         next_major_event: Optional[Dict[str, Any]] = None
@@ -609,6 +631,9 @@ class NewsReactor:
 
         return {
             "timezone": session_info,
+            "calendar_status": self.calendar_status,
+            "is_calendar_available": self._is_calendar_available,
+            "headlines_status": self.headlines_status,
             "happening_now": {
                 "active": happening_now_event is not None,
                 "event": happening_now_event,
@@ -621,12 +646,12 @@ class NewsReactor:
             },
             "timeline": timeline,
             "headlines": headlines_list,
-            "is_news_freeze": (happening_mode in ["PRE_NEWS_SHIELD_LOCK", "WHIPSAW_SPIKE_COOLING"]),
+            "is_news_freeze": is_news_freeze,
         }
 
     def check_calendar_state(self, current_utc: Optional[float] = None) -> Dict[str, Any]:
         """Backward-compatible fast calendar state check for trading loop."""
-        state = self.get_complete_news_state()
+        state = self.get_complete_news_state(current_utc=current_utc)
         happening = state.get("happening_now", {})
         next_maj = state.get("next_major_news", {})
         
@@ -639,12 +664,14 @@ class NewsReactor:
         msg = "Normal Market Flow"
         if is_freeze:
             ev_title = nearest_ev.get("title", "High-Impact Release") if nearest_ev else "Release"
-            msg = f"[PRE-NEWS SHIELD] '{ev_title}' active! Entries locked."
+            msg = f"[HIGH-IMPACT NEWS FREEZE] '{ev_title}' active! Entries locked."
         elif is_momentum:
             ev_title = nearest_ev.get("title", "Release") if nearest_ev else "Release"
             msg = f"[POST-NEWS MOMENTUM] Sniping institutional wave on '{ev_title}'."
         elif nearest_ev:
             msg = f"Next: {nearest_ev.get('title')} ({nearest_ev.get('currency')}) in {next_maj.get('countdown_formatted')}"
+        elif not self._is_calendar_available:
+            msg = "Economic calendar feed unavailable."
 
         return {
             "is_news_freeze": is_freeze,
@@ -653,6 +680,8 @@ class NewsReactor:
             "nearest_event": nearest_ev,
             "countdown_seconds": cd,
             "message": msg,
+            "calendar_status": self.calendar_status,
+            "is_calendar_available": self._is_calendar_available,
         }
 
     def on_tick(self, tick: Tick, atr_15m: float = 2.50) -> Dict[str, Any]:
@@ -833,26 +862,24 @@ class NewsReactor:
     def can_open_baseline_trade(self) -> Tuple[bool, str]:
         """
         Smart News Entry Gate:
-        Instead of a blind defensive freeze, studies news data and sentiment to allow intelligent momentum entries.
-        Only pauses during extreme spread blowout or final 30s before unreleased major prints.
+        Enforces strict high-impact news freeze and spread blowout shield.
+        During confirmed high-impact economic news freeze windows, new entries are strictly locked.
         """
         if self._is_spread_blown_out:
             return False, f"Spread blown out ({self.max_spread_multiplier}x normal). Broker slippage shield active."
 
+        if not self._is_calendar_available:
+            if self.block_on_calendar_unavailable:
+                return False, "Economic calendar feed unavailable (strict safety lock enabled)."
+
         state = self.check_calendar_state()
-        study = self.analyze_news_fundamental_bias()
-
-        # If pre-news shield is active, check if we have strong fundamental study clarity
         if state.get("is_news_freeze", False):
-            if study.get("confidence", 0.0) >= 0.70 and study.get("direction") in ["BUY", "SELL"]:
-                return True, f"News Study Active: {study['direction']} bias ({study['summary']})"
-            
-            # Brief 30s pause right before numbers release if data is pending
-            cd = state.get("countdown_seconds")
-            if cd is not None and 0 < cd <= 30:
-                return False, f"Awaiting initial economic release print ({cd}s)..."
+            nearest = state.get("nearest_event") or {}
+            ev_title = nearest.get("title", "High-Impact Release")
+            return False, f"High-impact news freeze active for '{ev_title}'. New entries strictly locked."
 
-        return True, "Trading conditions nominal."
+        warning_str = " (Warning: Economic calendar feed unavailable)" if not self._is_calendar_available else ""
+        return True, f"Trading conditions nominal.{warning_str}"
 
     def get_feed_logs(self, count: int = 20) -> List[Dict[str, Any]]:
         """Return latest activity logs."""
