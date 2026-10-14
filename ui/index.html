@@ -1,0 +1,1731 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ApexGold — Institutional Algorithmic Command Center</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- TradingView Lightweight Charts CDN -->
+  <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              gold: '#F59E0B',
+              dark: '#070B11',
+              card: '#0D131F',
+              border: '#1A2333',
+              green: '#10B981',
+              red: '#EF4444',
+              blue: '#3B82F6',
+              purple: '#8B5CF6'
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body { background-color: #070B11; color: #E5E7EB; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    .pulse-dot { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+    .flash-alert { animation: flash 1.5s ease-in-out infinite alternate; }
+    .brain-glow { animation: brainPulse 3s ease-in-out infinite alternate; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+    @keyframes flash { from { background-color: rgba(239, 68, 68, 0.2); border-color: rgba(239, 68, 68, 0.8); } to { background-color: rgba(245, 158, 11, 0.25); border-color: rgba(245, 158, 11, 0.9); } }
+    @keyframes brainPulse {
+      0% { border-color: rgba(245, 158, 11, 0.5); box-shadow: 0 0 8px rgba(245, 158, 11, 0.2); }
+      50% { border-color: rgba(16, 185, 129, 0.8); box-shadow: 0 0 16px rgba(16, 185, 129, 0.35); }
+      100% { border-color: rgba(139, 92, 246, 0.7); box-shadow: 0 0 10px rgba(139, 92, 246, 0.25); }
+    }
+    input[type=range] {
+      -webkit-appearance: none;
+      background: #111827;
+      border: 1px solid #374151;
+      border-radius: 9999px;
+      height: 6px;
+    }
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      height: 16px;
+      width: 16px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #F59E0B, #10B981);
+      cursor: pointer;
+      box-shadow: 0 0 8px rgba(245, 158, 11, 0.8);
+      border: 2px solid #070B11;
+      transition: transform 0.15s ease;
+    }
+    input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.2); }
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: #070B11; }
+    ::-webkit-scrollbar-thumb { background: #1F2937; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #374151; }
+  </style>
+</head>
+<body class="h-screen flex flex-col overflow-hidden select-none">
+
+  <!-- ROW 1: PRIMARY INSTITUTIONAL HEADER BAR -->
+  <header class="bg-[#090D15]/95 backdrop-blur border-b border-[#1A2333] px-3.5 py-1.5 flex items-center justify-between shrink-0 text-xs">
+    <!-- Left: Brand & MT5 Live Connection -->
+    <div class="flex items-center space-x-3">
+      <div class="flex items-center space-x-2">
+        <div class="w-7 h-7 rounded-lg bg-amber-500/15 border border-amber-500/40 flex items-center justify-center font-black text-amber-400 text-sm">
+          AG
+        </div>
+        <div>
+          <div class="flex items-center space-x-1.5">
+            <span class="font-bold text-sm tracking-wide text-gray-100">ApexGold</span>
+            <span class="px-1.5 py-0.2 text-[9px] uppercase font-bold rounded bg-amber-500/20 text-amber-400 border border-amber-500/30">AI Brain</span>
+          </div>
+          <div class="flex items-center space-x-1 text-[11px]">
+            <span id="broker-status-dot" class="w-2 h-2 rounded-full bg-emerald-400 pulse-dot"></span>
+            <span id="broker-status-text" class="font-mono text-emerald-400 font-semibold">MT5 CONNECTING...</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Real-Time Account Telemetry Direct from MT5 -->
+      <div class="hidden md:flex items-center space-x-4 ml-4 pl-4 border-l border-[#1A2333] font-mono text-[11px]">
+        <div>
+          <span class="text-gray-500 block text-[9px] uppercase font-sans">Balance</span>
+          <span id="header-balance" class="font-bold text-gray-100">$0.00</span>
+        </div>
+        <div>
+          <span class="text-gray-500 block text-[9px] uppercase font-sans">Equity</span>
+          <span id="header-equity" class="font-bold text-gray-100">$0.00</span>
+        </div>
+        <div>
+          <span class="text-gray-500 block text-[9px] uppercase font-sans">Margin Free</span>
+          <span id="header-margin" class="font-bold text-emerald-400">$0.00</span>
+        </div>
+        <div>
+          <span class="text-gray-500 block text-[9px] uppercase font-sans">Account</span>
+          <span id="header-account-type" class="font-bold text-blue-400">MICRO (1:500)</span>
+        </div>
+        <div>
+          <span class="text-gray-500 block text-[9px] uppercase font-sans">Symbol</span>
+          <span id="header-symbol" class="font-bold text-amber-400">XAUUSD.m</span>
+        </div>
+        <div>
+          <span class="text-gray-500 block text-[9px] uppercase font-sans">Spread</span>
+          <span id="header-spread" class="font-semibold text-gray-300">0.25 pts</span>
+        </div>
+        <div>
+          <span class="text-gray-500 block text-[9px] uppercase font-sans">Win Rate</span>
+          <span id="header-winrate" class="font-bold text-emerald-400">--%</span>
+        </div>
+        <div>
+          <span class="text-gray-500 block text-[9px] uppercase font-sans">Net P&L</span>
+          <span id="header-net-pnl" class="font-bold text-emerald-400">$0.00</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Center/Right: Session Clock & Execution Controls -->
+    <div class="flex items-center space-x-3">
+      <!-- Session & Timezone Badge -->
+      <div class="hidden xl:flex items-center space-x-2 bg-[#0D131F] px-2.5 py-1 rounded-md border border-[#1A2333] font-mono text-[11px]">
+        <span class="text-gray-400">🕒</span>
+        <span id="badge-local-clock" class="text-gray-200 font-bold">12:00:00 PM</span>
+        <span id="badge-tz-name" class="text-blue-400">(UTC+3)</span>
+        <span class="text-gray-600">|</span>
+        <span id="badge-session-title" class="text-amber-400 font-bold">LONDON SESSION</span>
+      </div>
+
+      <!-- Execution Mode Switcher -->
+      <div class="flex bg-gray-950 p-0.5 rounded-lg border border-gray-800 text-[11px] font-medium">
+        <button id="btn-mode-auto" onclick="setExecutionMode('full_auto')" class="px-2 py-0.5 rounded bg-amber-500 text-gray-950 font-bold transition">AUTO</button>
+        <button id="btn-mode-confirm" onclick="setExecutionMode('confirm')" class="px-2 py-0.5 rounded text-gray-400 hover:text-gray-200 transition">ALERT</button>
+        <button id="btn-mode-scanner" onclick="setExecutionMode('scanner')" class="px-2 py-0.5 rounded text-gray-400 hover:text-gray-200 transition">SCAN</button>
+      </div>
+
+      <!-- Direct 1-Click Order Buttons -->
+      <div class="flex items-center space-x-1 pl-2 border-l border-gray-800">
+        <button onclick="dispatchDirectTestTrade('BUY')" title="Instant Market BUY 0.01 lot on MT5" class="px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-black text-[11px] transition flex items-center space-x-1 shadow">
+          <span>⚡ BUY 0.01</span>
+        </button>
+        <button onclick="dispatchDirectTestTrade('SELL')" title="Instant Market SELL 0.01 lot on MT5" class="px-2.5 py-1 rounded bg-rose-600 hover:bg-rose-500 text-white font-black text-[11px] transition flex items-center space-x-1 shadow">
+          <span>⚡ SELL 0.01</span>
+        </button>
+        <button onclick="emergencyAction('close_all')" title="Close All Positions on MT5" class="px-2 py-1 rounded bg-red-700/80 hover:bg-red-600 text-white font-bold text-[10px] transition">
+          CLOSE ALL
+        </button>
+        <button onclick="emergencyAction('lock_breakeven')" title="Lock Breakeven on All Winning Positions" class="px-2 py-1 rounded bg-yellow-600 hover:bg-yellow-500 text-gray-950 font-bold text-[10px] transition">
+          LOCK BE
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- CONDITIONAL WARNING: MT5 ALGO TRADING DISABLED -->
+  <div id="mt5-algo-warning" class="hidden bg-red-950/95 border-b-2 border-red-500 px-4 py-1.5 flex items-center justify-between text-xs text-red-200 shrink-0">
+    <div class="flex items-center space-x-2 font-bold">
+      <span class="text-base animate-bounce">⚠️</span>
+      <span>ACTION REQUIRED: MetaTrader 5 "Algo Trading" is TURNED OFF! Automated & 1-Click orders are currently blocked by MT5.</span>
+    </div>
+    <span class="bg-red-900 border border-red-500 px-2.5 py-0.5 rounded text-[11px] font-mono text-white font-bold animate-pulse">
+      👉 In MT5: Click the "Algo Trading" button in top toolbar so it turns GREEN!
+    </span>
+  </div>
+
+  <!-- CONDITIONAL ALERT: LIVE ECONOMIC RELEASE HAPPENING RIGHT NOW -->
+  <div id="banner-happening-now" class="hidden flash-alert px-4 py-1.5 border-b border-red-500 flex items-center justify-between text-xs shrink-0 bg-red-950/40">
+    <div class="flex items-center space-x-2 font-bold">
+      <span class="w-2 h-2 rounded-full bg-red-500 pulse-dot"></span>
+      <span class="text-red-400 uppercase tracking-wider">🔥 ECONOMIC EVENT HAPPENING NOW:</span>
+      <span id="live-event-name" class="text-white">US CPI Release</span>
+      <span id="live-event-impact" class="px-1.5 py-0.2 rounded text-[10px] uppercase bg-red-500/20 text-red-400">🔴 HIGH IMPACT</span>
+    </div>
+    <span id="live-engine-mode" class="px-2 py-0.5 rounded font-bold uppercase text-[10px] bg-red-900 text-red-200 border border-red-700">
+      🛡️ PRE-NEWS SHIELD (New entries locked)
+    </span>
+  </div>
+
+  <!-- ROW 2: SMART TRANSMISSION & MARKET TELEMETRY STRIP (ADAPTIVE RESPONSIVE ROW) -->
+  <section class="bg-[#0A0E18] border-b border-[#1A2333] px-3.5 py-1.5 flex items-center justify-between text-xs shrink-0 gap-2.5 overflow-x-auto no-scrollbar">
+    <!-- Left: Transmission Modes & Live Scroller -->
+    <div class="flex items-center space-x-2 shrink-0">
+      <!-- HERO AUTO-ADAPTIVE BUTTON -->
+      <button id="btn-mode-auto-adaptive" onclick="setTransmissionMode('auto_adaptive')" class="px-2.5 py-1 rounded-md font-bold text-[11px] transition flex items-center space-x-1.5 brain-glow border bg-emerald-950/40 text-emerald-300 border-emerald-500/80 shadow whitespace-nowrap">
+        <span class="w-2 h-2 rounded-full bg-emerald-400 pulse-dot"></span>
+        <span>🧠 AUTO-ADAPTIVE</span>
+      </button>
+
+      <!-- 4 Compact Preset Gears -->
+      <div class="hidden xl:flex items-center space-x-0.5 bg-gray-950 p-0.5 rounded border border-gray-800 text-[11px] shrink-0">
+        <button id="btn-gear-cautious" onclick="setTransmissionMode('cautious')" title="Sniper (35% | Min Score: 76)" class="px-2 py-0.5 rounded text-gray-400 hover:text-gray-100 transition">
+          🛡️ 35%
+        </button>
+        <button id="btn-gear-standard" onclick="setTransmissionMode('standard')" title="Standard (55% | Min Score: 68)" class="px-2 py-0.5 rounded text-gray-400 hover:text-gray-100 transition">
+          ⚖️ 55%
+        </button>
+        <button id="btn-gear-aggressive" onclick="setTransmissionMode('aggressive')" title="Aggressive (75% | Min Score: 60)" class="px-2 py-0.5 rounded text-gray-400 hover:text-gray-100 transition">
+          🔥 75%
+        </button>
+        <button id="btn-gear-hyper" onclick="setTransmissionMode('hyper')" title="Hyper Scalp (92% | Min Score: 52)" class="px-2 py-0.5 rounded text-gray-400 hover:text-gray-100 transition">
+          ⚡ 92%
+        </button>
+      </div>
+
+      <!-- Compact Dial Slider -->
+      <div class="hidden sm:flex items-center space-x-1.5 bg-[#0D131F] px-2 py-0.5 rounded border border-[#1A2333] shrink-0">
+        <input id="slider-aggressiveness" type="range" min="1" max="100" value="74" oninput="onSliderInput(this.value)" onchange="onSliderChange(this.value)" class="w-16 md:w-20 cursor-pointer">
+        <span id="label-scroller-pct" class="font-mono font-bold text-amber-400 text-[11px] w-7 text-right">74%</span>
+        <span class="text-gray-600">|</span>
+        <span class="text-gray-400 text-[10px]">Min:</span>
+        <span id="label-scroller-threshold" class="font-bold text-emerald-400 font-mono text-[11px]">62</span>
+        <span id="badge-scroller-status" class="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-emerald-500/20 text-emerald-400">AUTO</span>
+      </div>
+    </div>
+
+    <!-- Center: Live Market Brain Reason (Flexible, Never-Clipped) -->
+    <div class="flex items-center space-x-2 flex-1 min-w-0 mx-1 md:mx-3">
+      <span id="badge-sub-regime" class="px-2.5 py-0.5 rounded text-[10px] font-black uppercase bg-amber-500/20 text-amber-400 border border-amber-500/30 shrink-0 whitespace-nowrap">
+        ⚡ FAST SCALP
+      </span>
+      <div class="min-w-0 flex-1 flex items-center bg-[#0D131F]/80 border border-[#1A2333] px-2.5 py-0.5 rounded">
+        <span id="pill-auto-brain-reason" class="text-gray-300 font-medium text-[11px] truncate block w-full cursor-pointer hover:text-white transition" title="Live Market Brain Intelligence">
+          🧠 Analyzing tick velocity and institutional order flow...
+        </span>
+      </div>
+    </div>
+
+    <!-- Right: Next Major News & Confluence Score -->
+    <div class="flex items-center space-x-2 md:space-x-3 shrink-0">
+      <!-- Next News Countdown -->
+      <div class="flex items-center space-x-1.5 font-mono text-[11px] bg-[#0D131F] px-2.5 py-0.5 rounded border border-[#1A2333]">
+        <span class="text-amber-400 font-bold">⏳</span>
+        <span id="hero-major-title" class="text-gray-300 font-semibold truncate max-w-[100px] md:max-w-[130px]">USD News</span>
+        <span id="hero-major-countdown" class="font-bold text-amber-400">--:--:--</span>
+      </div>
+
+      <!-- Live Confluence Score Pill -->
+      <div class="flex items-center space-x-1 font-mono text-[11px] bg-[#0D131F] px-2.5 py-0.5 rounded border border-[#1A2333]">
+        <span class="text-gray-400 text-[10px] font-sans uppercase">Score:</span>
+        <span id="score-number" class="text-sm font-black text-emerald-400">--</span>
+        <span class="text-gray-500 text-[10px]">/100</span>
+        <span id="score-tier" class="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-gray-800 text-gray-400">WAITING</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- MAIN VIEWPORT: CHART + RIGHT PANEL -->
+  <main class="flex-1 min-h-0 min-w-0 flex overflow-hidden">
+    
+    <!-- LEFT: WIDE-OPEN CHART VIEWPORT (ADAPTIVE FULL HEIGHT) -->
+    <div class="flex-1 min-h-0 min-w-0 flex flex-col border-r border-[#1A2333] bg-[#070B11] relative overflow-hidden">
+      <!-- Chart Controls Bar -->
+      <div class="px-3 py-1.5 border-b border-[#1A2333] bg-[#0A0E18]/90 flex items-center justify-between text-xs shrink-0 z-10">
+        <!-- Timeframes -->
+        <div class="flex items-center space-x-1 font-medium">
+          <button onclick="switchTimeframe('1m')" id="tf-1m" class="px-2.5 py-0.5 rounded text-gray-400 hover:text-gray-200 transition">1m</button>
+          <button onclick="switchTimeframe('5m')" id="tf-5m" class="px-2.5 py-0.5 rounded text-gray-400 hover:text-gray-200 transition">5m</button>
+          <button onclick="switchTimeframe('15m')" id="tf-15m" class="px-2.5 py-0.5 rounded text-gray-400 hover:text-gray-200 transition">15m</button>
+          <button onclick="switchTimeframe('1H')" id="tf-1H" class="px-2.5 py-0.5 rounded bg-amber-500 text-gray-950 font-bold transition">1H</button>
+          <span class="text-gray-600 pl-2">|</span>
+          <span id="chart-symbol-badge" class="font-mono text-amber-400 font-bold pl-1">XAUUSD.m</span>
+          <span id="chart-mt5-sync-pill" class="ml-2 px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-blue-500/20 text-blue-400 border border-blue-500/30">
+            MT5: 1H
+          </span>
+          <button onclick="fitChartContent()" title="Reset Zoom / Fit All Candles" class="ml-2 px-2 py-0.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-300 text-[10px] font-bold transition flex items-center space-x-1">
+            <span>⛶</span>
+            <span>FIT</span>
+          </button>
+        </div>
+
+        <!-- 4-TF Bias Alignment Indicators -->
+        <div class="hidden sm:flex items-center space-x-1 font-mono text-[10px]">
+          <span class="text-gray-500 font-sans uppercase text-[9px] mr-1">4-TF:</span>
+          <span id="pill-1h" class="px-1.5 py-0.2 rounded bg-emerald-950 text-emerald-400 border border-emerald-800/60 font-semibold">1H: ▲</span>
+          <span id="pill-15m" class="px-1.5 py-0.2 rounded bg-emerald-950 text-emerald-400 border border-emerald-800/60 font-semibold">15m: ▲</span>
+          <span id="pill-5m" class="px-1.5 py-0.2 rounded bg-blue-950 text-blue-400 border border-blue-800/60 font-semibold">5m: ▼</span>
+          <span id="pill-1m" class="px-1.5 py-0.2 rounded bg-amber-950 text-amber-400 border border-amber-800/60 font-semibold">1m: ▲</span>
+        </div>
+
+        <!-- Live Quote Bid/Ask -->
+        <div class="flex items-center space-x-3 text-xs font-mono">
+          <div class="flex items-center space-x-1 text-gray-400">
+            <span>BID:</span>
+            <span id="chart-bid" class="text-gray-100 font-bold">--.--</span>
+          </div>
+          <div class="flex items-center space-x-1 text-gray-400">
+            <span>ASK:</span>
+            <span id="chart-ask" class="text-gray-100 font-bold">--.--</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- TradingView Chart Container with Absolute Positioning for 100% Adaptive Viewport Fit -->
+      <div class="relative flex-1 min-h-0 min-w-0 w-full overflow-hidden">
+        <div id="tv-chart" class="absolute inset-0 w-full h-full"></div>
+      </div>
+    </div>
+
+    <!-- RIGHT: STREAMLINED ACTION & INTELLIGENCE SIDEBAR (ADAPTIVE WIDTH) -->
+    <div class="w-[340px] lg:w-[360px] xl:w-[380px] flex flex-col min-h-0 h-full bg-[#0A0E18] overflow-y-auto divide-y divide-[#1A2333] shrink-0">
+      
+      <!-- WIDGET 1: LIVE POSITIONS STACK (MULTI-POSITION AWARE) -->
+      <div class="p-3 space-y-2">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center space-x-1.5">
+            <span class="text-[11px] font-bold uppercase tracking-wider text-gray-400">Positions</span>
+            <span id="pos-total-pnl-pill" class="hidden px-1.5 py-0.2 rounded text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-400">+$0.00</span>
+          </div>
+          <span id="pos-status-badge" class="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-gray-800 text-gray-400">NO TRADES OPEN</span>
+        </div>
+
+        <!-- Dynamic Multi-Position Container -->
+        <div id="positions-container" class="space-y-2 max-h-[260px] overflow-y-auto pr-1">
+          <!-- Default empty state -->
+          <div id="pos-empty-state" class="p-3 rounded-lg border border-[#1A2333] bg-[#0D131F]/50 text-center text-gray-500 text-[11px]">
+            No open trades on MT5. Scanning 4-TF confluence...
+          </div>
+        </div>
+
+        <!-- Dynamic Pending Limit Orders Container -->
+        <div id="pending-orders-wrapper" class="hidden space-y-1.5 pt-2 border-t border-[#1A2333]">
+          <div class="flex items-center justify-between text-[11px] font-bold text-gray-400">
+            <div class="flex items-center space-x-1.5">
+              <span>Pending Limits</span>
+              <span id="pending-orders-count" class="px-1.5 py-0.2 rounded text-[10px] bg-blue-500/20 text-blue-400 font-mono font-bold">0</span>
+            </div>
+            <button onclick="cancelAllLimitOrders()" class="text-[9px] text-red-400 hover:text-red-300 font-bold uppercase transition">Cancel All</button>
+          </div>
+          <div id="pending-orders-container" class="space-y-1.5 max-h-[180px] overflow-y-auto pr-1"></div>
+        </div>
+
+        <!-- Global Action Bar (accessible when trades open) -->
+        <div id="pos-global-actions" class="hidden grid grid-cols-2 gap-2 pt-1">
+          <button onclick="emergencyAction('close_all')" class="py-1 rounded bg-red-600 hover:bg-red-500 text-white font-bold text-xs transition shadow">
+            Close All
+          </button>
+          <button onclick="emergencyAction('lock_breakeven')" class="py-1 rounded bg-yellow-600 hover:bg-yellow-500 text-gray-950 font-bold text-xs transition shadow">
+            Lock BE All
+          </button>
+        </div>
+      </div>
+
+      <!-- WIDGET 2: PERSISTENT PERFORMANCE STORE (LOCAL SQLITE) -->
+      <div class="p-3 space-y-2 bg-[#080D16]">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center space-x-1.5">
+            <span class="text-[11px] font-bold uppercase tracking-wider text-amber-400">Performance</span>
+            <span class="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-blue-500/20 text-blue-400 border border-blue-500/30">SQLITE SAVED</span>
+          </div>
+          <div class="flex items-center space-x-2">
+            <button onclick="confirmClearHistory()" title="Reset trade history & recalculate win rate" class="px-2 py-0.5 rounded bg-red-950/80 hover:bg-red-900 border border-red-700/60 text-red-300 text-[10px] font-bold transition flex items-center space-x-1 shadow">
+              <span>🗑️</span>
+              <span>Reset</span>
+            </button>
+            <span id="stat-winrate-hero" class="text-xs font-mono font-black text-emerald-400">WR: --%</span>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-2 text-[11px] font-mono">
+          <div class="bg-[#0D131F] p-2 rounded border border-[#1A2333]">
+            <span class="text-gray-500 text-[9px] block uppercase font-sans">Lifetime Win Rate</span>
+            <div class="flex items-baseline space-x-1 mt-0.5">
+              <span id="stat-winrate" class="text-sm font-black text-emerald-400">0.0%</span>
+              <span id="stat-record" class="text-[10px] text-gray-400">(0W - 0L)</span>
+            </div>
+          </div>
+          <div class="bg-[#0D131F] p-2 rounded border border-[#1A2333]">
+            <span class="text-gray-500 text-[9px] block uppercase font-sans">Net Realized P&L</span>
+            <div class="flex items-baseline space-x-1 mt-0.5">
+              <span id="stat-total-pnl" class="text-sm font-black text-gray-200">$0.00</span>
+              <span id="stat-pf" class="text-[10px] text-gray-400">PF 1.0</span>
+            </div>
+          </div>
+          <div class="bg-[#0D131F] p-2 rounded border border-[#1A2333]">
+            <span class="text-gray-500 text-[9px] block uppercase font-sans">Today's P&L</span>
+            <span id="stat-today-pnl" class="text-xs font-bold text-gray-300 mt-0.5 block">$0.00 (0 trades)</span>
+          </div>
+          <div class="bg-[#0D131F] p-2 rounded border border-[#1A2333]">
+            <span class="text-gray-500 text-[9px] block uppercase font-sans">Today's Win Rate</span>
+            <span id="stat-today-wr" class="text-xs font-bold text-emerald-400 mt-0.5 block">0.0%</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- WIDGET 3: TABBED ACTIVITY (TRADE HISTORY / ECONOMIC NEWS / LOGS) -->
+      <div class="p-3 space-y-2 flex-1 flex flex-col min-h-[300px]">
+        <!-- Main Activity Tabs Switcher -->
+        <div class="flex items-center justify-between">
+          <div class="flex bg-gray-950 p-0.5 rounded border border-gray-800 text-[10px] w-full">
+            <button id="btn-main-tab-history" onclick="switchMainTab('history')" class="flex-1 py-1 rounded bg-amber-500 text-gray-950 font-bold transition">
+              📜 History (<span id="history-count-badge">0</span>)
+            </button>
+            <button id="btn-main-tab-news" onclick="switchMainTab('news')" class="flex-1 py-1 rounded text-gray-400 hover:text-gray-200 font-bold transition">
+              📰 News
+            </button>
+            <button id="btn-main-tab-logs" onclick="switchMainTab('logs')" class="flex-1 py-1 rounded text-gray-400 hover:text-gray-200 font-bold transition">
+              ⚡ Logs
+            </button>
+          </div>
+        </div>
+
+        <!-- PANE A: PERSISTENT TRADE HISTORY TABLE -->
+        <div id="pane-trade-history" class="flex-1 flex flex-col min-h-0 border border-[#1A2333] rounded-lg overflow-hidden bg-gray-950/40">
+          <div class="flex items-center justify-between px-2.5 py-1 bg-[#0D131F] border-b border-[#1A2333] text-[10px]">
+            <span class="text-gray-400 font-bold uppercase tracking-wider">Recorded Trades</span>
+            <button onclick="confirmClearHistory()" class="px-2 py-0.5 rounded bg-red-950/90 hover:bg-red-900 border border-red-800/80 text-red-300 font-bold transition flex items-center space-x-1">
+              <span>🗑️</span>
+              <span>Reset History</span>
+            </button>
+          </div>
+          <div class="overflow-y-auto flex-1 max-h-72">
+            <table class="w-full text-left text-[11px] font-mono">
+              <thead class="bg-[#0D131F] text-gray-400 border-b border-[#1A2333] sticky top-0 text-[10px]">
+                <tr>
+                  <th class="p-1.5">Time</th>
+                  <th class="p-1.5">Trade</th>
+                  <th class="p-1.5">Prices</th>
+                  <th class="p-1.5 text-right">P&L</th>
+                  <th class="p-1.5 text-right">Reason</th>
+                </tr>
+              </thead>
+              <tbody id="trade-history-tbody" class="divide-y divide-[#1A2333]/60">
+                <tr><td colspan="5" class="p-4 text-center text-gray-500">No closed trades yet. Recorded trades persist in SQLite forever.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- PANE B: ECONOMIC NEWS & HEADLINES -->
+        <div id="pane-economic-news" class="hidden flex-1 flex flex-col min-h-0 space-y-2">
+          <div class="flex items-center justify-between text-[10px]">
+            <div class="flex bg-gray-950 p-0.5 rounded border border-gray-800">
+              <button id="btn-tab-calendar-all" onclick="setNewsTab('all')" class="px-2 py-0.5 rounded bg-gray-800 text-gray-100 font-bold">All News</button>
+              <button id="btn-tab-calendar-major" onclick="setNewsTab('major')" class="px-2 py-0.5 rounded text-gray-400 hover:text-gray-200 font-bold">🔴 Major Only</button>
+              <button id="btn-tab-headlines" onclick="setNewsTab('headlines')" class="px-2 py-0.5 rounded text-gray-400 hover:text-gray-200 font-bold">⚡ Headlines</button>
+            </div>
+          </div>
+          <!-- Subview 1: Calendar Table -->
+          <div id="view-calendar-timeline" class="flex-1 overflow-y-auto max-h-64 border border-[#1A2333] rounded-lg">
+            <table class="w-full text-left text-[11px] font-mono">
+              <thead class="bg-[#0D131F] text-gray-400 border-b border-[#1A2333] sticky top-0">
+                <tr>
+                  <th class="p-1.5">Time</th>
+                  <th class="p-1.5">Cur</th>
+                  <th class="p-1.5">Imp</th>
+                  <th class="p-1.5">Event</th>
+                  <th class="p-1.5 text-right">Status</th>
+                </tr>
+              </thead>
+              <tbody id="calendar-table-body" class="divide-y divide-[#1A2333]/60 bg-gray-950/40">
+              </tbody>
+            </table>
+          </div>
+          <!-- Subview 2: Headlines -->
+          <div id="view-breaking-headlines" class="hidden flex-1 overflow-y-auto max-h-64 space-y-1.5">
+            <div id="headlines-stream" class="space-y-1.5"></div>
+          </div>
+        </div>
+
+        <!-- PANE C: LIVE EXECUTION LOGS -->
+        <div id="pane-execution-logs" class="hidden flex-1 flex flex-col min-h-0">
+          <div id="log-feed" class="flex-1 bg-gray-950 rounded-lg p-2 font-mono text-[10px] space-y-1 overflow-y-auto border border-[#1A2333] max-h-64">
+            <div class="text-gray-500">[SYSTEM] ApexGold Dashboard initialized.</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </main>
+
+  <!-- JAVASCRIPT ENGINE & WEBSOCKET CLIENT -->
+  <script>
+    let activeTimeframe = '1H';
+    let currentNewsTab = 'all';
+    let chart, candleSeries;
+    let chartLines = {};
+    let cachedNewsState = null;
+    let isUserDraggingSlider = false;
+    let currentMode = 'auto_adaptive';
+    window.currentSymbol = 'XAUUSD.m';
+    window.userSelectedTimeframe = false;
+    window.lastTelemetryData = null;
+    window.activeEditingPosTicket = null;
+    window.activeEditingOrdTicket = null;
+    window.editingSlValues = {};
+    window.editingTpValues = {};
+    window.editingOrdPriceValues = {};
+    window.editingOrdSlValues = {};
+    window.editingOrdTpValues = {};
+
+    const browserTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Beirut';
+
+    // Piecewise threshold formula
+    function calcThresholdFromPct(pct) {
+      const p = Math.max(1, Math.min(100, Number(pct)));
+      const points = [
+        [1.0, 90.0],
+        [35.0, 76.0],
+        [55.0, 68.0],
+        [75.0, 60.0],
+        [92.0, 52.0],
+        [100.0, 48.0]
+      ];
+      for (let i = 0; i < points.length - 1; i++) {
+        const [x0, y0] = points[i];
+        const [x1, y1] = points[i + 1];
+        if (p >= x0 && p <= x1) {
+          const ratio = (p - x0) / (x1 - x0);
+          return Math.round(y0 + ratio * (y1 - y0));
+        }
+      }
+      return 68;
+    }
+
+    // Initialize Professional TradingView Lightweight Chart (100% Adaptive)
+    function initChart() {
+      const chartContainer = document.getElementById('tv-chart');
+      chart = LightweightCharts.createChart(chartContainer, {
+        width: chartContainer.clientWidth || 800,
+        height: chartContainer.clientHeight || 500,
+        layout: {
+          background: { color: '#070B11' },
+          textColor: '#9CA3AF',
+          fontFamily: 'ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+        },
+        grid: {
+          vertLines: { color: 'rgba(26, 35, 51, 0.45)' },
+          horzLines: { color: 'rgba(26, 35, 51, 0.45)' },
+        },
+        crosshair: {
+          mode: LightweightCharts.CrosshairMode.Normal,
+        },
+        timeScale: {
+          borderColor: '#1A2333',
+          timeVisible: true,
+          secondsVisible: false,
+          rightOffset: 6,
+          barSpacing: 12,
+          minBarSpacing: 3,
+          fixLeftEdge: false,
+          fixRightEdge: false,
+        },
+        rightPriceScale: {
+          borderColor: '#1A2333',
+          scaleMargins: {
+            top: 0.08,
+            bottom: 0.08,
+          },
+          autoScale: true,
+        },
+        handleScroll: {
+          mouseWheel: true,
+          pressedMouseMove: true,
+          horzTouchDrag: true,
+          vertTouchDrag: true,
+        },
+        handleScale: {
+          axisPressedMouseMove: true,
+          mouseWheel: true,
+          pinch: true,
+        },
+      });
+
+      // MT5 Institutional Green / Red Candlestick Visuals
+      candleSeries = chart.addCandlestickSeries({
+        upColor: '#00C853',
+        downColor: '#FF3B30',
+        borderVisible: true,
+        borderColor: '#00C853',
+        borderUpColor: '#00C853',
+        borderDownColor: '#FF3B30',
+        wickVisible: true,
+        wickUpColor: '#00C853',
+        wickDownColor: '#FF3B30',
+      });
+
+      // Continuous ResizeObserver ensures bottom time-scale axis is never cut off
+      const ro = new ResizeObserver((entries) => {
+        if (!entries || entries.length === 0) return;
+        const rect = entries[0].contentRect;
+        if (rect.width > 0 && rect.height > 0 && chart) {
+          chart.applyOptions({
+            width: Math.floor(rect.width),
+            height: Math.floor(rect.height),
+          });
+        }
+      });
+      ro.observe(chartContainer);
+    }
+
+    let isInitialChartLoad = true;
+
+    function fitChartContent() {
+      if (chart) {
+        chart.timeScale().fitContent();
+      }
+    }
+
+    // Load Candles for Timeframe with 800+ Historical Bars
+    async function loadCandles(tf, forceFullReload = false) {
+      try {
+        const symbol = window.currentSymbol || 'XAUUSD.m';
+        const res = await fetch(`/api/candles?symbol=${symbol}&timeframe=${tf}&count=800`);
+        const data = await res.json();
+        if (data && data.length > 0) {
+          // Ensure data is strictly ascending and without duplicate timestamps
+          const sorted = [];
+          for (let i = 0; i < data.length; i++) {
+            if (i === 0 || data[i].time > sorted[sorted.length - 1].time) {
+              sorted.push(data[i]);
+            }
+          }
+          if (isInitialChartLoad || forceFullReload || !window.lastBar || Math.abs(sorted[sorted.length - 1].time - window.lastBar.time) > (tf === '1H' ? 7200 : 600)) {
+            candleSeries.setData(sorted);
+            const total = sorted.length;
+            // Visible range: on 1H show last 55 bars matching MT5 view. Lower TFs show 65-75 bars.
+            const barsToShow = (tf === '1H') ? 55 : (tf === '15m' ? 65 : 75);
+            chart.timeScale().setVisibleLogicalRange({
+              from: Math.max(0, total - barsToShow),
+              to: total + 4,
+            });
+            isInitialChartLoad = false;
+          } else {
+            // Update latest bars in-place without resetting scroll or zoom
+            for (let i = Math.max(0, sorted.length - 15); i < sorted.length; i++) {
+              try { candleSeries.update(sorted[i]); } catch (e) {}
+            }
+          }
+          window.lastBar = { ...sorted[sorted.length - 1] };
+        }
+      } catch (e) {
+        console.error('Error loading candles:', e);
+      }
+    }
+
+    function switchTimeframe(tf, isManual = true) {
+      if (isManual) window.userSelectedTimeframe = true;
+      activeTimeframe = tf;
+      ['1m', '5m', '15m', '1H'].forEach(t => {
+        const btn = document.getElementById(`tf-${t}`);
+        if (btn) {
+          if (t === tf) {
+            btn.className = 'px-2.5 py-0.5 rounded bg-amber-500 text-gray-950 font-bold transition';
+          } else {
+            btn.className = 'px-2.5 py-0.5 rounded text-gray-400 hover:text-gray-200 transition';
+          }
+        }
+      });
+      loadCandles(tf, true);
+    }
+
+    // Connect WebSocket
+    function connectWS() {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${window.location.host}/ws`;
+      const ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        appendLog('SYSTEM', 'Real-time telemetry stream connected.');
+      };
+
+      ws.onmessage = (event) => {
+        const msg = JSON.parse(event.data);
+        if (msg.type === 'TELEMETRY') {
+          handleTelemetry(msg);
+        }
+      };
+
+      ws.onclose = () => {
+        setTimeout(connectWS, 2000);
+      };
+    }
+
+    // Auto-sync historical candles smoothly every 15s (without resetting zoom)
+    setInterval(() => {
+      loadCandles(activeTimeframe, false);
+    }, 15000);
+
+    // Direct 1-Click MT5 Test Trade Dispatcher
+    async function dispatchDirectTestTrade(dir) {
+      try {
+        appendLog('EXECUTION', `Sending 1-Click ${dir} 0.01 lot to MT5...`);
+        const res = await fetch(`/api/actions/test_trade?direction=${dir}&volume=0.01`, { method: 'POST' });
+        const json = await res.json();
+        if (json.status === 'OK') {
+          appendLog('MT5 BRIDGE', `Dispatched ${dir} 0.01 lot! Waiting for fill...`);
+        } else {
+          appendLog('ERROR', `Failed to queue order: ${json.detail || json.message}`);
+        }
+      } catch (e) {
+        appendLog('ERROR', `Test trade error: ${e.message}`);
+      }
+    }
+
+    // Handle 4 FPS Real-Time Telemetry Stream
+    function handleTelemetry(data) {
+      window.lastTelemetryData = data;
+      // 1. Account Metrics Auto-Taken Directly From MT5
+      if (data.account) {
+        document.getElementById('header-balance').innerText = `$${data.account.balance.toFixed(2)}`;
+        document.getElementById('header-equity').innerText = `$${data.account.equity.toFixed(2)}`;
+        document.getElementById('header-margin').innerText = `$${data.account.free_margin.toFixed(2)}`;
+        const accType = (data.account.account_type || 'MICRO').toUpperCase();
+        const lev = data.account.leverage || 500;
+        document.getElementById('header-account-type').innerText = `${accType} (1:${lev})`;
+      }
+
+      // 2. MT5 Broker Status Badge & Algo Trading Warning
+      window.lastAlgoAllowed = data.mt5_algo_trading_allowed;
+      if (data.is_mt5_live && data.mt5_algo_trading_allowed === false) {
+        document.getElementById('mt5-algo-warning')?.classList.remove('hidden');
+        document.getElementById('broker-status-text').innerText = 'MT5 LIVE (⚠️ ALGO OFF)';
+        document.getElementById('broker-status-text').className = 'font-mono text-red-400 font-bold';
+        document.getElementById('broker-status-dot').className = 'w-2 h-2 rounded-full bg-red-500 pulse-dot';
+      } else {
+        document.getElementById('mt5-algo-warning')?.classList.add('hidden');
+        if (data.broker_name) {
+          document.getElementById('broker-status-text').innerText = data.broker_name;
+          if (data.broker_name.includes('LIVE')) {
+            document.getElementById('broker-status-text').className = 'font-mono text-emerald-400 font-bold';
+            document.getElementById('broker-status-dot').className = 'w-2 h-2 rounded-full bg-emerald-400 pulse-dot';
+          } else {
+            document.getElementById('broker-status-text').className = 'font-mono text-gray-400';
+            document.getElementById('broker-status-dot').className = 'w-2 h-2 rounded-full bg-gray-500';
+          }
+        }
+      }
+
+      // 3. Asset & Spread Sync
+      if (data.symbol && data.symbol !== window.currentSymbol) {
+        window.currentSymbol = data.symbol;
+        document.getElementById('header-symbol').innerText = data.symbol;
+        document.getElementById('chart-symbol-badge').innerText = data.symbol;
+        loadCandles(activeTimeframe, true);
+      }
+      document.getElementById('header-spread').innerText = `${data.spread.toFixed(2)} pts`;
+      document.getElementById('chart-bid').innerText = data.bid.toFixed(2);
+      document.getElementById('chart-ask').innerText = data.ask.toFixed(2);
+
+      // 3b. MT5 Active Chart Timeframe Sync
+      if (data.chart_tf) {
+        const pill = document.getElementById('chart-mt5-sync-pill');
+        if (pill) pill.innerText = `MT5: ${data.chart_tf}`;
+        if (!window.userSelectedTimeframe && data.chart_tf !== activeTimeframe) {
+          switchTimeframe(data.chart_tf, false);
+        }
+      }
+
+      // Real-time live candlestick streaming on the chart (1:1 with MT5 ticks)
+      if (candleSeries && data.bid && window.lastBar) {
+        let tfSec = 60;
+        if (activeTimeframe === '5m') tfSec = 300;
+        else if (activeTimeframe === '15m') tfSec = 900;
+        else if (activeTimeframe === '1H') tfSec = 3600;
+
+        let tickTime = Math.floor(data.time || window.lastBar.time);
+        let currentBarTime = Math.floor(tickTime / tfSec) * tfSec;
+
+        if (currentBarTime >= window.lastBar.time) {
+          // If the gap between current tick bar time and last bar is more than 1 timeframe period,
+          // do NOT append a disconnected floating candle into empty space!
+          // Trigger a background full reload of contiguous bars from MT5!
+          if (currentBarTime - window.lastBar.time > tfSec) {
+            if (!window._syncingCandles) {
+              window._syncingCandles = true;
+              loadCandles(activeTimeframe, true).finally(() => { window._syncingCandles = false; });
+            }
+          } else {
+            if (currentBarTime > window.lastBar.time) {
+              window.lastBar = {
+                time: currentBarTime,
+                open: data.bid,
+                high: Math.max(data.bid, data.ask),
+                low: Math.min(data.bid, data.ask),
+                close: data.bid,
+              };
+            } else {
+              window.lastBar.high = Math.max(window.lastBar.high, data.bid);
+              window.lastBar.low = Math.min(window.lastBar.low, data.bid);
+              window.lastBar.close = data.bid;
+            }
+            try {
+              candleSeries.update(window.lastBar);
+            } catch (err) {}
+          }
+        }
+      }
+
+      // 4. Confluence Score & Tier
+      const scoreNum = document.getElementById('score-number');
+      scoreNum.innerText = data.score;
+      const scoreTier = document.getElementById('score-tier');
+      scoreTier.innerText = data.tier;
+
+      if (data.score >= 80) {
+        scoreNum.className = 'text-sm font-black font-mono text-emerald-400';
+        scoreTier.className = 'px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-emerald-500/20 text-emerald-400';
+      } else if (data.score >= 65) {
+        scoreNum.className = 'text-sm font-black font-mono text-blue-400';
+        scoreTier.className = 'px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-blue-500/20 text-blue-400';
+      } else {
+        scoreNum.className = 'text-sm font-black font-mono text-gray-400';
+        scoreTier.className = 'px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-gray-800 text-gray-400';
+      }
+
+      // 4b. Dynamic 4-TF Bias Alignment Indicators Sync
+      const tfData = data.tf_trends || (data.auto_brain && data.auto_brain.tf_trends) || {};
+      const tfConfig = [
+        { id: 'pill-1h', key: '1H', label: '1H' },
+        { id: 'pill-15m', key: '15m', label: '15m' },
+        { id: 'pill-5m', key: '5m', label: '5m' },
+        { id: 'pill-1m', key: '1m', label: '1m' },
+      ];
+      tfConfig.forEach(item => {
+        const el = document.getElementById(item.id);
+        if (el) {
+          const bias = (tfData[item.key] || 'NEUTRAL').toUpperCase();
+          if (bias === 'BULL') {
+            el.innerText = `${item.label}: ▲`;
+            el.className = 'px-1.5 py-0.2 rounded bg-emerald-950 text-emerald-400 border border-emerald-800/60 font-semibold';
+          } else if (bias === 'BEAR') {
+            el.innerText = `${item.label}: ▼`;
+            el.className = 'px-1.5 py-0.2 rounded bg-rose-950 text-rose-400 border border-rose-800/60 font-semibold';
+          } else {
+            el.innerText = `${item.label}: ■`;
+            el.className = 'px-1.5 py-0.2 rounded bg-slate-900 text-gray-400 border border-slate-700 font-semibold';
+          }
+        }
+      });
+
+      // 5. Smart Transmission Auto-Dialer
+      currentMode = data.strategy_mode || 'auto_adaptive';
+
+      const isAuto = (currentMode === 'auto_adaptive');
+      const btnAuto = document.getElementById('btn-mode-auto-adaptive');
+      const scrollerStatus = document.getElementById('badge-scroller-status');
+
+      if (isAuto) {
+        btnAuto.className = 'px-3 py-1 rounded-md font-bold text-[11px] transition flex items-center space-x-1.5 brain-glow border bg-emerald-950/40 text-emerald-300 border-emerald-500/80 shadow';
+        scrollerStatus.innerText = 'AUTO';
+        scrollerStatus.className = 'px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-emerald-500/20 text-emerald-400';
+      } else {
+        btnAuto.className = 'px-3 py-1 rounded-md font-medium text-[11px] transition flex items-center space-x-1.5 border border-gray-800 text-gray-400 hover:text-gray-200';
+        scrollerStatus.innerText = 'MANUAL';
+        scrollerStatus.className = 'px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-amber-500/20 text-amber-400';
+      }
+
+      // Highlight manual gear buttons
+      ['cautious', 'standard', 'aggressive', 'hyper'].forEach(g => {
+        const btn = document.getElementById(`btn-gear-${g}`);
+        if (btn) {
+          if (currentMode === g) {
+            btn.className = 'px-2 py-0.5 rounded bg-amber-500 text-gray-950 font-bold transition';
+          } else {
+            btn.className = 'px-2 py-0.5 rounded text-gray-400 hover:text-gray-100 transition';
+          }
+        }
+      });
+
+      // Update Slider without interrupting user drags
+      if (isAuto && !isUserDraggingSlider) {
+        const dialPct = Math.round(data.aggressiveness_pct || 65);
+        document.getElementById('slider-aggressiveness').value = dialPct;
+        document.getElementById('label-scroller-pct').innerText = `${dialPct}%`;
+        document.getElementById('label-scroller-threshold').innerText = data.threshold || calcThresholdFromPct(dialPct);
+      } else if (!isUserDraggingSlider) {
+        document.getElementById('label-scroller-pct').innerText = `${Math.round(data.aggressiveness_pct)}%`;
+        document.getElementById('label-scroller-threshold').innerText = data.threshold;
+      }
+
+      // 6. Market Brain Sub-Regime & Anti-Revenge Cooldown Display
+      if (data.auto_brain) {
+        const brain = data.auto_brain;
+        const subBadge = document.getElementById('badge-sub-regime');
+        const reasonSpan = document.getElementById('pill-auto-brain-reason');
+        const cdSec = (data.daily_stats && data.daily_stats.post_loss_cooldown_seconds_left) || 0;
+
+        if (cdSec > 0) {
+          const cdM = Math.floor(cdSec / 60);
+          const cdS = cdSec % 60;
+          subBadge.innerText = `⏳ COOL-OFF ${cdM}m ${cdS}s`;
+          subBadge.className = 'px-2.5 py-0.5 rounded text-[10px] font-black uppercase bg-amber-500/30 text-amber-300 border border-amber-500 animate-pulse shrink-0 whitespace-nowrap';
+          if (reasonSpan) {
+            reasonSpan.innerText = `🛡️ ANTI-REVENGE COOLDOWN (${cdM}m ${cdS}s left) - Market stabilizing after loss.`;
+            reasonSpan.title = 'Strict circuit breaker: pauses autonomous entries to prevent rapid re-entry / revenge trading.';
+          }
+        } else if (brain.sub_regime === 'FAST_SCALP') {
+          subBadge.innerText = '⚡ FAST SCALP';
+          subBadge.className = 'px-2.5 py-0.5 rounded text-[10px] font-black uppercase bg-amber-500/20 text-amber-400 border border-amber-500/30 shrink-0 whitespace-nowrap';
+        } else if (brain.sub_regime === 'DEFENSIVE_SHIELD') {
+          subBadge.innerText = '🛡️ DEFENSIVE SHIELD';
+          subBadge.className = 'px-2.5 py-0.5 rounded text-[10px] font-black uppercase bg-red-500/20 text-red-400 border border-red-500/30 shrink-0 whitespace-nowrap';
+        } else if (brain.sub_regime === 'NEWS_MOMENTUM_STUDY') {
+          subBadge.innerText = '📰 NEWS MOMENTUM';
+          subBadge.className = 'px-2.5 py-0.5 rounded text-[10px] font-black uppercase bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 shrink-0 whitespace-nowrap';
+        } else {
+          subBadge.innerText = '🚀 WAVE RUNNER';
+          subBadge.className = 'px-2.5 py-0.5 rounded text-[10px] font-black uppercase bg-purple-500/20 text-purple-400 border border-purple-500/30 shrink-0 whitespace-nowrap';
+        }
+
+        if (reasonSpan && cdSec <= 0) {
+          reasonSpan.innerText = isAuto ? (brain.pill_text || 'Auto-Brain Active') : `⚙️ MANUAL GEAR: Dialed to ${Math.round(data.aggressiveness_pct)}% | Min Score: ${data.threshold}/100`;
+          reasonSpan.title = brain.full_reason || brain.reason || reasonSpan.innerText;
+        }
+      }
+
+      // 7. Active Positions Rendering (Multi-Position Aware with Interactive SL/TP Editing)
+      const posContainer = document.getElementById('positions-container');
+      const posBadge = document.getElementById('pos-status-badge');
+      const posTotalPill = document.getElementById('pos-total-pnl-pill');
+      const posGlobalActions = document.getElementById('pos-global-actions');
+
+      if (data.positions && data.positions.length > 0) {
+        posBadge.innerText = `${data.positions.length} OPEN`;
+        posBadge.className = 'px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
+        if (posGlobalActions) posGlobalActions.classList.remove('hidden');
+
+        const totalPnl = data.positions.reduce((acc, p) => acc + (p.profit || 0.0), 0.0);
+        if (posTotalPill) {
+          posTotalPill.innerText = `${totalPnl >= 0 ? '+' : ''}$${totalPnl.toFixed(2)}`;
+          posTotalPill.className = `px-1.5 py-0.2 rounded text-[10px] font-mono font-bold ${totalPnl >= 0 ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`;
+          posTotalPill.classList.remove('hidden');
+        }
+
+        if (posContainer) {
+          posContainer.innerHTML = data.positions.map(p => {
+            const pnl = p.profit || 0.0;
+            const isBuy = (p.direction === 'BUY' || p.direction === '0');
+            const dirStr = isBuy ? 'BUY' : 'SELL';
+            const openP = p.open_price != null ? Number(p.open_price).toFixed(2) : '--';
+            const slP = p.sl > 0 ? Number(p.sl).toFixed(2) : '--';
+            const tpP = p.tp > 0 ? Number(p.tp).toFixed(2) : '--';
+            const isEditing = (window.activeEditingPosTicket === String(p.ticket));
+            const activeSlVal = (window.editingSlValues && window.editingSlValues[p.ticket] !== undefined)
+              ? window.editingSlValues[p.ticket]
+              : (p.sl > 0 ? Number(p.sl).toFixed(2) : '');
+            const activeTpVal = (window.editingTpValues && window.editingTpValues[p.ticket] !== undefined)
+              ? window.editingTpValues[p.ticket]
+              : (p.tp > 0 ? Number(p.tp).toFixed(2) : '');
+
+            return `
+              <div class="space-y-1.5 bg-[#0D131F] p-2.5 rounded-lg border border-[#1A2333] transition hover:border-gray-700">
+                <div class="flex items-center justify-between font-mono text-xs">
+                  <div class="flex items-center space-x-1.5">
+                    <span class="px-1.5 py-0.2 rounded font-black text-[10px] ${isBuy ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40' : 'bg-red-500/20 text-red-400 border border-red-500/40'}">${dirStr}</span>
+                    <span class="font-bold text-gray-200">${p.volume || '0.01'} ${p.symbol || 'GOLD'}</span>
+                    <span class="text-gray-500 text-[10px]">#${p.ticket}</span>
+                    ${p.origin ? `<span class="px-1.5 py-0.2 rounded text-[9px] font-bold ${p.origin.includes('USER') ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40' : 'bg-amber-500/20 text-amber-400 border border-amber-500/40'}">${p.origin}</span>` : ''}
+                  </div>
+                  <span class="font-black ${pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}">${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}</span>
+                </div>
+                <div class="grid grid-cols-3 gap-1 text-[10px] font-mono text-gray-300 bg-gray-950/60 p-1.5 rounded">
+                  <div>Entry: <span class="text-gray-100 font-bold">${openP}</span></div>
+                  <div>SL: <span class="text-red-400 font-bold">${slP}</span></div>
+                  <div>TP: <span class="text-emerald-400 font-bold">${tpP}</span></div>
+                </div>
+                <div class="flex items-center space-x-1.5 pt-1">
+                  <button onclick="toggleEditPosition('${p.ticket}')" class="px-2.5 py-1 rounded bg-blue-600/80 hover:bg-blue-500 text-white font-bold text-[10px] transition shadow flex items-center space-x-1">
+                    <span>✏️</span> <span>Edit SL/TP</span>
+                  </button>
+                  <button onclick="closePosition('${p.ticket}')" class="flex-1 py-1 rounded bg-red-600/90 hover:bg-red-500 text-white font-bold text-[10px] transition shadow">
+                    Close #${p.ticket}
+                  </button>
+                </div>
+                <!-- Inline Collapsible Edit SL/TP Box -->
+                <div id="edit-box-pos-${p.ticket}" class="${isEditing ? '' : 'hidden'} p-2 rounded bg-gray-950 border border-blue-500/40 text-[10px] space-y-1.5 mt-1.5 shadow-inner">
+                  <div class="flex items-center justify-between font-bold text-gray-300 border-b border-gray-800 pb-1">
+                    <span class="text-blue-400">✏️ Modify Position #${p.ticket}</span>
+                    <button onclick="toggleEditPosition('${p.ticket}')" class="text-gray-500 hover:text-gray-300 text-[11px] font-bold">✕</button>
+                  </div>
+                  <div class="grid grid-cols-2 gap-1.5 font-mono">
+                    <div>
+                      <label class="text-[9px] text-red-400 block mb-0.5 font-bold">Stop Loss (SL):</label>
+                      <input id="input-sl-pos-${p.ticket}" type="number" step="0.1" value="${activeSlVal}" oninput="window.editingSlValues['${p.ticket}']=this.value" placeholder="SL price" class="w-full bg-[#0D131F] border border-gray-700 rounded px-1.5 py-0.5 text-gray-100 font-bold focus:border-red-500 focus:outline-none" />
+                    </div>
+                    <div>
+                      <label class="text-[9px] text-emerald-400 block mb-0.5 font-bold">Take Profit (TP):</label>
+                      <input id="input-tp-pos-${p.ticket}" type="number" step="0.1" value="${activeTpVal}" oninput="window.editingTpValues['${p.ticket}']=this.value" placeholder="TP price" class="w-full bg-[#0D131F] border border-gray-700 rounded px-1.5 py-0.5 text-gray-100 font-bold focus:border-emerald-500 focus:outline-none" />
+                    </div>
+                  </div>
+                  <div class="flex items-center space-x-1 pt-0.5">
+                    <button onclick="quickNudgeSl('${p.ticket}', ${isBuy ? 1.0 : -1.0})" class="px-1.5 py-0.5 bg-gray-800 hover:bg-gray-700 text-gray-200 rounded text-[9px] font-mono">SL +$1</button>
+                    <button onclick="quickNudgeSl('${p.ticket}', ${isBuy ? -1.0 : 1.0})" class="px-1.5 py-0.5 bg-gray-800 hover:bg-gray-700 text-gray-200 rounded text-[9px] font-mono">SL -$1</button>
+                    <button onclick="quickNudgeTp('${p.ticket}', ${isBuy ? 2.0 : -2.0})" class="px-1.5 py-0.5 bg-gray-800 hover:bg-gray-700 text-emerald-300 rounded text-[9px] font-mono">TP +$2</button>
+                    <button onclick="setBreakevenInput('${p.ticket}', ${p.open_price}, ${isBuy ? 0.25 : -0.25})" class="px-1.5 py-0.5 bg-blue-900/60 hover:bg-blue-800 text-cyan-300 rounded text-[9px] font-bold">Lock BE</button>
+                  </div>
+                  <div class="flex items-center space-x-1.5 pt-1">
+                    <button onclick="submitModifyPosition('${p.ticket}')" class="flex-1 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white font-bold text-[10px] transition shadow">Save SL/TP to MT5</button>
+                    <button onclick="toggleEditPosition('${p.ticket}')" class="px-2.5 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-300 text-[10px]">Cancel</button>
+                  </div>
+                </div>
+              </div>
+            `;
+          }).join('');
+        }
+      } else {
+        if (posBadge) {
+          posBadge.innerText = 'NO TRADES OPEN';
+          posBadge.className = 'px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-gray-800 text-gray-400';
+        }
+        if (posGlobalActions) posGlobalActions.classList.add('hidden');
+        if (posTotalPill) posTotalPill.classList.add('hidden');
+        if (posContainer) {
+          posContainer.innerHTML = `
+            <div id="pos-empty-state" class="p-3 rounded-lg border border-[#1A2333] bg-[#0D131F]/50 text-center text-gray-500 text-[11px]">
+              No open trades on MT5. Scanning 4-TF confluence...
+            </div>
+          `;
+        }
+      }
+
+      // 7b. Pending Limit Orders Rendering (Full Multi-Order Display with Interactive Modification)
+      const pendingWrapper = document.getElementById('pending-orders-wrapper');
+      const pendingContainer = document.getElementById('pending-orders-container');
+      const pendingCount = document.getElementById('pending-orders-count');
+      const hasPending = data.pending_orders && Array.isArray(data.pending_orders) && data.pending_orders.length > 0;
+
+      if (hasPending) {
+        if (pendingWrapper) pendingWrapper.classList.remove('hidden');
+        if (pendingCount) pendingCount.innerText = `${data.pending_orders.length} QUEUED`;
+        if (pendingContainer) {
+          pendingContainer.innerHTML = data.pending_orders.map(o => {
+            const ordType = String(o.type || o.order_type || 'LIMIT').toUpperCase();
+            const isBuy = ordType.includes('BUY');
+            const oPrice = o.price != null && Number(o.price) > 0 ? Number(o.price).toFixed(2) : '--';
+            const oSl = o.sl && Number(o.sl) > 0 ? Number(o.sl).toFixed(2) : '--';
+            const oTp = o.tp && Number(o.tp) > 0 ? Number(o.tp).toFixed(2) : '--';
+            const oVol = o.volume || '0.01';
+            const oSym = o.symbol || window.currentSymbol || 'GOLD';
+            const oTicket = o.ticket || '--';
+            const isOrdEditing = (window.activeEditingOrdTicket === String(oTicket));
+            const activeOrdPrice = (window.editingOrdPriceValues && window.editingOrdPriceValues[oTicket] !== undefined)
+              ? window.editingOrdPriceValues[oTicket]
+              : (o.price > 0 ? Number(o.price).toFixed(2) : '');
+            const activeOrdSl = (window.editingOrdSlValues && window.editingOrdSlValues[oTicket] !== undefined)
+              ? window.editingOrdSlValues[oTicket]
+              : (o.sl > 0 ? Number(o.sl).toFixed(2) : '');
+            const activeOrdTp = (window.editingOrdTpValues && window.editingOrdTpValues[oTicket] !== undefined)
+              ? window.editingOrdTpValues[oTicket]
+              : (o.tp > 0 ? Number(o.tp).toFixed(2) : '');
+
+            return `
+              <div class="bg-[#0B101D] p-2 rounded border border-blue-900/40 text-[10px] font-mono space-y-1 hover:border-blue-700 transition">
+                <div class="flex items-center justify-between">
+                  <div class="flex items-center space-x-1.5">
+                    <span class="px-1 py-0.2 rounded font-black text-[9px] ${isBuy ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40' : 'bg-red-500/20 text-red-400 border border-red-500/40'}">${ordType}</span>
+                    <span class="font-bold text-gray-200">${oVol} ${oSym}</span>
+                    <span class="text-gray-500 text-[9px]">#${oTicket}</span>
+                  </div>
+                  <span class="text-amber-400 font-bold">@ ${oPrice}</span>
+                </div>
+                <div class="flex items-center justify-between text-gray-400 pt-0.5">
+                  <span class="text-[9px]">SL: <span class="text-red-400">${oSl}</span> | TP: <span class="text-emerald-400">${oTp}</span></span>
+                  <div class="flex items-center space-x-1">
+                    <button onclick="toggleEditOrder('${oTicket}')" class="px-1.5 py-0.5 bg-blue-600/70 hover:bg-blue-500 text-white rounded font-bold text-[9px] transition">✏️ Edit</button>
+                    <button onclick="cancelLimitOrder('${oTicket}')" class="px-2 py-0.5 bg-red-600/80 hover:bg-red-500 text-white rounded font-bold text-[9px] transition">Cancel</button>
+                  </div>
+                </div>
+                <!-- Inline Collapsible Edit Pending Order Box -->
+                <div id="edit-box-ord-${oTicket}" class="${isOrdEditing ? '' : 'hidden'} p-2 rounded bg-gray-950 border border-amber-500/40 text-[10px] space-y-1.5 mt-1.5 shadow-inner">
+                  <div class="flex items-center justify-between font-bold text-gray-300 border-b border-gray-800 pb-1">
+                    <span class="text-amber-400">✏️ Modify Limit Order #${oTicket}</span>
+                    <button onclick="toggleEditOrder('${oTicket}')" class="text-gray-500 hover:text-gray-300 text-[11px] font-bold">✕</button>
+                  </div>
+                  <div class="grid grid-cols-3 gap-1 font-mono">
+                    <div>
+                      <label class="text-[9px] text-amber-400 block mb-0.5 font-bold">Price:</label>
+                      <input id="input-price-ord-${oTicket}" type="number" step="0.1" value="${activeOrdPrice}" oninput="window.editingOrdPriceValues['${oTicket}']=this.value" class="w-full bg-[#0D131F] border border-gray-700 rounded px-1 py-0.5 text-gray-100 font-bold focus:border-amber-500 focus:outline-none text-[10px]" />
+                    </div>
+                    <div>
+                      <label class="text-[9px] text-red-400 block mb-0.5 font-bold">SL:</label>
+                      <input id="input-sl-ord-${oTicket}" type="number" step="0.1" value="${activeOrdSl}" oninput="window.editingOrdSlValues['${oTicket}']=this.value" class="w-full bg-[#0D131F] border border-gray-700 rounded px-1 py-0.5 text-gray-100 font-bold focus:border-red-500 focus:outline-none text-[10px]" />
+                    </div>
+                    <div>
+                      <label class="text-[9px] text-emerald-400 block mb-0.5 font-bold">TP:</label>
+                      <input id="input-tp-ord-${oTicket}" type="number" step="0.1" value="${activeOrdTp}" oninput="window.editingOrdTpValues['${oTicket}']=this.value" class="w-full bg-[#0D131F] border border-gray-700 rounded px-1 py-0.5 text-gray-100 font-bold focus:border-emerald-500 focus:outline-none text-[10px]" />
+                    </div>
+                  </div>
+                  <div class="flex items-center space-x-1.5 pt-1">
+                    <button onclick="submitModifyOrder('${oTicket}')" class="flex-1 py-1 rounded bg-amber-500 hover:bg-amber-400 text-gray-950 font-bold text-[10px] transition shadow">Save Limit Order</button>
+                    <button onclick="toggleEditOrder('${oTicket}')" class="px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-300 text-[10px]">Cancel</button>
+                  </div>
+                </div>
+              </div>
+            `;
+          }).join('');
+        }
+      } else {
+        if (pendingWrapper) pendingWrapper.classList.add('hidden');
+        if (pendingContainer) pendingContainer.innerHTML = '';
+      }
+
+      // 7c. Synchronize Chart Lines for ALL Open Trades and Pending Orders
+      syncAllChartLines(data.positions || [], data.pending_orders || []);
+
+      // 8. Persistent Performance Stats
+      if (data.stats) {
+        const s = data.stats;
+        const wrHero = document.getElementById('stat-winrate-hero');
+        const wrText = `${(s.win_rate_pct || 0).toFixed(1)}%`;
+        if (wrHero) wrHero.innerText = `WR: ${wrText}`;
+
+        const headerWr = document.getElementById('header-winrate');
+        if (headerWr) headerWr.innerText = wrText;
+
+        const totalPnl = s.total_pnl || 0.0;
+        const headerPnl = document.getElementById('header-net-pnl');
+        if (headerPnl) {
+          headerPnl.innerText = `${totalPnl >= 0 ? '+' : ''}$${totalPnl.toFixed(2)}`;
+          headerPnl.className = `font-bold ${totalPnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`;
+        }
+
+        const statWr = document.getElementById('stat-winrate');
+        if (statWr) statWr.innerText = wrText;
+
+        const statRec = document.getElementById('stat-record');
+        if (statRec) statRec.innerText = `(${s.wins || 0}W - ${s.losses || 0}L)`;
+
+        const statTotalPnl = document.getElementById('stat-total-pnl');
+        if (statTotalPnl) {
+          statTotalPnl.innerText = `${totalPnl >= 0 ? '+' : ''}$${totalPnl.toFixed(2)}`;
+          statTotalPnl.className = `text-sm font-black ${totalPnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`;
+        }
+
+        const statPf = document.getElementById('stat-pf');
+        if (statPf) statPf.innerText = `PF ${(s.profit_factor || 1.0).toFixed(2)}`;
+
+        const statTodayPnl = document.getElementById('stat-today-pnl');
+        if (statTodayPnl) {
+          const tPnl = s.today_pnl || 0.0;
+          statTodayPnl.innerText = `${tPnl >= 0 ? '+' : ''}$${tPnl.toFixed(2)} (${s.today_trades || 0} trades)`;
+          statTodayPnl.className = `text-xs font-bold mt-0.5 block ${tPnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`;
+        }
+
+        const statTodayWr = document.getElementById('stat-today-wr');
+        if (statTodayWr) statTodayWr.innerText = `${(s.today_win_rate_pct || 0).toFixed(1)}%`;
+      }
+
+      // 9. Persistent Trade History Table
+      if (data.history) {
+        const histBadge = document.getElementById('history-count-badge');
+        if (histBadge) histBadge.innerText = data.history.length;
+
+        const tbody = document.getElementById('trade-history-tbody');
+        if (tbody && data.history.length > 0) {
+          tbody.innerHTML = data.history.map(h => {
+            const pnl = h.pnl || 0.0;
+            const pnlR = h.pnl_r || 0.0;
+            const isBuy = (h.direction === 'BUY' || h.direction === '0');
+            const dirStr = isBuy ? 'BUY' : 'SELL';
+            return `
+              <tr class="hover:bg-gray-900/60 transition">
+                <td class="p-1.5 text-gray-400 text-[10px] whitespace-nowrap">${h.close_time_str || '--:--:--'}</td>
+                <td class="p-1.5 whitespace-nowrap">
+                  <span class="font-bold ${isBuy ? 'text-emerald-400' : 'text-red-400'}">${dirStr}</span>
+                  <span class="text-gray-300 text-[10px]">${h.volume}</span>
+                </td>
+                <td class="p-1.5 text-gray-300 text-[10px] whitespace-nowrap">${Number(h.open_price).toFixed(2)} &rarr; ${Number(h.close_price).toFixed(2)}</td>
+                <td class="p-1.5 text-right font-black whitespace-nowrap ${pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}">
+                  ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}
+                  <span class="text-[9px] block text-gray-400 font-normal">${pnlR >= 0 ? '+' : ''}${pnlR.toFixed(2)}R</span>
+                </td>
+                <td class="p-1.5 text-right text-[10px] text-gray-300 max-w-[100px] truncate" title="${h.close_reason}">
+                  ${h.close_reason || 'Manual'}
+                </td>
+              </tr>
+            `;
+          }).join('');
+        }
+      }
+
+      // 10. News State & Calendar Update
+      if (data.news_state) {
+        cachedNewsState = data.news_state;
+        renderNewsCommandCenter(data.news_state);
+      }
+    }
+
+    // Slider user input handlers
+    function onSliderInput(val) {
+      isUserDraggingSlider = true;
+      document.getElementById('label-scroller-pct').innerText = `${val}%`;
+      document.getElementById('label-scroller-threshold').innerText = calcThresholdFromPct(val);
+    }
+
+    async function onSliderChange(val) {
+      isUserDraggingSlider = false;
+      await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ strategy_mode: 'manual', aggressiveness_pct: parseFloat(val) })
+      });
+      appendLog('TRANSMISSION', `Aggressiveness dialed to ${val}% (Min Score: ${calcThresholdFromPct(val)})`);
+    }
+
+    async function setTransmissionMode(mode) {
+      let pct = null;
+      if (mode === 'cautious') pct = 35.0;
+      else if (mode === 'standard') pct = 55.0;
+      else if (mode === 'aggressive') pct = 75.0;
+      else if (mode === 'hyper') pct = 92.0;
+
+      await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ strategy_mode: mode, aggressiveness_pct: pct })
+      });
+      appendLog('TRANSMISSION', `Switched to ${mode.toUpperCase()}`);
+    }
+
+    // Render Economic News and Local Timezone
+    function renderNewsCommandCenter(news) {
+      if (!news) return;
+
+      if (news.timezone) {
+        document.getElementById('badge-local-clock').innerText = news.timezone.local_time_now || new Date().toLocaleTimeString();
+        document.getElementById('badge-tz-name').innerText = `(${news.timezone.utc_offset || 'UTC+3'})`;
+        document.getElementById('badge-session-title').innerText = news.timezone.current_session;
+      }
+
+      // Happening now banner
+      const liveBanner = document.getElementById('banner-happening-now');
+      if (news.happening_now && news.happening_now.active && news.happening_now.event) {
+        liveBanner.classList.remove('hidden');
+        liveBanner.classList.add('flex');
+        document.getElementById('live-event-name').innerText = `${news.happening_now.event.title} (${news.happening_now.event.currency})`;
+        document.getElementById('live-event-impact').innerText = news.happening_now.event.impact_badge;
+      } else {
+        liveBanner.classList.add('hidden');
+        liveBanner.classList.remove('flex');
+      }
+
+      // Next Major Event Hero
+      if (news.next_major_news && news.next_major_news.event) {
+        const ev = news.next_major_news.event;
+        document.getElementById('hero-major-title').innerText = `${ev.title}`;
+        document.getElementById('hero-major-countdown').innerText = news.next_major_news.countdown_formatted;
+      }
+
+      renderActiveNewsTab(news);
+    }
+
+    function setNewsTab(tab) {
+      currentNewsTab = tab;
+      ['all', 'major', 'headlines'].forEach(t => {
+        const btn = document.getElementById(`btn-tab-calendar-${t}`) || document.getElementById(`btn-tab-${t}`);
+        if (btn) {
+          if (t === tab) btn.className = 'px-2 py-0.5 rounded bg-gray-800 text-gray-100 font-bold';
+          else btn.className = 'px-2 py-0.5 rounded text-gray-400 hover:text-gray-200 font-bold';
+        }
+      });
+
+      const viewTimeline = document.getElementById('view-calendar-timeline');
+      const viewHeadlines = document.getElementById('view-breaking-headlines');
+
+      if (tab === 'headlines') {
+        viewTimeline.classList.add('hidden');
+        viewHeadlines.classList.remove('hidden');
+      } else {
+        viewTimeline.classList.remove('hidden');
+        viewHeadlines.classList.add('hidden');
+      }
+
+      if (cachedNewsState) renderActiveNewsTab(cachedNewsState);
+    }
+
+    function renderActiveNewsTab(news) {
+      if (currentNewsTab === 'headlines') {
+        const streamDiv = document.getElementById('headlines-stream');
+        if (news.headlines && news.headlines.length > 0) {
+          streamDiv.innerHTML = news.headlines.map(h => `
+            <div class="bg-gray-950 p-2 rounded border border-gray-800/80 space-y-1">
+              <div class="flex items-center justify-between text-[10px]">
+                <span class="text-gray-400 font-semibold">${h.source} &bull; ${h.local_time_str}</span>
+                <span class="px-1.5 py-0.2 rounded font-bold text-[9px] ${
+                  h.sentiment === 'BULLISH_GOLD' ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' :
+                  h.sentiment === 'BEARISH_GOLD' ? 'bg-red-950 text-red-400 border border-red-800' :
+                  'bg-gray-800 text-gray-400'
+                }">${h.sentiment_badge}</span>
+              </div>
+              <div class="text-[11px] font-medium text-gray-200 leading-tight">${h.title}</div>
+            </div>
+          `).join('');
+        } else {
+          streamDiv.innerHTML = '<div class="text-gray-500 text-center py-4">Polling live headlines...</div>';
+        }
+      } else {
+        const tbody = document.getElementById('calendar-table-body');
+        let events = news.timeline || [];
+        if (currentNewsTab === 'major') {
+          events = events.filter(e => e.impact === 'HIGH');
+        }
+
+        if (events.length > 0) {
+          tbody.innerHTML = events.map(e => `
+            <tr class="hover:bg-gray-900/60 ${e.status === 'LIVE NOW' ? 'bg-amber-950/20 font-bold' : ''}">
+              <td class="p-1.5 text-gray-200 font-semibold">${e.local_time_hm}</td>
+              <td class="p-1.5 text-gray-400">${e.currency}</td>
+              <td class="p-1.5 font-bold ${
+                e.impact === 'HIGH' ? 'text-red-400' :
+                e.impact === 'MEDIUM' ? 'text-amber-400' : 'text-yellow-500'
+              }">${e.impact_badge}</td>
+              <td class="p-1.5 text-gray-200 max-w-[140px] truncate" title="${e.title}">${e.title}</td>
+              <td class="p-1.5 text-right font-bold ${
+                e.status === 'LIVE NOW' ? 'text-red-400 animate-pulse' :
+                e.status === 'PASSED' ? 'text-gray-500' : 'text-blue-400'
+              }">${e.relative_time}</td>
+            </tr>
+          `).join('');
+        } else {
+          tbody.innerHTML = '<tr><td colspan="5" class="p-3 text-center text-gray-500">No scheduled events found.</td></tr>';
+        }
+      }
+    }
+
+    function syncAllChartLines(positions, pendingOrders) {
+      if (!candleSeries) return;
+      const activeKeys = new Set();
+
+      function setOrUpdateLine(key, options) {
+        activeKeys.add(key);
+        try {
+          if (!chartLines[key]) {
+            chartLines[key] = candleSeries.createPriceLine(options);
+          } else {
+            chartLines[key].applyOptions(options);
+          }
+        } catch (e) {
+          console.warn('PriceLine error for', key, e);
+        }
+      }
+
+      // 1. Sync all active market positions
+      if (Array.isArray(positions)) {
+        positions.forEach(p => {
+          const t = p.ticket || 'unknown';
+          const isBuy = (p.direction === 'BUY' || p.direction === '0');
+          const dirStr = isBuy ? 'BUY' : 'SELL';
+          const entryPrice = Number(p.open_price);
+
+          if (entryPrice > 0) {
+            setOrUpdateLine(`pos_${t}_entry`, {
+              price: entryPrice,
+              color: isBuy ? '#10B981' : '#F43F5E',
+              lineStyle: 2, // Dashed
+              lineWidth: 2,
+              title: `${dirStr} #${t}`,
+              axisLabelVisible: true,
+            });
+          }
+
+          const slPrice = Number(p.sl);
+          if (slPrice > 0) {
+            setOrUpdateLine(`pos_${t}_sl`, {
+              price: slPrice,
+              color: '#EF4444',
+              lineStyle: 0, // Solid
+              lineWidth: 1,
+              title: `SL #${t}`,
+              axisLabelVisible: true,
+            });
+          }
+
+          const tpPrice = Number(p.tp);
+          if (tpPrice > 0) {
+            setOrUpdateLine(`pos_${t}_tp`, {
+              price: tpPrice,
+              color: '#10B981',
+              lineStyle: 0, // Solid
+              lineWidth: 1,
+              title: `TP #${t}`,
+              axisLabelVisible: true,
+            });
+          }
+        });
+      }
+
+      // 2. Sync all pending limit / stop orders
+      if (Array.isArray(pendingOrders)) {
+        pendingOrders.forEach(o => {
+          const t = o.ticket || 'unknown';
+          const ordType = String(o.type || o.order_type || 'LIMIT').toUpperCase();
+          const ordPrice = Number(o.price);
+
+          if (ordPrice > 0) {
+            setOrUpdateLine(`ord_${t}_price`, {
+              price: ordPrice,
+              color: '#F59E0B', // Amber
+              lineStyle: 1, // Dotted
+              lineWidth: 2,
+              title: `${ordType} #${t}`,
+              axisLabelVisible: true,
+            });
+          }
+
+          const slPrice = Number(o.sl);
+          if (slPrice > 0) {
+            setOrUpdateLine(`ord_${t}_sl`, {
+              price: slPrice,
+              color: '#F87171',
+              lineStyle: 1, // Dotted
+              lineWidth: 1,
+              title: `LMT SL #${t}`,
+              axisLabelVisible: true,
+            });
+          }
+
+          const tpPrice = Number(o.tp);
+          if (tpPrice > 0) {
+            setOrUpdateLine(`ord_${t}_tp`, {
+              price: tpPrice,
+              color: '#34D399',
+              lineStyle: 1, // Dotted
+              lineWidth: 1,
+              title: `LMT TP #${t}`,
+              axisLabelVisible: true,
+            });
+          }
+        });
+      }
+
+      // 3. Remove any lines that are no longer active
+      for (const key in chartLines) {
+        if (!activeKeys.has(key)) {
+          try {
+            if (chartLines[key]) {
+              candleSeries.removePriceLine(chartLines[key]);
+            }
+          } catch (e) {
+            console.warn('Error removing line', key, e);
+          }
+          delete chartLines[key];
+        }
+      }
+    }
+
+    function clearAllChartLines() {
+      if (!candleSeries) return;
+      for (const key in chartLines) {
+        try {
+          if (chartLines[key]) {
+            candleSeries.removePriceLine(chartLines[key]);
+          }
+        } catch (e) {}
+      }
+      chartLines = {};
+    }
+
+    function updateChartPriceLines(entry, sl, tp) {
+      // Backward-compatibility alias
+      syncAllChartLines([{ ticket: 'active', open_price: entry, sl: sl, tp: tp, direction: 'BUY' }], []);
+    }
+
+    function clearChartPriceLines() {
+      clearAllChartLines();
+    }
+
+    async function cancelAllLimitOrders() {
+      if (!confirm('Are you sure you want to cancel all pending limit orders?')) return;
+      try {
+        appendLog('EXECUTION', 'Canceling all pending limit orders...');
+        const res = await fetch('/api/actions/cancel_all_limits', { method: 'POST' });
+        const d = await res.json();
+        if (d.status === 'OK') {
+          appendLog('EXECUTION', `All pending limit orders cancelled (${d.cancelled_count || 0} cancelled).`);
+        } else {
+          appendLog('ERROR', `Failed to cancel pending orders: ${d.error || 'Unknown error'}`);
+        }
+      } catch (err) {
+        appendLog('ERROR', `Cancel all limits error: ${err.message}`);
+      }
+    }
+
+    function appendLog(type, msg) {
+      const feed = document.getElementById('log-feed');
+      const time = new Date().toLocaleTimeString();
+      const div = document.createElement('div');
+      div.className = 'text-gray-300';
+      div.innerHTML = `<span class="text-gray-500">[${time}]</span> <span class="text-amber-400 font-semibold">${type}:</span> ${msg}`;
+      feed.appendChild(div);
+      feed.scrollTop = feed.scrollHeight;
+    }
+
+    async function setExecutionMode(mode) {
+      await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ execution_mode: mode })
+      });
+      ['auto', 'confirm', 'scanner'].forEach(m => {
+        const btn = document.getElementById(`btn-mode-${m}`);
+        if (m === mode.replace('full_', '')) btn.className = 'px-2 py-0.5 rounded bg-amber-500 text-gray-950 font-bold transition';
+        else btn.className = 'px-2 py-0.5 rounded text-gray-400 hover:text-gray-200 transition';
+      });
+      appendLog('MODE', `Execution mode set to ${mode.toUpperCase()}`);
+    }
+
+    async function emergencyAction(action) {
+      if (action === 'close_all') {
+        const res = await fetch('/api/actions/close_all', { method: 'POST' });
+        const d = await res.json();
+        appendLog('EXECUTION', `Emergency Close All dispatched (${d.closed_count} closed)`);
+      } else if (action === 'lock_breakeven') {
+        const res = await fetch('/api/actions/lock_breakeven', { method: 'POST' });
+        const d = await res.json();
+        appendLog('EXECUTION', `Lock Breakeven dispatched (${d.modified_count} modified)`);
+      }
+    }
+
+    let currentMainTab = 'history';
+
+    function switchMainTab(tab) {
+      currentMainTab = tab;
+      const tabs = ['history', 'news', 'logs'];
+      tabs.forEach(t => {
+        const btn = document.getElementById(`btn-main-tab-${t}`);
+        const pane = document.getElementById(`pane-${t === 'history' ? 'trade-history' : t === 'news' ? 'economic-news' : 'execution-logs'}`);
+        if (btn) {
+          if (t === tab) {
+            btn.className = 'flex-1 py-1 rounded bg-amber-500 text-gray-950 font-bold transition';
+          } else {
+            btn.className = 'flex-1 py-1 rounded text-gray-400 hover:text-gray-200 font-bold transition';
+          }
+        }
+        if (pane) {
+          if (t === tab) pane.classList.remove('hidden');
+          else pane.classList.add('hidden');
+        }
+      });
+      if (tab === 'news' && cachedNewsState) {
+        renderActiveNewsTab(cachedNewsState);
+      }
+    }
+
+    async function closePosition(ticket) {
+      try {
+        appendLog('EXECUTION', `Closing position #${ticket}...`);
+        const res = await fetch(`/api/actions/close_position?ticket=${ticket}`, { method: 'POST' });
+        const d = await res.json();
+        if (d.status === 'OK') {
+          appendLog('EXECUTION', `Position #${ticket} successfully closed.`);
+        } else {
+          appendLog('ERROR', `Failed to close position #${ticket}`);
+        }
+      } catch (err) {
+        appendLog('ERROR', `Close error: ${err.message}`);
+      }
+    }
+
+    async function cancelLimitOrder(ticket) {
+      try {
+        appendLog('EXECUTION', `Canceling limit order #${ticket}...`);
+        const res = await fetch(`/api/actions/cancel_limit?ticket=${ticket}`, { method: 'POST' });
+        const d = await res.json();
+        if (d.status === 'OK') {
+          appendLog('EXECUTION', `Pending Limit #${ticket} cancelled.`);
+        } else {
+          appendLog('ERROR', `Failed to cancel Limit #${ticket}`);
+        }
+      } catch (err) {
+        appendLog('ERROR', `Cancel limit error: ${err.message}`);
+      }
+    }
+
+    function toggleEditPosition(ticket) {
+      const tStr = String(ticket);
+      window.activeEditingPosTicket = (window.activeEditingPosTicket === tStr ? null : tStr);
+      if (window.lastTelemetryData) renderTelemetry(window.lastTelemetryData);
+    }
+
+    function quickNudgeSl(ticket, delta) {
+      const inp = document.getElementById(`input-sl-pos-${ticket}`);
+      if (inp) {
+        const val = parseFloat(inp.value) || 0;
+        const newVal = Math.max(0, val + delta);
+        inp.value = newVal.toFixed(2);
+        if (!window.editingSlValues) window.editingSlValues = {};
+        window.editingSlValues[ticket] = inp.value;
+      }
+    }
+
+    function quickNudgeTp(ticket, delta) {
+      const inp = document.getElementById(`input-tp-pos-${ticket}`);
+      if (inp) {
+        const val = parseFloat(inp.value) || 0;
+        const newVal = Math.max(0, val + delta);
+        inp.value = newVal.toFixed(2);
+        if (!window.editingTpValues) window.editingTpValues = {};
+        window.editingTpValues[ticket] = inp.value;
+      }
+    }
+
+    function setBreakevenInput(ticket, entryPrice, offset) {
+      const inp = document.getElementById(`input-sl-pos-${ticket}`);
+      if (inp && entryPrice > 0) {
+        inp.value = (Number(entryPrice) + (offset || 0)).toFixed(2);
+        if (!window.editingSlValues) window.editingSlValues = {};
+        window.editingSlValues[ticket] = inp.value;
+      }
+    }
+
+    async function submitModifyPosition(ticket) {
+      const inpSl = document.getElementById(`input-sl-pos-${ticket}`);
+      const inpTp = document.getElementById(`input-tp-pos-${ticket}`);
+      if (!inpSl || !inpTp) return;
+      const slVal = parseFloat(inpSl.value);
+      const tpVal = parseFloat(inpTp.value);
+      if (isNaN(slVal) || isNaN(tpVal)) {
+        alert("Please enter valid numeric prices for SL and TP.");
+        return;
+      }
+      try {
+        appendLog('EXECUTION', `Updating Position #${ticket} -> SL: ${slVal.toFixed(2)}, TP: ${tpVal.toFixed(2)}...`);
+        const res = await fetch('/api/actions/modify_position', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ticket: Number(ticket), sl: slVal, tp: tpVal })
+        });
+        const d = await res.json();
+        if (d.status === 'OK') {
+          appendLog('EXECUTION', `Position #${ticket} SL/TP updated successfully on MT5.`);
+          window.activeEditingPosTicket = null;
+          if (window.editingSlValues) delete window.editingSlValues[ticket];
+          if (window.editingTpValues) delete window.editingTpValues[ticket];
+          if (window.lastTelemetryData) {
+            const pos = (window.lastTelemetryData.positions || []).find(p => String(p.ticket) === String(ticket));
+            if (pos) { pos.sl = slVal; pos.tp = tpVal; }
+            renderTelemetry(window.lastTelemetryData);
+          }
+        } else {
+          appendLog('ERROR', `Failed to modify position #${ticket}: ${d.error || 'Unknown error'}`);
+        }
+      } catch (err) {
+        appendLog('ERROR', `Modify position error: ${err.message}`);
+      }
+    }
+
+    function toggleEditOrder(ticket) {
+      const tStr = String(ticket);
+      window.activeEditingOrdTicket = (window.activeEditingOrdTicket === tStr ? null : tStr);
+      if (window.lastTelemetryData) renderTelemetry(window.lastTelemetryData);
+    }
+
+    async function submitModifyOrder(ticket) {
+      const inpPrice = document.getElementById(`input-price-ord-${ticket}`);
+      const inpSl = document.getElementById(`input-sl-ord-${ticket}`);
+      const inpTp = document.getElementById(`input-tp-ord-${ticket}`);
+      if (!inpPrice || !inpSl || !inpTp) return;
+      const pVal = parseFloat(inpPrice.value) || 0;
+      const slVal = parseFloat(inpSl.value) || 0;
+      const tpVal = parseFloat(inpTp.value) || 0;
+
+      try {
+        appendLog('EXECUTION', `Modifying Limit Order #${ticket} -> Price: ${pVal.toFixed(2)}, SL: ${slVal.toFixed(2)}, TP: ${tpVal.toFixed(2)}...`);
+        const res = await fetch('/api/actions/modify_order', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ticket: Number(ticket), price: pVal, sl: slVal, tp: tpVal })
+        });
+        const d = await res.json();
+        if (d.status === 'OK') {
+          appendLog('EXECUTION', `Limit Order #${ticket} modified on MT5.`);
+          window.activeEditingOrdTicket = null;
+          if (window.editingOrdPriceValues) delete window.editingOrdPriceValues[ticket];
+          if (window.editingOrdSlValues) delete window.editingOrdSlValues[ticket];
+          if (window.editingOrdTpValues) delete window.editingOrdTpValues[ticket];
+          if (window.lastTelemetryData) {
+            const ord = (window.lastTelemetryData.pending_orders || []).find(o => String(o.ticket) === String(ticket));
+            if (ord) { ord.price = pVal; ord.sl = slVal; ord.tp = tpVal; }
+            renderTelemetry(window.lastTelemetryData);
+          }
+        } else {
+          appendLog('ERROR', `Failed to modify order #${ticket}: ${d.error || 'Unknown error'}`);
+        }
+      } catch (err) {
+        appendLog('ERROR', `Modify order error: ${err.message}`);
+      }
+    }
+
+    async function confirmClearHistory() {
+      if (!confirm("Are you sure you want to reset all trade history and recalculate the win rate from zero? This will purge all past records.")) {
+        return;
+      }
+      try {
+        appendLog('HISTORY', 'Purging trade history and resetting win rate...');
+        const res = await fetch('/api/actions/clear_history', { method: 'POST' });
+        const data = await res.json();
+        if (data.status === 'OK') {
+          appendLog('HISTORY', 'History cleared. Win rate and P&L reset to 0.00.');
+          document.getElementById('stat-winrate-hero').innerText = 'WR: 0.0%';
+          document.getElementById('stat-winrate').innerText = '0.0%';
+          document.getElementById('stat-record').innerText = '(0W - 0L)';
+          document.getElementById('stat-total-pnl').innerText = '$0.00';
+          document.getElementById('stat-pf').innerText = 'PF 1.0';
+          document.getElementById('stat-today-pnl').innerText = '$0.00 (0 trades)';
+          document.getElementById('stat-today-wr').innerText = '0.0%';
+          const hWr = document.getElementById('header-winrate');
+          if (hWr) hWr.innerText = '0.0%';
+          const hPnl = document.getElementById('header-net-pnl');
+          if (hPnl) {
+            hPnl.innerText = '$0.00';
+            hPnl.className = 'font-bold text-gray-200';
+          }
+          document.getElementById('history-count-badge').innerText = '0';
+          document.getElementById('trade-history-tbody').innerHTML = '<tr><td colspan="5" class="p-4 text-center text-gray-500">History cleared. New trades will be tracked accurately.</td></tr>';
+        } else {
+          appendLog('ERROR', `Failed to clear history: ${data.detail || data.message}`);
+        }
+      } catch (err) {
+        appendLog('ERROR', `Clear history error: ${err.message}`);
+      }
+    }
+
+    // Startup Initialization
+    window.addEventListener('DOMContentLoaded', () => {
+      initChart();
+      loadCandles(activeTimeframe);
+      connectWS();
+    });
+  </script>
+</body>
+</html>

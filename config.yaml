@@ -1,0 +1,176 @@
+# ==============================================================================
+# ApexGold Master Configuration
+# Algorithmic Trading Platform for Gold (XAUUSD) & High-Liquidity Majors
+# ==============================================================================
+
+system:
+  app_name: "ApexGold Trading Engine"
+  version: "1.0.0"
+  environment: "production" # "development" or "production"
+  log_level: "INFO" # DEBUG, INFO, WARNING, ERROR
+
+# ------------------------------------------------------------------------------
+# Broker Adapter Configuration
+# ------------------------------------------------------------------------------
+broker:
+  # Active adapter options:
+  #   - "paper_sim"       : Real-time paper simulator with live/synthetic tick engine (works out-of-the-box)
+  #   - "mt5_mac_socket"  : Connects to local MT5 on macOS/Windows via ApexBridge.mq5 socket (127.0.0.1:15555)
+  #   - "mt5_windows"     : Native MetaTrader5 Python package on Windows
+  active_broker: "paper_sim"
+
+  mac_socket:
+    host: "127.0.0.1"
+    port: 15555
+    timeout_sec: 5.0
+    reconnect_interval_sec: 3.0
+    buffer_size: 65536
+
+  windows_mt5:
+    terminal_path: ""       # Leave empty for default MT5 installation path
+    login: 0                # Account number (integer)
+    password: ""            # Account password
+    server: ""              # Broker server name (e.g., "Exness-Real10", "ICMarkets-Live01")
+    timeout_ms: 60000
+
+  paper_sim:
+    initial_balance: 10.00  # Default small test budget ($10.00 or 1,000 cents)
+    currency: "USD"
+    leverage: 500
+    slippage_points: 2      # Simulated slippage on market executions
+    spread_points: 25       # Typical Gold spread (~0.25 on XAUUSD)
+
+# ------------------------------------------------------------------------------
+# Asset & Trading Parameters
+# ------------------------------------------------------------------------------
+trading:
+  primary_symbol: "XAUUSD"
+  # Allowed universe (Gold + major USD pairs)
+  allowed_symbols:
+    - "XAUUSD"
+    - "XAUUSDc"
+    - "XAUUSDm"
+    - "EURUSD"
+    - "GBPUSD"
+    - "USDJPY"
+
+  # Execution Modes:
+  #   - "full_auto"  : Executes live trades immediately when score threshold is crossed
+  #   - "confirm"    : Emits alerts & prepares 1-click execution in the Web UI
+  #   - "scanner"    : Read-only live technical scanner & confluence analyzer
+  execution_mode: "full_auto"
+
+  # Strategy Transmission Modes:
+  #   - "auto_adaptive" : Flagship Smart Auto-Pilot Brain (Default: auto-dials 1%-100% every 5s)
+  #   - "cautious"      : Min score 76/100 (Smart Sniper, 35% scroller)
+  #   - "standard"      : Min score 68/100 (Balanced, 55% scroller)
+  #   - "aggressive"    : Min score 60/100 (Active Momentum, 75% scroller)
+  #   - "hyper"         : Min score 52/100 (Hyper Hit-and-Run, 92% scroller)
+  strategy_mode: "auto_adaptive"
+
+  # Account Sizing & Risk Configuration:
+  #   - "micro"    : Default for small/demo MT5 accounts (0.01 min lot, safe margin)
+  #   - "cent"     : Budget $10.00 = 1,000 USC (For dedicated cent accounts like XAUUSDc)
+  #   - "standard" : Standard account sizing
+  #   - "paper"    : Simulated virtual money
+  account_type: "micro"
+  budget_usd: 10.00
+  risk_per_trade_pct: 2.0   # Conservative 2.0% risk per trade (safe small-account scaling)
+  compounding_enabled: true # Automatically scales budget as balance grows
+
+  # Risk Guards & Circuit Breakers:
+  max_open_positions: 1     # Strict focus on 1 high-probability trade at a time
+  max_daily_losses: 4       # Pause trading after 4 consecutive daily losses
+  max_daily_drawdown_pct: 25.0
+  correlation_guard: true   # Block opposing/redundant USD exposure across pairs
+
+# ------------------------------------------------------------------------------
+# Confluence & Strategy Scoring Engine (100-Point System)
+# ------------------------------------------------------------------------------
+strategy:
+  thresholds:
+    aggressive: 60
+    balanced: 68
+    sniper: 82
+
+  risk_reward:
+    tier_1_sniper: 2.5
+    tier_2_balanced: 1.8
+    tier_3_aggressive: 1.5
+
+  trade_management:
+    breakeven_trigger_r:
+      sniper: 1.0     # Move SL to BE at +1.0R
+      balanced: 0.8   # Move SL to BE at +0.8R
+      aggressive: 0.7 # Move SL to BE at +0.7R
+    breakeven_buffer_points: 3 # Pad BE slightly above entry to cover broker commission
+    trailing_trigger_r: 1.5    # Start trailing SL after +1.5R floating profit
+    trailing_step_r: 0.5       # Trail stop in 0.5R increments behind structure
+
+  weights:
+    h1_macro_bias: 20
+    m15_session_wave: 25
+    m5_setup_structure: 30
+    m1_sniper_trigger: 25
+
+  timeframes:
+    macro: "1H"
+    wave: "15m"
+    setup: "5m"
+    trigger: "1m"
+
+# ------------------------------------------------------------------------------
+# Millisecond News & Tick-Velocity Reactor
+# ------------------------------------------------------------------------------
+news_reactor:
+  enabled: true
+  calendar_refresh_minutes: 30
+  high_impact_only: true
+  currencies: ["USD", "XAU"]
+
+  # Pre-News Lockout
+  pre_news_freeze_seconds: 180       # T-180s: Stop opening new trades before Red Folder
+  lock_breakeven_on_open_trades: true # Move open profitable trades to BE before news
+
+  # Post-News Momentum Capture
+  post_news_cooldown_seconds: 3      # Wait 3s after release for initial spike
+  post_news_momentum_window_sec: 300 # Trade institutional follow-through wave for 5m
+
+  # 50ms Tick-Velocity & Spread Protections
+  tick_velocity_window_ms: 800
+  tick_density_multiplier: 3.0      # >3x average ticks/sec triggers impulse mode
+  max_spread_multiplier: 2.5        # Freeze if spread > 2.5x normal average
+
+# ------------------------------------------------------------------------------
+# Data Hub & Historical Caching
+# ------------------------------------------------------------------------------
+data_hub:
+  database_path: "data/market_history.db"
+  warmup_bars:
+    h1_days: 90
+    m15_days: 30
+    m5_days: 14
+    m1_days: 7
+  offline_cache_enabled: true
+
+# ------------------------------------------------------------------------------
+# Telemetry & Telegram Notifications
+# ------------------------------------------------------------------------------
+telegram:
+  enabled: false
+  bot_token: ""                     # Set your Telegram Bot Token
+  chat_id: ""                       # Set your Chat ID
+  notify_on_signals: true
+  notify_on_execution: true
+  notify_on_breakeven: true
+  notify_on_tp_sl: true
+
+# ------------------------------------------------------------------------------
+# Web Dashboard UI
+# ------------------------------------------------------------------------------
+ui:
+  host: "127.0.0.1"
+  port: 8000
+  theme: "dark"
+  ws_broadcast_interval_ms: 250     # 4 FPS telemetry refresh for charts
+
