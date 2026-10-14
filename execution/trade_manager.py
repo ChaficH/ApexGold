@@ -227,6 +227,68 @@ class TradeManager:
             return True
         return False
 
+    def is_circuit_breaker_tripped(self) -> Tuple[bool, str]:
+        """Check whether any circuit breaker condition is active and return status with description."""
+        now = time.time()
+        if now < self._pause_until:
+            rem = int(self._pause_until - now)
+            return True, f"Trading paused ({rem}s remaining)"
+        if self.max_daily_losses > 0 and self._daily_losses_count >= self.max_daily_losses:
+            return True, f"Max daily losses reached ({self._daily_losses_count}/{self.max_daily_losses})"
+        if self.max_consecutive_losses > 0 and self._consecutive_losses >= self.max_consecutive_losses:
+            return True, f"Max consecutive losses reached ({self._consecutive_losses}/{self.max_consecutive_losses})"
+        eff_base = self._start_of_day_balance if self._start_of_day_balance > 0 else (getattr(self.risk_engine, "base_budget_usd", 0.0) or 100.0)
+        if eff_base > 0:
+            real_dd_usd = max(0.0, -self._daily_realized_pnl)
+            real_dd_pct = (real_dd_usd / eff_base) * 100.0
+            if real_dd_pct >= self.max_daily_drawdown_pct:
+                return True, f"Daily realized drawdown limit breached ({real_dd_pct:.1f}% >= {self.max_daily_drawdown_pct:.1f}%)"
+        if now < self._post_loss_cooldown_until:
+            rem = int(self._post_loss_cooldown_until - now)
+            return True, f"Post-loss buffer active ({rem}s remaining)"
+        return False, ""
+
+    async def can_open_manual_trade(self, symbol: str, direction: str, volume: float = 0.01) -> Tuple[bool, str]:
+        """
+        Validate whether a manual or UI trade can be safely opened against
+        circuit breakers, drawdown limits, exposure, and news freeze.
+        """
+        acc = await self.broker.get_account_info()
+        eff_balance = acc.balance if acc else 100.0
+        self._reset_daily_metrics_if_new_day(current_balance=eff_balance)
+        if self._start_of_day_balance <= 0:
+            self._start_of_day_balance = max(1.0, eff_balance - self._daily_realized_pnl)
+
+        cb_tripped, cb_reason = self.is_circuit_breaker_tripped()
+        if cb_tripped:
+            return False, f"Circuit Breaker active: {cb_reason}"
+
+        if acc and self._start_of_day_balance > 0:
+            eq_dd_usd = max(0.0, self._start_of_day_balance - acc.equity)
+            eq_dd_pct = (eq_dd_usd / self._start_of_day_balance) * 100.0
+            real_dd_usd = max(0.0, -self._daily_realized_pnl)
+            real_dd_pct = (real_dd_usd / self._start_of_day_balance) * 100.0
+            max_dd = max(eq_dd_pct, real_dd_pct)
+            if max_dd >= self.max_daily_drawdown_pct:
+                self.pause_trading(minutes=1440)
+                return False, f"Circuit Breaker: Daily drawdown breached ({max_dd:.1f}% >= {self.max_daily_drawdown_pct:.1f}%). Orders halted."
+
+        if self._is_order_in_flight:
+            return False, "Order already in flight (waiting for broker execution)"
+
+        if self.news_reactor:
+            can_open_news, news_reason = self.news_reactor.can_open_baseline_trade()
+            if not can_open_news:
+                return False, f"News Reactor: {news_reason}"
+
+        active_positions = await self.broker.get_open_positions()
+        managed_open = [p for p in self._managed_positions.values() if not p.is_closed]
+        all_positions_count = max(len(managed_open), len(active_positions))
+        if self.max_open_positions > 0 and all_positions_count >= self.max_open_positions:
+            return False, f"Maximum open positions reached ({all_positions_count}/{self.max_open_positions})"
+
+        return True, "OK"
+
     def _reset_daily_metrics_if_new_day(self, current_balance: Optional[float] = None) -> None:
         """Reset circuit breaker counters at 00:00 UTC."""
         today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")

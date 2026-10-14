@@ -251,6 +251,7 @@ async def lifespan(app_instance):
     ctx.manage_manual_positions = bool(trading_cfg.get("manage_manual_positions", False))
     ctx.execution_mode = trading_cfg.get("execution_mode", "scanner")
     ctx.strategy_mode = trading_cfg.get("strategy_mode", "auto_adaptive")
+    ctx.bridge_token = str(cfg.get("broker", {}).get("bridge_token", "") or cfg.get("bridge", {}).get("token", "") or os.environ.get("APEX_BRIDGE_TOKEN", "")).strip()
 
     # 1. Connect Broker (Strict Paper/Live separation)
     broker = await create_broker_adapter(cfg)

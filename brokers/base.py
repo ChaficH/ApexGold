@@ -95,6 +95,19 @@ class SymbolInfo:
     volume_min: float = 0.01
     volume_max: float = 100.0
     volume_step: float = 0.01
+    stops_level: int = 0
+
+    @property
+    def min_lot(self) -> float:
+        return self.volume_min
+
+    @property
+    def max_lot(self) -> float:
+        return self.volume_max
+
+    @property
+    def step_lot(self) -> float:
+        return self.volume_step
 
     def __post_init__(self):
         if self.spread == 0.0 and self.ask >= self.bid:

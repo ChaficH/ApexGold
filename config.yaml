@@ -18,6 +18,7 @@ broker:
   #   - "mt5_mac_socket"  : Connects to local MT5 on macOS/Windows via ApexBridge.mq5 socket (127.0.0.1:15555)
   #   - "mt5_windows"     : Native MetaTrader5 Python package on Windows
   active_broker: "paper_sim"
+  bridge_token: ""          # Secret token for MT5 bridge authentication (leave blank to disable auth)
 
   mac_socket:
     host: "127.0.0.1"

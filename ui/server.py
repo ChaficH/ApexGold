@@ -14,7 +14,7 @@ import os
 import time
 from typing import Any, Dict, List, Optional, Set
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -62,6 +62,7 @@ class ServerContext:
         self.history_store: Optional[Any] = None
         self.live_trading_enabled: bool = False
         self.manage_manual_positions: bool = False
+        self.bridge_token: str = ""
         
         # macOS Wine MT5 Bridge Pending Queue
         self.mt5_pending_actions: List[Dict[str, Any]] = []
@@ -82,6 +83,43 @@ class ServerContext:
         return True
 
 ctx = ServerContext()
+
+
+# ------------------------------------------------------------------------------
+# Execution Rate Limiter & Debouncer
+# ------------------------------------------------------------------------------
+class EndpointRateLimiter:
+    """In-memory rate limiter and debouncer for sensitive execution endpoints."""
+    def __init__(self):
+        self._last_call: Dict[str, float] = {}
+        self._lock = asyncio.Lock()
+
+    async def check(self, key: str, min_interval: float = 0.5) -> bool:
+        async with self._lock:
+            now = time.time()
+            last = self._last_call.get(key, 0.0)
+            if (now - last) < min_interval:
+                return False
+            self._last_call[key] = now
+            return True
+
+endpoint_rate_limiter = EndpointRateLimiter()
+
+
+def verify_bridge_token(request: Optional[Request] = None, payload: Optional[Dict[str, Any]] = None):
+    """Authenticate incoming bridge requests via header, payload, or query parameter."""
+    required = (getattr(ctx, "bridge_token", "") or os.environ.get("APEX_BRIDGE_TOKEN", "")).strip()
+    if not required:
+        return  # Bridge authentication not configured / open mode
+    header_token = (request.headers.get("X-Bridge-Token") or request.headers.get("x-bridge-token")) if request else None
+    payload_token = payload.get("token") if payload and isinstance(payload, dict) else None
+    query_token = request.query_params.get("token") if request else None
+    token = header_token or payload_token or query_token
+    if not token or token != required:
+        client_host = request.client.host if (request and request.client) else "unknown"
+        logger.warning(f"[BRIDGE AUTH REJECTED] Unauthorized bridge request from {client_host}")
+        raise HTTPException(status_code=401, detail="Unauthorized bridge access: invalid or missing bridge token")
+
 
 
 # ------------------------------------------------------------------------------
@@ -135,10 +173,21 @@ async def get_status():
     """Return live system state snapshot."""
     acc = await ctx.broker.get_account_info() if ctx.broker else None
     tick = await ctx.broker.get_tick(ctx.active_symbol) if ctx.broker else None
-    is_mt5_live = (asyncio.get_event_loop().time() - ctx.mt5_last_seen < 3.0)
-    broker_name = "MT5 MAC WINE BRIDGE (LIVE)" if is_mt5_live else ("PAPER_SIM ACTIVE" if ctx.broker else "DISCONNECTED")
+    is_bridge_connected = (asyncio.get_event_loop().time() - ctx.mt5_last_seen < 3.0)
+    is_live = ctx.is_live_trading_active() and is_bridge_connected
 
-    if is_mt5_live and hasattr(ctx.broker, "_positions") and ctx.broker._positions:
+    if is_live:
+        broker_name = "MT5 MAC WINE BRIDGE (LIVE)"
+    elif is_bridge_connected:
+        broker_name = "MT5 BRIDGE (SCANNER / PAPER MODE)"
+    elif ctx.broker and getattr(ctx.broker, "is_paper", False):
+        broker_name = "PAPER_SIM ACTIVE (SIMULATED)"
+    elif ctx.broker and ctx.broker.is_connected():
+        broker_name = f"{ctx.broker.__class__.__name__} (CONNECTED)"
+    else:
+        broker_name = "DISCONNECTED"
+
+    if hasattr(ctx.broker, "_positions") and ctx.broker._positions:
         positions = [
             {
                 "ticket": p.ticket,
@@ -161,6 +210,7 @@ async def get_status():
     else:
         positions = ctx.trade_manager.get_managed_positions() if ctx.trade_manager else []
     daily_stats = ctx.trade_manager.get_daily_status() if ctx.trade_manager else {}
+    cb_tripped, cb_reason = ctx.trade_manager.is_circuit_breaker_tripped() if ctx.trade_manager else (False, "")
     cal_state = ctx.news_reactor.check_calendar_state() if ctx.news_reactor else {}
     news_full = ctx.news_reactor.get_complete_news_state() if ctx.news_reactor else {}
     auto_brain = ctx.scorer.get_auto_brain_status() if ctx.scorer else {}
@@ -192,9 +242,18 @@ async def get_status():
         "aggressiveness_pct": ctx.scorer.get_active_aggressiveness_pct() if ctx.scorer else ctx.aggressiveness_pct,
         "threshold": ctx.scorer.get_active_threshold() if ctx.scorer else 68,
         "auto_brain": auto_brain,
-        "is_mt5_live": is_mt5_live,
+        "is_bridge_connected": is_bridge_connected,
+        "is_mt5_live": is_live,
+        "live_trading_active": is_live,
+        "live_trading_enabled": ctx.live_trading_enabled,
+        "is_paper_mode": not is_live,
+        "broker_type": ctx.broker.__class__.__name__ if ctx.broker else "None",
+        "account_type": getattr(ctx.risk_engine, "account_type", "micro") if ctx.risk_engine else "micro",
+        "manage_manual_positions": ctx.manage_manual_positions,
+        "circuit_breaker_tripped": cb_tripped,
+        "circuit_breaker_reason": cb_reason,
         "mt5_algo_trading_allowed": getattr(ctx, "mt5_algo_trading_allowed", True),
-        "broker_connected": True if (is_mt5_live or (ctx.broker and ctx.broker.is_connected())) else False,
+        "broker_connected": True if (is_bridge_connected or (ctx.broker and ctx.broker.is_connected())) else False,
         "broker_name": broker_name,
         "account": acc.to_dict() if acc else {},
         "tick": tick.to_dict() if tick else {},
@@ -300,6 +359,8 @@ async def update_settings(payload: SettingsPayload):
 @app.post("/api/actions/close_all")
 async def action_close_all():
     """1-Click Emergency Button: Close all active positions."""
+    if not await endpoint_rate_limiter.check("close_all", min_interval=1.0):
+        return {"status": "REJECTED", "message": "Emergency close all debounced. Please wait before retrying."}
     if not ctx.trade_manager:
         raise HTTPException(status_code=500, detail="TradeManager not ready")
     closed = await ctx.trade_manager.emergency_close_all()
@@ -309,6 +370,8 @@ async def action_close_all():
 @app.post("/api/actions/lock_breakeven")
 async def action_lock_breakeven():
     """1-Click Emergency Action: Move SL to Breakeven on all winning positions."""
+    if not await endpoint_rate_limiter.check("lock_be", min_interval=1.0):
+        return {"status": "REJECTED", "message": "Lock breakeven debounced. Please wait before retrying."}
     if not ctx.trade_manager:
         raise HTTPException(status_code=500, detail="TradeManager not ready")
     count = await ctx.trade_manager.emergency_lock_breakeven_all()
@@ -372,17 +435,23 @@ async def action_clear_history():
 @app.post("/api/actions/close_position")
 async def action_close_position(ticket: int):
     """1-Click Emergency Action: Close a specific active position by ticket."""
+    if not await endpoint_rate_limiter.check(f"close_pos_{ticket}", min_interval=0.5):
+        return {"status": "REJECTED", "message": f"Close request for position #{ticket} debounced. Please wait."}
     if not ctx.broker:
         raise HTTPException(status_code=500, detail="Broker not ready")
     success = await ctx.broker.close_position(ticket)
+    if not success:
+        return {"status": "ERROR", "message": f"Broker failed to close position #{ticket}", "ticket": ticket}
     if ctx.trade_manager and hasattr(ctx.trade_manager, "_managed_positions"):
         ctx.trade_manager._managed_positions.pop(ticket, None)
-    return {"status": "OK" if success else "ERROR", "ticket": ticket}
+    return {"status": "OK", "ticket": ticket}
 
 
 @app.post("/api/actions/cancel_limit")
 async def action_cancel_limit(ticket: int):
     """1-Click Action: Cancel a pending Limit Order."""
+    if not await endpoint_rate_limiter.check(f"cancel_limit_{ticket}", min_interval=0.5):
+        return {"status": "REJECTED", "message": f"Cancel order #{ticket} debounced. Please wait."}
     if not ctx.broker:
         raise HTTPException(status_code=500, detail="Broker not ready")
     success = await ctx.broker.cancel_order(ticket)
@@ -390,12 +459,16 @@ async def action_cancel_limit(ticket: int):
         ctx.trade_manager._pending_limit_orders.pop(ticket, None)
     if ctx.is_live_trading_active() and ctx.mt5_pending_actions is not None:
         ctx.mt5_pending_actions.append({"action": "ORDER_CANCEL", "ticket": ticket})
-    return {"status": "OK" if success else "ERROR", "ticket": ticket}
+    if not success:
+        return {"status": "ERROR", "message": f"Broker failed to cancel order #{ticket}", "ticket": ticket}
+    return {"status": "OK", "ticket": ticket}
 
 
 @app.post("/api/actions/cancel_all_limits")
 async def action_cancel_all_limits():
     """1-Click Action: Cancel all active pending Limit Orders."""
+    if not await endpoint_rate_limiter.check("cancel_all_limits", min_interval=1.0):
+        return {"status": "REJECTED", "message": "Cancel all limits debounced. Please wait."}
     count = 0
     if ctx.trade_manager and hasattr(ctx.trade_manager, "_pending_limit_orders"):
         for t in list(ctx.trade_manager._pending_limit_orders.keys()):
@@ -426,25 +499,96 @@ async def action_modify_position(payload: ModifyPositionPayload):
     sl = round(float(payload.sl), 2)
     tp = round(float(payload.tp), 2)
 
+    # 1. Debounce rapid button clicks per ticket
+    if not await endpoint_rate_limiter.check(f"modify_pos_{ticket}", min_interval=0.5):
+        return {
+            "status": "REJECTED",
+            "message": f"Modify position #{ticket} debounced. Please wait before retrying.",
+            "ticket": ticket
+        }
+
+    # 2. Locate active position across broker and trade manager
+    pos = None
+    if ctx.broker and hasattr(ctx.broker, "_positions") and ticket in ctx.broker._positions:
+        pos = ctx.broker._positions[ticket]
+    elif ctx.trade_manager and hasattr(ctx.trade_manager, "_managed_positions") and ticket in ctx.trade_manager._managed_positions:
+        pos = ctx.trade_manager._managed_positions[ticket]
+
+    if pos is None:
+        return {
+            "status": "REJECTED",
+            "message": f"Position #{ticket} not found in active positions.",
+            "ticket": ticket
+        }
+
+    # 3. Protect manually opened positions if manage_manual_positions is False
+    if not ctx.manage_manual_positions:
+        is_manual = getattr(pos, "is_user_manual", False)
+        if is_manual:
+            logger.warning(f"[MODIFY REJECTED] Manual position #{ticket} modification blocked because manage_manual_positions is False.")
+            return {
+                "status": "REJECTED",
+                "message": f"Modification of manual position #{ticket} is blocked by safety policy (manage_manual_positions=False).",
+                "ticket": ticket,
+            }
+
+    # 4. Validate SL/TP constraints against broker stop levels and protective ratchet rule
+    cur_p = pos.current_price if (hasattr(pos, "current_price") and pos.current_price and pos.current_price > 0) else pos.open_price
+    p_dir = getattr(pos, "direction", None)
+    if not p_dir:
+        p_dir = pos.type.value if hasattr(pos.type, "value") else str(pos.type).upper()
+    else:
+        p_dir = p_dir.upper()
+
+    sym_info = await ctx.broker.get_symbol_info(pos.symbol) if ctx.broker else None
+    min_dist = (getattr(sym_info, "stops_level", 0) * sym_info.point) if (sym_info and getattr(sym_info, "stops_level", 0) > 0) else (0.20 if "XAU" in pos.symbol.upper() else 0.0002)
+
+    if "BUY" in p_dir:
+        if sl > 0:
+            if sl >= cur_p:
+                return {"status": "REJECTED", "message": f"SL ({sl}) for BUY must be below current price ({cur_p}).", "ticket": ticket}
+            if (cur_p - sl) < min_dist:
+                return {"status": "REJECTED", "message": f"SL distance ({cur_p - sl:.2f}) is below broker min stop distance ({min_dist:.2f}).", "ticket": ticket}
+            if pos.sl > 0 and sl < pos.sl:
+                return {"status": "REJECTED", "message": f"Cannot loosen protective stop loss (New SL {sl} < current SL {pos.sl}).", "ticket": ticket}
+        if tp > 0:
+            if tp <= cur_p:
+                return {"status": "REJECTED", "message": f"TP ({tp}) for BUY must be above current price ({cur_p}).", "ticket": ticket}
+            if (tp - cur_p) < min_dist:
+                return {"status": "REJECTED", "message": f"TP distance ({tp - cur_p:.2f}) is below broker min stop distance ({min_dist:.2f}).", "ticket": ticket}
+    else:  # SELL
+        if sl > 0:
+            if sl <= cur_p:
+                return {"status": "REJECTED", "message": f"SL ({sl}) for SELL must be above current price ({cur_p}).", "ticket": ticket}
+            if (sl - cur_p) < min_dist:
+                return {"status": "REJECTED", "message": f"SL distance ({sl - cur_p:.2f}) is below broker min stop distance ({min_dist:.2f}).", "ticket": ticket}
+            if pos.sl > 0 and sl > pos.sl:
+                return {"status": "REJECTED", "message": f"Cannot loosen protective stop loss (New SL {sl} > current SL {pos.sl}).", "ticket": ticket}
+        if tp > 0:
+            if tp >= cur_p:
+                return {"status": "REJECTED", "message": f"TP ({tp}) for SELL must be below current price ({cur_p}).", "ticket": ticket}
+            if (cur_p - tp) < min_dist:
+                return {"status": "REJECTED", "message": f"TP distance ({cur_p - tp:.2f}) is below broker min stop distance ({min_dist:.2f}).", "ticket": ticket}
+
     logger.info(f"[ACTION] Modify position #{ticket}: SL={sl}, TP={tp}")
 
-    # 1. Update broker position first and check confirmation
+    # 5. Send modification to broker first
     broker_ok = False
     if ctx.broker:
         broker_ok = await ctx.broker.modify_position(ticket, sl=sl, tp=tp)
 
-    # 2. Update local ManagedPosition ONLY after broker confirmation
+    # 6. Update local state ONLY upon successful confirmation
     if broker_ok:
         if ctx.trade_manager and hasattr(ctx.trade_manager, "_managed_positions"):
             if ticket in ctx.trade_manager._managed_positions:
-                pos = ctx.trade_manager._managed_positions[ticket]
-                pos.sl = sl
-                pos.tp = tp
-                pos.last_mod_time = time.time()
-    elif not ctx.is_live_trading_active():
+                m_pos = ctx.trade_manager._managed_positions[ticket]
+                m_pos.sl = sl
+                m_pos.tp = tp
+                m_pos.last_mod_time = time.time()
+    else:
         return {"status": "ERROR", "message": f"Broker rejected position #{ticket} modification", "ticket": ticket}
 
-    # 3. Queue command for live MT5 Bridge only if live trading is active
+    # 7. Queue command for live MT5 Bridge only if live trading is active
     if ctx.is_live_trading_active() and ctx.mt5_pending_actions is not None:
         ctx.mt5_pending_actions.append({
             "action": "ORDER_MODIFY",
@@ -470,6 +614,9 @@ async def action_modify_order(payload: ModifyOrderPayload):
     price = round(float(payload.price), 2) if payload.price is not None else 0.0
     sl = round(float(payload.sl), 2) if payload.sl is not None else 0.0
     tp = round(float(payload.tp), 2) if payload.tp is not None else 0.0
+
+    if not await endpoint_rate_limiter.check(f"modify_order_{ticket}", min_interval=0.5):
+        return {"status": "REJECTED", "message": f"Modify order #{ticket} debounced. Please wait before retrying."}
 
     logger.info(f"[ACTION] Modify pending order #{ticket}: Price={price}, SL={sl}, TP={tp}")
 
@@ -505,12 +652,13 @@ async def run_backtest(days: int = 30, mode: str = "auto_adaptive"):
 # macOS Wine MT5 WebRequest Bridge Endpoints
 # ------------------------------------------------------------------------------
 @app.post("/api/mt5_bridge/tick")
-async def mt5_bridge_tick(payload: Dict[str, Any]):
+async def mt5_bridge_tick(payload: Dict[str, Any], request: Request = None):
     """
     Ultra-Fast Bridge Endpoint for MetaTrader 5 on macOS Wine.
     Receives live ticks, forming candles, and positions from ApexBridge.mq5 and
     immediately returns pending trade/modify/close orders in sub-2ms.
     """
+    verify_bridge_token(request, payload)
     ctx.mt5_last_seen = asyncio.get_event_loop().time()
     
     sym = payload.get("symbol", ctx.active_symbol)
@@ -823,19 +971,59 @@ async def mt5_bridge_tick(payload: Dict[str, Any]):
 
 @app.post("/api/actions/test_trade")
 async def action_test_trade(direction: str = "BUY", volume: float = 0.01):
-    """1-Click Test Button: Safely executes simulated trade if in paper mode, or MT5 only if live trading is active."""
-    sym = ctx.active_symbol or "XAUUSD"
-    tick = await ctx.broker.get_tick(sym) if ctx.broker else None
-    cur_p = (tick.ask if direction.upper() == "BUY" else tick.bid) if tick else 4143.0
-    sl_dist = 2.50
-    sl = round(cur_p - sl_dist, 2) if direction.upper() == "BUY" else round(cur_p + sl_dist, 2)
-    tp = round(cur_p + (sl_dist * 2.0), 2) if direction.upper() == "BUY" else round(cur_p - (sl_dist * 2.0), 2)
+    """1-Click Test Button: Safely executes trade after debouncing, risk engine checks, and broker constraint validation."""
+    # 1. Debounce rapid button clicks (1.0s interval)
+    if not await endpoint_rate_limiter.check("test_trade", min_interval=1.0):
+        return {"status": "REJECTED", "message": "Duplicate trade request debounced. Please wait before retrying."}
 
+    direction_clean = direction.upper().strip()
+    if direction_clean not in ("BUY", "SELL"):
+        return {"status": "REJECTED", "message": f"Invalid order direction '{direction}'. Must be BUY or SELL."}
+
+    if volume <= 0:
+        return {"status": "REJECTED", "message": f"Volume must be positive, got {volume}."}
+
+    sym = ctx.active_symbol or "XAUUSD"
+
+    # 2. Check circuit breakers & exposure via TradeManager
+    if ctx.trade_manager:
+        can_open, cb_reason = await ctx.trade_manager.can_open_manual_trade(sym, direction_clean, volume)
+        if not can_open:
+            logger.warning(f"[TEST TRADE REJECTED] {cb_reason}")
+            return {"status": "REJECTED", "message": f"Trade rejected by Risk Guard / Circuit Breaker: {cb_reason}"}
+
+    # 3. Validate volume and broker constraints
+    sym_info = await ctx.broker.get_symbol_info(sym) if ctx.broker else None
+    if sym_info:
+        if volume < sym_info.min_lot:
+            return {"status": "REJECTED", "message": f"Volume {volume} is below broker minimum {sym_info.min_lot}."}
+        if volume > sym_info.max_lot:
+            return {"status": "REJECTED", "message": f"Volume {volume} exceeds broker maximum {sym_info.max_lot}."}
+
+    tick = await ctx.broker.get_tick(sym) if ctx.broker else None
+    cur_p = (tick.ask if direction_clean == "BUY" else tick.bid) if tick else 2650.0
+    sl_dist = 2.50 if any(k in sym.upper() for k in ["XAU", "GOLD"]) else 0.0025
+    sl = round(cur_p - sl_dist, 2) if direction_clean == "BUY" else round(cur_p + sl_dist, 2)
+    tp = round(cur_p + (sl_dist * 2.0), 2) if direction_clean == "BUY" else round(cur_p - (sl_dist * 2.0), 2)
+
+    # 4. Validate monetary risk against configured risk budget
+    if ctx.risk_engine and ctx.broker:
+        acc = await ctx.broker.get_account_info()
+        if acc:
+            budget = ctx.risk_engine.calculate_risk_budget(acc)
+            monetary_risk = ctx.risk_engine.calculate_monetary_risk(sym_info, volume, abs(cur_p - sl))
+            if monetary_risk > budget:
+                return {
+                    "status": "REJECTED",
+                    "message": f"Monetary risk (${monetary_risk:.2f}) exceeds allowed budget (${budget:.2f}).",
+                }
+
+    # 5. Execution
     if not ctx.is_live_trading_active():
         # Execute safely in paper simulator without dispatching to MT5
         if ctx.broker:
             from brokers.base import OrderType
-            order_type = OrderType.BUY if direction.upper() == "BUY" else OrderType.SELL
+            order_type = OrderType.BUY if direction_clean == "BUY" else OrderType.SELL
             res = await ctx.broker.open_order(
                 symbol=sym,
                 order_type=order_type,
@@ -845,17 +1033,20 @@ async def action_test_trade(direction: str = "BUY", volume: float = 0.01):
                 tp=tp,
                 comment="Paper_TestTrade",
             )
-            return {
-                "status": "OK",
-                "message": f"Simulated {direction.upper()} {volume} executed on PaperSimAdapter (Live MT5 trading disabled)",
-                "ticket": res.ticket,
-            }
+            if res and res.ticket:
+                return {
+                    "status": "OK",
+                    "message": f"Simulated {direction_clean} {volume} executed on {ctx.broker.__class__.__name__} (Live MT5 trading disabled)",
+                    "ticket": res.ticket,
+                }
+            else:
+                return {"status": "ERROR", "message": f"Paper trade execution failed: {getattr(res, 'comment', 'Unknown error')}"}
         return {"status": "ERROR", "message": "Broker not available"}
 
     order_cmd = {
         "action": "ORDER_SEND",
         "symbol": sym,
-        "type": direction.upper(),
+        "type": direction_clean,
         "volume": float(volume),
         "sl": sl,
         "tp": tp,
@@ -863,15 +1054,16 @@ async def action_test_trade(direction: str = "BUY", volume: float = 0.01):
     }
     ctx.mt5_pending_actions.append(order_cmd)
     logger.info(f"[1-CLICK ACTION] Queued MT5 Live Order: {order_cmd}")
-    return {"status": "OK", "message": f"Dispatched {direction.upper()} {volume} to MT5", "order": order_cmd}
+    return {"status": "OK", "message": f"Dispatched {direction_clean} {volume} to MT5", "order": order_cmd}
 
 
 @app.post("/api/mt5_bridge/rates")
-async def mt5_bridge_rates(payload: Dict[str, Any]):
+async def mt5_bridge_rates(payload: Dict[str, Any], request: Request = None):
     """
     Ingest authentic historical OHLCV bars directly from MetaTrader 5.
     Synchronizes the Web Dashboard candles to match the MT5 broker 100%.
     """
+    verify_bridge_token(request, payload)
     sym = payload.get("symbol", ctx.active_symbol)
     tf = payload.get("timeframe", "1m")
     bars_data = payload.get("bars", [])
@@ -929,29 +1121,26 @@ async def broadcast_loop():
 
             # Assemble real-time telemetry packet
             tick = await ctx.broker.get_tick(ctx.active_symbol)
-            is_mt5_live = (asyncio.get_event_loop().time() - ctx.mt5_last_seen < 3.0)
-            if is_mt5_live:
-                if hasattr(ctx.broker, "_positions") and ctx.broker._positions:
-                    positions = [
-                        {
-                            "ticket": p.ticket,
-                            "symbol": p.symbol,
-                            "direction": p.type.value if hasattr(p.type, "value") else str(p.type),
-                            "volume": p.volume,
-                            "open_price": p.open_price,
-                            "current_price": p.current_price,
-                            "sl": p.sl,
-                            "tp": p.tp,
-                            "profit": p.profit,
-                            "ratchet_stage": 0,
-                            "comment": getattr(p, "comment", ""),
-                            "is_user_manual": getattr(p, "is_user_manual", False),
-                            "origin": "USER (MT5)" if getattr(p, "is_user_manual", False) else "BOT (AUTO)",
-                        }
-                        for p in ctx.broker._positions.values()
-                    ]
-                else:
-                    positions = []
+            is_bridge_connected = (asyncio.get_event_loop().time() - ctx.mt5_last_seen < 3.0)
+            if hasattr(ctx.broker, "_positions") and ctx.broker._positions:
+                positions = [
+                    {
+                        "ticket": p.ticket,
+                        "symbol": p.symbol,
+                        "direction": p.type.value if hasattr(p.type, "value") else str(p.type),
+                        "volume": p.volume,
+                        "open_price": p.open_price,
+                        "current_price": p.current_price,
+                        "sl": p.sl,
+                        "tp": p.tp,
+                        "profit": p.profit,
+                        "ratchet_stage": 0,
+                        "comment": getattr(p, "comment", ""),
+                        "is_user_manual": getattr(p, "is_user_manual", False),
+                        "origin": "USER (MT5)" if getattr(p, "is_user_manual", False) else "BOT (AUTO)",
+                    }
+                    for p in ctx.broker._positions.values()
+                ]
             else:
                 positions = ctx.trade_manager.get_managed_positions() if ctx.trade_manager else []
             acc = await ctx.broker.get_account_info()
@@ -993,8 +1182,20 @@ async def broadcast_loop():
             sub_regime = active_sig.sub_regime if active_sig else (ctx.scorer.auto_brain_state.get("sub_regime", "WAVE_RUNNER") if ctx.scorer else "WAVE_RUNNER")
             breakdown = active_sig.breakdown if active_sig else {"h1_macro": 0, "m15_wave": 0, "m5_setup": 0, "m1_trigger": 0}
 
-            is_mt5_live = (asyncio.get_event_loop().time() - ctx.mt5_last_seen < 3.0)
-            broker_name = "MT5 MAC WINE BRIDGE (LIVE)" if is_mt5_live else ("PAPER_SIM ACTIVE" if ctx.broker else "DISCONNECTED")
+            is_bridge_connected = (asyncio.get_event_loop().time() - ctx.mt5_last_seen < 3.0)
+            is_live = ctx.is_live_trading_active() and is_bridge_connected
+            if is_live:
+                broker_name = "MT5 MAC WINE BRIDGE (LIVE)"
+            elif is_bridge_connected:
+                broker_name = "MT5 BRIDGE (SCANNER / PAPER MODE)"
+            elif ctx.broker and getattr(ctx.broker, "is_paper", False):
+                broker_name = "PAPER_SIM ACTIVE (SIMULATED)"
+            elif ctx.broker and ctx.broker.is_connected():
+                broker_name = f"{ctx.broker.__class__.__name__} (CONNECTED)"
+            else:
+                broker_name = "DISCONNECTED"
+
+            cb_tripped, cb_reason = ctx.trade_manager.is_circuit_breaker_tripped() if ctx.trade_manager else (False, "")
 
             raw_pending = getattr(ctx, "mt5_pending_orders", [])
             if not raw_pending and ctx.trade_manager and hasattr(ctx.trade_manager, "_pending_limit_orders"):
@@ -1024,8 +1225,17 @@ async def broadcast_loop():
                 "ask": tick.ask,
                 "spread": tick.spread,
                 "broker_name": broker_name,
-                "broker_connected": True if (is_mt5_live or (ctx.broker and ctx.broker.is_connected())) else False,
-                "is_mt5_live": is_mt5_live,
+                "broker_connected": True if (is_bridge_connected or (ctx.broker and ctx.broker.is_connected())) else False,
+                "is_bridge_connected": is_bridge_connected,
+                "is_mt5_live": is_live,
+                "live_trading_active": is_live,
+                "live_trading_enabled": ctx.live_trading_enabled,
+                "is_paper_mode": not is_live,
+                "broker_type": ctx.broker.__class__.__name__ if ctx.broker else "None",
+                "account_type": getattr(ctx.risk_engine, "account_type", "micro") if ctx.risk_engine else "micro",
+                "manage_manual_positions": ctx.manage_manual_positions,
+                "circuit_breaker_tripped": cb_tripped,
+                "circuit_breaker_reason": cb_reason,
                 "mt5_algo_trading_allowed": getattr(ctx, "mt5_algo_trading_allowed", True),
                 "chart_tf": getattr(ctx, "mt5_chart_tf", "1H"),
                 "account": acc.to_dict(),

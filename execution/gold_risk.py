@@ -72,6 +72,11 @@ class GoldRiskEngine:
             return min(self.base_budget_usd, safe_bal)
         return safe_bal
 
+    def calculate_risk_budget(self, account_info: AccountInfo) -> float:
+        """Calculate permitted monetary risk budget (USD) for a single trade."""
+        effective_budget = self.get_effective_budget(account_info.balance)
+        return round(effective_budget * (self.risk_per_trade_pct / 100.0), 2)
+
     def calculate_monetary_risk(
         self,
         symbol_info: SymbolInfo,

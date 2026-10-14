@@ -23,6 +23,7 @@ enum ENUM_BRIDGE_MODE
 input group "=== Bridge Configuration ==="
 input ENUM_BRIDGE_MODE InpBridgeMode   = BRIDGE_WEBREQUEST; // Bridge Communication Mode
 input string           InpServerUrl    = "http://127.0.0.1:8000/api/mt5_bridge/tick"; // REST Bridge URL
+input string           InpBridgeToken  = "";                // Bridge Auth Token (optional, match bridge_token in config.yaml)
 input string           InpBindIP       = "127.0.0.1";       // TCP Listening IP
 input int              InpServerPort   = 15555;             // TCP Listening Port
 input int              InpTimerMS      = 100;               // Polling Cycle (100ms)
@@ -482,16 +483,21 @@ void ServiceWebRequestPump()
 
    // Construct JSON payload to POST to Python
    string cur_tf_str = GetChartTimeframeString();
+   string token_field = (InpBridgeToken != "") ? StringFormat(",\"token\":\"%s\"", InpBridgeToken) : "";
    string payload = StringFormat(
-      "{\"symbol\":\"%s\",\"chart_tf\":\"%s\",\"bid\":%.5f,\"ask\":%.5f,\"spread\":%.2f,\"time\":%s,\"balance\":%.2f,\"equity\":%.2f,\"margin\":%.2f,\"free_margin\":%.2f,\"leverage\":%d,\"algo_trading_allowed\":%s,\"positions\":%s,\"orders\":%s,\"closed_deals\":%s,\"cur_bar\":%s,\"rates_m1\":%s,\"rates_m5\":%s,\"rates_m15\":%s,\"rates_h1\":%s,\"rates\":%s}",
+      "{\"symbol\":\"%s\",\"chart_tf\":\"%s\",\"bid\":%.5f,\"ask\":%.5f,\"spread\":%.2f,\"time\":%s,\"balance\":%.2f,\"equity\":%.2f,\"margin\":%.2f,\"free_margin\":%.2f,\"leverage\":%d,\"algo_trading_allowed\":%s,\"positions\":%s,\"orders\":%s,\"closed_deals\":%s,\"cur_bar\":%s,\"rates_m1\":%s,\"rates_m5\":%s,\"rates_m15\":%s,\"rates_h1\":%s,\"rates\":%s%s}",
       _Symbol, cur_tf_str, tick.bid, tick.ask, (tick.ask - tick.bid), IntegerToString(tick.time), balance, equity, margin, free_margin, leverage,
-      (can_auto_trade ? "true" : "false"), pos_json, orders_json, closed_deals_json, cur_bar_json, bars_m1_json, bars_m5_json, bars_m15_json, bars_h1_json, bars_m1_json
+      (can_auto_trade ? "true" : "false"), pos_json, orders_json, closed_deals_json, cur_bar_json, bars_m1_json, bars_m5_json, bars_m15_json, bars_h1_json, bars_m1_json, token_field
    );
 
    char post_data[];
    char result_data[];
    string result_headers;
    string headers = "Content-Type: application/json\r\n";
+   if(InpBridgeToken != "")
+   {
+      headers += "X-Bridge-Token: " + InpBridgeToken + "\r\n";
+   }
 
    StringToCharArray(payload, post_data, 0, WHOLE_ARRAY, CP_UTF8);
    ArrayResize(post_data, ArraySize(post_data) - 1);
@@ -508,6 +514,15 @@ void ServiceWebRequestPump()
       {
          PrintFormat("ApexBridge: Executing command from Python: %s", action);
          ExecuteCommand(action, response_str);
+      }
+   }
+   else if(res == 401)
+   {
+      static ulong last_401_ms = 0;
+      if(now_ms - last_401_ms > 10000)
+      {
+         last_401_ms = now_ms;
+         Print("ApexBridge ERROR [401]: Unauthorized! Bridge token does not match python server bridge_token in config.yaml.");
       }
    }
    else if(res == -1)
