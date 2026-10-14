@@ -1,0 +1,46 @@
+APEXGOLD PROPRIETARY SOFTWARE LICENSE & TERMS OF USE
+
+Copyright (c) 2026 Chafic Hakim. All Rights Reserved.
+
+IMPORTANT — READ CAREFULLY BEFORE USING OR ACCESSING THIS SOFTWARE:
+
+This proprietary software license agreement ("License") is a legally binding contract between you (either an individual or a single entity) and Chafic Hakim ("Licensor"), the sole author, architect, and copyright holder of the ApexGold algorithmic trading platform ("Software").
+
+================================================================================
+1. PROPRIETARY OWNERSHIP & INTELLECTUAL PROPERTY
+================================================================================
+The Software—including all source code, architecture, algorithms, confluence scoring logic, execution engines, MQL5 scripts, Web UI templates, and associated documentation—is the exclusive proprietary property of the Licensor and is protected by international copyright laws, trade secret legislation, and international treaty provisions. 
+
+Title, full ownership rights, and all intellectual property rights in and to the Software remain solely and permanently with Chafic Hakim.
+
+================================================================================
+2. LICENSE GRANT & RESTRICTIONS
+================================================================================
+Subject to the terms and conditions of this Agreement, Licensor grants you a personal, non-exclusive, non-transferable, and revocable license to use this Software solely for your own private, personal trading and internal evaluation purposes.
+
+YOU EXPRESSLY AGREE NOT TO:
+a. Sub-license, sell, rent, lease, distribute, host, or commercially exploit the Software or any portion thereof without the express prior written consent of the Licensor.
+b. Modify, adapt, translate, reverse-engineer, decompile, disassemble, or derive the source code of any proprietary binary or compiled component (including MQL5 bridge components).
+c. Remove, alter, or obscure any copyright notices, proprietary legends, or trademark badges affixed to or contained within the Software or documentation.
+d. Publish or redistribute benchmark results, automated strategy signals, or platform proprietary source code to any third party or public repository without prior written authorization.
+
+================================================================================
+3. CLEAN-ROOM IMPLEMENTATION & THIRD-PARTY OPEN SOURCE ATTRIBUTIONS
+================================================================================
+a. Clean-Room Architecture: All mathematical models, financial technical indicators (including the Dreiss Choppiness Index), market structure evaluations, and money-management algorithms contained in ApexGold are original, clean-room implementations authored independently from public mathematical literature and financial theory.
+b. Permissive Open-Source Libraries: The Software utilizes certain third-party libraries (e.g., FastAPI, NumPy, Pandas, SciPy, Pydantic, Uvicorn) under their respective permissive open-source licenses (MIT, BSD-2-Clause, BSD-3-Clause, Apache-2.0). Nothing in this License restricts or overrides rights granted under those permissive licenses.
+c. No Copyleft Contamination: The Software contains no source code derived from or linked to copyleft licenses (such as GNU General Public License / GPL-3.0). Upstream open-source research cited in project documentation was utilized strictly as academic reference for indicator mathematics.
+
+================================================================================
+4. FINANCIAL TRADING & MARKET RISK DISCLAIMER
+================================================================================
+TRADING COMMODITIES (INCLUDING GOLD / XAUUSD), CURRENCIES (FOREX), DERIVATIVES, AND FINANCIAL INSTRUMENTS ON MARGIN INVOLVES SUBSTANTIAL RISK OF LOSS AND IS NOT SUITABLE FOR EVERY INVESTOR. LEVERAGE CAN MAGNIFY BOTH PROFITS AND LOSSES RAPIDLY.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND "AS AVAILABLE", WITHOUT WARRANTY OF ANY KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, OR ACCURACY OF SIGNALS.
+
+IN NO EVENT SHALL THE LICENSOR OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, LOSS OF CAPITAL, TRADING LOSSES, BROKER MARGIN CALLS, SLIPPAGE, LATENCY, HARDWARE FAILURE, OR NETWORK INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT ARISING IN ANY WAY OUT OF THE USE OF OR INABILITY TO USE THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+================================================================================
+5. TERMINATION
+================================================================================
+This License is effective until terminated. Your rights under this License will terminate automatically without notice if you fail to comply with any term or condition of this Agreement. Upon termination, you must destroy all copies of the Software in your possession.
