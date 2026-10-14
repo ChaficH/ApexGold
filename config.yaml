@@ -67,7 +67,7 @@ trading:
   #   - "scanner"    : Read-only live technical scanner & confluence analyzer (Default safe mode)
   #   - "confirm"    : Emits alerts & prepares 1-click execution in the Web UI
   #   - "full_auto"  : Executes live trades immediately when score threshold is crossed (requires live_trading_enabled: true)
-  execution_mode: "scanner"
+  execution_mode: "full_auto"
 
   # Strategy Transmission Modes:
   #   - "auto_adaptive" : Flagship Smart Auto-Pilot Brain (Default: auto-dials 1%-100% every 5s)
