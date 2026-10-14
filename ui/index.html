@@ -885,26 +885,33 @@
         const cdSec = (data.daily_stats && data.daily_stats.post_loss_cooldown_seconds_left) || 0;
 
         if (cdSec > 0) {
-          const cdM = Math.floor(cdSec / 60);
-          const cdS = cdSec % 60;
-          subBadge.innerText = `⏳ COOL-OFF ${cdM}m ${cdS}s`;
-          subBadge.className = 'px-2.5 py-0.5 rounded text-[10px] font-black uppercase bg-amber-500/30 text-amber-300 border border-amber-500 animate-pulse shrink-0 whitespace-nowrap';
+          subBadge.innerText = `⏳ PAUSE ${cdSec}s (SKIP ✕)`;
+          subBadge.className = 'px-2.5 py-0.5 rounded text-[10px] font-black uppercase bg-amber-500/30 text-amber-300 border border-amber-500 animate-pulse shrink-0 whitespace-nowrap cursor-pointer hover:bg-amber-500/60';
+          subBadge.onclick = async () => {
+            try {
+              await fetch('/api/actions/reset_cooldown', { method: 'POST' });
+              showToast('Anti-Revenge Cooldown Reset!', 'success');
+            } catch (e) { console.error(e); }
+          };
           if (reasonSpan) {
-            reasonSpan.innerText = `🛡️ ANTI-REVENGE COOLDOWN (${cdM}m ${cdS}s left) - Market stabilizing after loss.`;
-            reasonSpan.title = 'Strict circuit breaker: pauses autonomous entries to prevent rapid re-entry / revenge trading.';
+            reasonSpan.innerText = `🛡️ TICK BUFFER (${cdSec}s) - Price stabilizing. Click badge to skip.`;
+            reasonSpan.title = 'Click the amber badge to instantly bypass this pause.';
           }
-        } else if (brain.sub_regime === 'FAST_SCALP') {
-          subBadge.innerText = '⚡ FAST SCALP';
-          subBadge.className = 'px-2.5 py-0.5 rounded text-[10px] font-black uppercase bg-amber-500/20 text-amber-400 border border-amber-500/30 shrink-0 whitespace-nowrap';
-        } else if (brain.sub_regime === 'DEFENSIVE_SHIELD') {
-          subBadge.innerText = '🛡️ DEFENSIVE SHIELD';
-          subBadge.className = 'px-2.5 py-0.5 rounded text-[10px] font-black uppercase bg-red-500/20 text-red-400 border border-red-500/30 shrink-0 whitespace-nowrap';
-        } else if (brain.sub_regime === 'NEWS_MOMENTUM_STUDY') {
-          subBadge.innerText = '📰 NEWS MOMENTUM';
-          subBadge.className = 'px-2.5 py-0.5 rounded text-[10px] font-black uppercase bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 shrink-0 whitespace-nowrap';
         } else {
-          subBadge.innerText = '🚀 WAVE RUNNER';
-          subBadge.className = 'px-2.5 py-0.5 rounded text-[10px] font-black uppercase bg-purple-500/20 text-purple-400 border border-purple-500/30 shrink-0 whitespace-nowrap';
+          subBadge.onclick = null;
+          if (brain.sub_regime === 'FAST_SCALP') {
+            subBadge.innerText = '⚡ FAST SCALP';
+            subBadge.className = 'px-2.5 py-0.5 rounded text-[10px] font-black uppercase bg-amber-500/20 text-amber-400 border border-amber-500/30 shrink-0 whitespace-nowrap';
+          } else if (brain.sub_regime === 'DEFENSIVE_SHIELD') {
+            subBadge.innerText = '🛡️ DEFENSIVE SHIELD';
+            subBadge.className = 'px-2.5 py-0.5 rounded text-[10px] font-black uppercase bg-red-500/20 text-red-400 border border-red-500/30 shrink-0 whitespace-nowrap';
+          } else if (brain.sub_regime === 'NEWS_MOMENTUM_STUDY') {
+            subBadge.innerText = '📰 NEWS MOMENTUM';
+            subBadge.className = 'px-2.5 py-0.5 rounded text-[10px] font-black uppercase bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 shrink-0 whitespace-nowrap';
+          } else {
+            subBadge.innerText = '🚀 WAVE RUNNER';
+            subBadge.className = 'px-2.5 py-0.5 rounded text-[10px] font-black uppercase bg-purple-500/20 text-purple-400 border border-purple-500/30 shrink-0 whitespace-nowrap';
+          }
         }
 
         if (reasonSpan && cdSec <= 0) {

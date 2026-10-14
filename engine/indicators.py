@@ -838,6 +838,122 @@ class TechnicalIndicators:
 
         return trends
 
+    @classmethod
+    def detect_supply_demand_zones(
+        cls,
+        df_5m: Optional[pd.DataFrame],
+        df_15m: Optional[pd.DataFrame],
+        current_price: float,
+        is_gold: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Institutional Multi-Timeframe Supply & Demand Zone + Liquidity Sweep Engine.
+        Accurately identifies:
+        - Major Demand Zones (Support floors / resting buy liquidity)
+        - Major Supply Zones (Resistance ceilings / resting sell liquidity)
+        - Session Range Bounds (High, Low, Mid-Range Equilibrium)
+        - Bullish / Bearish Liquidity Sweeps (springs / upthrusts)
+        """
+        default_res = {
+            "range_high": current_price + (5.0 if is_gold else 0.0050),
+            "range_low": current_price - (5.0 if is_gold else 0.0050),
+            "range_span": 10.0 if is_gold else 0.0100,
+            "mid_range": current_price,
+            "demand_floor": current_price - (5.0 if is_gold else 0.0050),
+            "demand_ceiling": current_price - (2.5 if is_gold else 0.0025),
+            "supply_floor": current_price + (2.5 if is_gold else 0.0025),
+            "supply_ceiling": current_price + (5.0 if is_gold else 0.0050),
+            "in_demand_zone": False,
+            "in_supply_zone": False,
+            "at_major_support": False,
+            "at_major_resistance": False,
+            "liquidity_sweep_bull": False,
+            "liquidity_sweep_bear": False,
+            "valid": False,
+        }
+
+        if df_5m is None or len(df_5m) < 15 or not all(c in df_5m.columns for c in ["high", "low", "close", "open"]):
+            return default_res
+
+        try:
+            # Active session window: last 36 to 48 bars (3 to 4 hours)
+            window = min(len(df_5m), 48)
+            h_5m = df_5m["high"].values[-window:]
+            l_5m = df_5m["low"].values[-window:]
+            c_5m = df_5m["close"].values[-window:]
+            o_5m = df_5m["open"].values[-window:]
+
+            r_high = float(np.max(h_5m))
+            r_low = float(np.min(l_5m))
+
+            # If 15m is available, cluster with 15m swings
+            if df_15m is not None and len(df_15m) >= 12:
+                w15 = min(len(df_15m), 24)
+                r_high = max(r_high, float(np.max(df_15m["high"].values[-w15:])))
+                r_low = min(r_low, float(np.min(df_15m["low"].values[-w15:])))
+
+            span = max(r_high - r_low, 3.0 if is_gold else 0.0030)
+            mid = (r_high + r_low) / 2.0
+
+            # Demand Zone is the lower 25% of the range, or within $2.20 of the absolute low on Gold
+            zone_depth = max(span * 0.25, 2.20 if is_gold else 0.0018)
+            demand_fl = r_low
+            demand_ceil = r_low + zone_depth
+
+            # Supply Zone is the upper 25% of the range, or within $2.20 of the absolute high on Gold
+            supply_ceil = r_high
+            supply_fl = r_high - zone_depth
+
+            in_demand = (current_price <= demand_ceil)
+            in_supply = (current_price >= supply_fl)
+
+            at_major_support = (current_price <= demand_fl + (1.20 if is_gold else 0.0008))
+            at_major_resistance = (current_price >= supply_ceil - (1.20 if is_gold else 0.0008))
+
+            # Detect Liquidity Sweeps
+            # Bullish Sweep: Candle dipped into or below demand floor but closed higher with strong lower wick / green body
+            is_bull_sweep = False
+            curr_l = l_5m[-1]
+            prev_l = l_5m[-2] if len(l_5m) >= 2 else curr_l
+            curr_c = c_5m[-1]
+            curr_o = o_5m[-1]
+            lower_wick = min(curr_o, curr_c) - curr_l
+            body = abs(curr_c - curr_o)
+
+            if (curr_l <= demand_fl + 0.80 or prev_l <= demand_fl + 0.80) and (curr_c > demand_fl):
+                if lower_wick >= 1.2 * max(0.15, body) or (curr_c > curr_o):
+                    is_bull_sweep = True
+
+            # Bearish Sweep: Candle spiked into or above supply ceiling but closed lower with strong upper wick / red body
+            is_bear_sweep = False
+            curr_h = h_5m[-1]
+            prev_h = h_5m[-2] if len(h_5m) >= 2 else curr_h
+            upper_wick = curr_h - max(curr_o, curr_c)
+
+            if (curr_h >= supply_ceil - 0.80 or prev_h >= supply_ceil - 0.80) and (curr_c < supply_ceil):
+                if upper_wick >= 1.2 * max(0.15, body) or (curr_c < curr_o):
+                    is_bear_sweep = True
+
+            return {
+                "range_high": round(r_high, 2 if is_gold else 5),
+                "range_low": round(r_low, 2 if is_gold else 5),
+                "range_span": round(span, 2 if is_gold else 5),
+                "mid_range": round(mid, 2 if is_gold else 5),
+                "demand_floor": round(demand_fl, 2 if is_gold else 5),
+                "demand_ceiling": round(demand_ceil, 2 if is_gold else 5),
+                "supply_floor": round(supply_fl, 2 if is_gold else 5),
+                "supply_ceiling": round(supply_ceil, 2 if is_gold else 5),
+                "in_demand_zone": in_demand,
+                "in_supply_zone": in_supply,
+                "at_major_support": at_major_support,
+                "at_major_resistance": at_major_resistance,
+                "liquidity_sweep_bull": is_bull_sweep,
+                "liquidity_sweep_bear": is_bear_sweep,
+                "valid": True,
+            }
+        except Exception:
+            return default_res
+
 
 
 

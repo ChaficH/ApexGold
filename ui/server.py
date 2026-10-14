@@ -318,6 +318,14 @@ async def action_resume():
     return {"status": "OK", "message": "Trading resumed."}
 
 
+@app.post("/api/actions/reset_cooldown")
+async def action_reset_cooldown():
+    """Instantly clear post-loss cooldown and circuit breaker."""
+    if ctx.trade_manager:
+        ctx.trade_manager.reset_cooldown()
+    return {"status": "OK", "message": "Anti-revenge cooldown cleared."}
+
+
 @app.get("/api/history")
 async def get_trade_history(limit: int = 50):
     """Retrieve persistent completed trade history from SQLite."""
@@ -551,14 +559,15 @@ async def mt5_bridge_tick(payload: Dict[str, Any]):
                     if getattr(m, "profit", 0.0) < -0.05:
                         now_ts = time.time()
                         ctx.trade_manager._daily_losses_count += 1
-                        ctx.trade_manager._post_loss_cooldown_until = now_ts + 300.0
-                        ctx.trade_manager._last_order_time = now_ts + 300.0
+                        ctx.trade_manager._post_loss_cooldown_until = now_ts + 15.0
+                        ctx.trade_manager._last_order_time = now_ts + 10.0
+                        ctx.trade_manager._last_loss_direction = getattr(m, "direction", None)
+                        ctx.trade_manager._last_loss_price = getattr(m, "open_price", 0.0)
+                        ctx.trade_manager._last_loss_time = now_ts
                         logger.warning(
                             f"[MT5 SL HIT DETECTED] Position #{m.ticket} closed with loss (${m.profit:.2f}). "
-                            f"Post-Loss Cooldown activated for 300s (5m) to prevent revenge trading."
+                            f"Post-loss buffer active for 15s. Directional anti-revenge set for {getattr(m, 'direction', '')}."
                         )
-                        if ctx.trade_manager._daily_losses_count >= 2:
-                            ctx.trade_manager.pause_trading(minutes=30)
                 ctx.trade_manager._managed_positions.clear()
             if hasattr(ctx.broker, "_positions"):
                 ctx.broker._positions.clear()
@@ -644,14 +653,15 @@ async def mt5_bridge_tick(payload: Dict[str, Any]):
                     if closed_m and getattr(closed_m, "profit", 0.0) < -0.05:
                         now_ts = time.time()
                         ctx.trade_manager._daily_losses_count += 1
-                        ctx.trade_manager._post_loss_cooldown_until = now_ts + 300.0
-                        ctx.trade_manager._last_order_time = now_ts + 300.0
+                        ctx.trade_manager._post_loss_cooldown_until = now_ts + 15.0
+                        ctx.trade_manager._last_order_time = now_ts + 10.0
+                        ctx.trade_manager._last_loss_direction = getattr(closed_m, "direction", None)
+                        ctx.trade_manager._last_loss_price = getattr(closed_m, "open_price", 0.0)
+                        ctx.trade_manager._last_loss_time = now_ts
                         logger.warning(
                             f"[MT5 SL HIT DETECTED] Position #{closed_m.ticket} closed with loss (${closed_m.profit:.2f}). "
-                            f"Post-Loss Cooldown activated for 300s (5m) to prevent revenge trading."
+                            f"Post-loss buffer active for 15s. Directional anti-revenge set for {getattr(closed_m, 'direction', '')}."
                         )
-                        if ctx.trade_manager._daily_losses_count >= 2:
-                            ctx.trade_manager.pause_trading(minutes=30)
 
     # Ingest real closed deals directly from MetaTrader 5 history
     closed_deals = payload.get("closed_deals")

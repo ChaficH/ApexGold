@@ -104,11 +104,14 @@ class TradeManager:
         self._running = False
         self._lock = asyncio.Lock()
 
-        # Strict Single-Execution Lock & Cooldown
+        # Strict Single-Execution Lock & Smart Cooldown
         self._is_order_in_flight: bool = False
         self._last_order_time: float = 0.0
-        self._min_cooldown_seconds: float = 20.0
+        self._min_cooldown_seconds: float = 10.0
         self._post_loss_cooldown_until: float = 0.0
+        self._last_loss_direction: Optional[str] = None
+        self._last_loss_price: float = 0.0
+        self._last_loss_time: float = 0.0
 
         # Circuit breaker metrics
         self._daily_losses_count = 0
@@ -177,17 +180,25 @@ class TradeManager:
         if self.is_paused():
             return False, f"Trading paused (Daily losses: {self._daily_losses_count}/{self.max_daily_losses})"
 
-        # 1. Post-Loss Anti-Revenge Guard
+        # 1. Post-Loss Tick Buffer (15 seconds, just enough for broker tick & account settle)
         now = time.time()
         if now < self._post_loss_cooldown_until:
             rem = int(self._post_loss_cooldown_until - now)
-            return False, f"Post-Loss Cooldown Active ({rem}s remaining) - Preventing rapid re-entry / revenge trading."
+            return False, f"Post-Loss Buffer ({rem}s remaining) - Letting broker ticks stabilize."
 
-        # 1b. In-Flight Execution Mutex Check
+        # 1b. Smart Directional & Price-Level Anti-Revenge Guard:
+        # Blocks re-entering the EXACT SAME losing trade in the same direction at the same price within 60s
+        if signal and (now - self._last_loss_time < 60.0):
+            if signal.direction == self._last_loss_direction:
+                is_gold = any(k in signal.symbol.upper() for k in ["XAU", "GOLD"])
+                if abs(signal.entry_price - self._last_loss_price) < (1.50 if is_gold else 0.0012):
+                    return False, f"Anti-Revenge Filter: Blocked repeating losing {signal.direction} at same level ({signal.entry_price:.2f}) without structural change."
+
+        # 1c. In-Flight Execution Mutex Check
         if self._is_order_in_flight:
             return False, "Order already in flight (waiting for broker execution)"
 
-        # 2. Minimum Cooldown Between Executions (20 seconds)
+        # 2. Minimum Cooldown Between Executions (10 seconds)
         elapsed = now - self._last_order_time
         if elapsed < self._min_cooldown_seconds:
             rem = int(self._min_cooldown_seconds - elapsed)
@@ -948,19 +959,27 @@ class TradeManager:
         is_loss = (pnl < -0.05)
         if is_loss:
             self._daily_losses_count += 1
-            # Strict 5-Minute (300s) Anti-Revenge Cooldown after any loss
-            self._post_loss_cooldown_until = now + 300.0
-            self._last_order_time = now + 300.0
+            # Fast 15s post-loss buffer (NOT 300s/5m freeze!)
+            self._post_loss_cooldown_until = now + 15.0
+            self._last_order_time = now + 10.0
+            self._last_loss_direction = pos.direction
+            self._last_loss_price = pos.open_price
+            self._last_loss_time = now
             logger.warning(
-                f"[POST-LOSS ANTI-REVENGE COOLDOWN] Trade #{pos.ticket} closed with loss (${pnl:.2f}). "
-                f"Cooldown active for 300s (5m) to let market establish new structure before any re-entry."
+                f"[POST-LOSS BUFFER] Trade #{pos.ticket} closed with loss (${pnl:.2f}). "
+                f"Buffer active for 15s. Smart directional revenge guard set for {pos.direction} @ {pos.open_price:.2f}."
             )
             if self._daily_losses_count >= self.max_daily_losses:
-                self.pause_trading(minutes=120)
-                logger.error("[CIRCUIT BREAKER ACTIVATED] Max consecutive daily losses hit. Auto-trading paused 2 hours.")
-            elif self._daily_losses_count >= 2:
-                self.pause_trading(minutes=30)
-                logger.warning("[CIRCUIT BREAKER] 2 consecutive losses detected. Auto-trading paused 30 minutes to protect capital.")
+                self.pause_trading(minutes=60)
+                logger.error("[CIRCUIT BREAKER ACTIVATED] Max daily losses hit. Auto-trading paused 1 hour.")
+
+    def reset_cooldown(self) -> None:
+        """Instantly clear post-loss cooldown and circuit breaker."""
+        self._post_loss_cooldown_until = 0.0
+        self._pause_until = 0.0
+        self._last_order_time = 0.0
+        self._last_loss_time = 0.0
+        logger.info("[COOLDOWN RESET] Cooldown and circuit breaker manually reset.")
 
     async def emergency_close_all(self) -> int:
         """1-Click Emergency Button: Closes all positions immediately."""
