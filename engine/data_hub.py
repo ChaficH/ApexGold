@@ -55,7 +55,7 @@ class DataHub:
         logger.info(f"DataHub initialized SQLite cache at {self.db_path}")
 
     def _init_db_schema(self) -> None:
-        """Run SQLite table creation synchronously in executor."""
+        """Run SQLite table creation and schema migration synchronously in executor."""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute("PRAGMA journal_mode=WAL;")
@@ -70,9 +70,19 @@ class DataHub:
                     low REAL NOT NULL,
                     close REAL NOT NULL,
                     volume REAL NOT NULL,
+                    is_synthetic INTEGER DEFAULT 0,
+                    source TEXT DEFAULT 'BROKER',
                     PRIMARY KEY (symbol, timeframe, time)
                 );
             """)
+            # Schema migration for existing databases
+            cursor.execute("PRAGMA table_info(candles);")
+            cols = [c[1] for c in cursor.fetchall()]
+            if "is_synthetic" not in cols:
+                cursor.execute("ALTER TABLE candles ADD COLUMN is_synthetic INTEGER DEFAULT 0;")
+            if "source" not in cols:
+                cursor.execute("ALTER TABLE candles ADD COLUMN source TEXT DEFAULT 'BROKER';")
+
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_candles_lookup 
                 ON candles(symbol, timeframe, time DESC);
@@ -122,12 +132,23 @@ class DataHub:
                             self._memory_cache[symbol][tf] = db_bars
 
     async def _save_bars_to_db(self, symbol: str, timeframe: str, bars: List[Bar]) -> None:
-        """Batch insert/replace candles into SQLite."""
+        """Batch insert/replace candles into SQLite preserving synthetic and broker provenance."""
         if not bars:
             return
 
         records = [
-            (symbol, timeframe, b.time, b.open, b.high, b.low, b.close, b.volume)
+            (
+                symbol,
+                timeframe,
+                b.time,
+                b.open,
+                b.high,
+                b.low,
+                b.close,
+                b.volume,
+                1 if getattr(b, "is_synthetic", False) else 0,
+                getattr(b, "source", "SYNTHETIC" if getattr(b, "is_synthetic", False) else "BROKER"),
+            )
             for b in bars
         ]
 
@@ -135,26 +156,37 @@ class DataHub:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 cursor.executemany("""
-                    INSERT OR REPLACE INTO candles (symbol, timeframe, time, open, high, low, close, volume)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+                    INSERT OR REPLACE INTO candles (symbol, timeframe, time, open, high, low, close, volume, is_synthetic, source)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
                 """, records)
                 conn.commit()
 
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, _insert)
 
-    async def _load_bars_from_db(self, symbol: str, timeframe: str, limit: int = 1000) -> List[Bar]:
-        """Load recent bars from SQLite."""
+    async def _load_bars_from_db(
+        self,
+        symbol: str,
+        timeframe: str,
+        limit: int = 1000,
+        exclude_synthetic: bool = False
+    ) -> List[Bar]:
+        """Load recent bars from SQLite preserving candle provenance."""
         def _query():
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT time, open, high, low, close, volume
+                query = """
+                    SELECT time, open, high, low, close, volume, is_synthetic, source
                     FROM candles
                     WHERE symbol = ? AND timeframe = ?
-                    ORDER BY time DESC
-                    LIMIT ?;
-                """, (symbol, timeframe, limit))
+                """
+                params = [symbol, timeframe]
+                if exclude_synthetic:
+                    query += " AND is_synthetic = 0 AND source != 'SYNTHETIC'"
+                query += " ORDER BY time DESC LIMIT ?;"
+                params.append(limit)
+
+                cursor.execute(query, tuple(params))
                 rows = cursor.fetchall()
                 # Reverse to get chronological order (oldest to newest)
                 return [
@@ -165,6 +197,8 @@ class DataHub:
                         low=float(r[3]),
                         close=float(r[4]),
                         volume=float(r[5]),
+                        is_synthetic=bool(r[6]),
+                        source=str(r[7]),
                     )
                     for r in reversed(rows)
                 ]
@@ -256,17 +290,21 @@ class DataHub:
         timeframe: str,
         count: int = 100,
         completed_only: bool = False,
-        now_ts: Optional[float] = None
+        now_ts: Optional[float] = None,
+        exclude_synthetic: bool = False,
     ) -> List[Bar]:
         """
         Fetch the last `count` bars for a symbol and timeframe.
         If completed_only is True, excludes incomplete (in-progress) higher timeframe bars.
+        If exclude_synthetic is True, excludes synthetic bars so they are never treated as broker data.
         """
         ref_time = now_ts or time.time()
         tf_sec = self.TF_SECONDS.get(timeframe, 60)
 
         async with self._lock:
             bars = self._memory_cache.get(symbol, {}).get(timeframe, [])
+            if exclude_synthetic:
+                bars = [b for b in bars if not getattr(b, "is_synthetic", False) and getattr(b, "source", "BROKER") != "SYNTHETIC"]
             if len(bars) >= count:
                 res = bars[-count:]
                 if completed_only:
@@ -274,17 +312,20 @@ class DataHub:
                 return res
 
         # If not sufficient in memory, fetch older bars from DB and merge without losing memory bars
-        db_bars = await self._load_bars_from_db(symbol, timeframe, limit=count + 20)
+        db_bars = await self._load_bars_from_db(symbol, timeframe, limit=count + 20, exclude_synthetic=exclude_synthetic)
         async with self._lock:
             mem_bars = self._memory_cache.get(symbol, {}).get(timeframe, [])
+            if exclude_synthetic:
+                mem_bars = [b for b in mem_bars if not getattr(b, "is_synthetic", False) and getattr(b, "source", "BROKER") != "SYNTHETIC"]
             bar_map = {b.time: b for b in db_bars}
             for b in mem_bars:
                 bar_map[b.time] = b # in-memory bars take precedence
 
             merged = [bar_map[t] for t in sorted(bar_map.keys())]
-            if symbol not in self._memory_cache:
-                self._memory_cache[symbol] = {}
-            self._memory_cache[symbol][timeframe] = merged
+            if not exclude_synthetic:
+                if symbol not in self._memory_cache:
+                    self._memory_cache[symbol] = {}
+                self._memory_cache[symbol][timeframe] = merged
 
             res = merged[-count:]
             if completed_only:
@@ -297,21 +338,23 @@ class DataHub:
         timeframe: str,
         count: int = 100,
         completed_only: bool = False,
-        now_ts: Optional[float] = None
+        now_ts: Optional[float] = None,
+        exclude_synthetic: bool = False,
     ) -> pd.DataFrame:
         """
         Retrieve candles formatted as a pandas DataFrame ready for indicators.
-        Columns: ['time', 'open', 'high', 'low', 'close', 'volume'].
+        Columns: ['time', 'open', 'high', 'low', 'close', 'volume', 'is_synthetic', 'source'].
         """
         bars = await self.get_bars(
             symbol,
             timeframe,
             count=count,
             completed_only=completed_only,
-            now_ts=now_ts
+            now_ts=now_ts,
+            exclude_synthetic=exclude_synthetic,
         )
         if not bars:
-            return pd.DataFrame(columns=["time", "open", "high", "low", "close", "volume"])
+            return pd.DataFrame(columns=["time", "open", "high", "low", "close", "volume", "is_synthetic", "source"])
 
         data = {
             "time": [b.time for b in bars],
@@ -320,6 +363,8 @@ class DataHub:
             "low": [b.low for b in bars],
             "close": [b.close for b in bars],
             "volume": [b.volume for b in bars],
+            "is_synthetic": [getattr(b, "is_synthetic", False) for b in bars],
+            "source": [getattr(b, "source", "BROKER") for b in bars],
         }
         return pd.DataFrame(data)
 
@@ -328,7 +373,8 @@ class DataHub:
         symbol: str,
         counts: Optional[Dict[str, int]] = None,
         higher_tf_completed_only: bool = True,
-        now_ts: Optional[float] = None
+        now_ts: Optional[float] = None,
+        exclude_synthetic: bool = False,
     ) -> Dict[str, pd.DataFrame]:
         """
         Returns aligned DataFrames for all 4 primary timeframes (1H, 15m, 5m, 1m).
@@ -352,7 +398,8 @@ class DataHub:
                 tf,
                 count=cnt,
                 completed_only=completed_flag,
-                now_ts=now_ts
+                now_ts=now_ts,
+                exclude_synthetic=exclude_synthetic,
             )
 
         return results

@@ -276,8 +276,8 @@ async def lifespan(app_instance):
     news_cfg = cfg.get("news_reactor", {})
     news_reactor = NewsReactor(
         enabled=news_cfg.get("enabled", True),
-        pre_news_freeze_seconds=news_cfg.get("pre_news_freeze_seconds", 900),
-        post_news_freeze_seconds=news_cfg.get("post_news_freeze_seconds", 900),
+        pre_news_freeze_seconds=news_cfg.get("pre_news_freeze_seconds", 90),
+        post_news_freeze_seconds=news_cfg.get("post_news_freeze_seconds", 15),
         post_news_momentum_window_sec=news_cfg.get("post_news_momentum_window_sec", 300),
         post_news_cooldown_seconds=news_cfg.get("post_news_cooldown_seconds", 3),
         max_spread_multiplier=news_cfg.get("max_spread_multiplier", 2.5),
@@ -291,11 +291,12 @@ async def lifespan(app_instance):
 
     # 4. Initialize Risk Engine
     risk_engine = GoldRiskEngine(
-        account_type=trading_cfg.get("account_type", "cent"),
+        account_type=trading_cfg.get("account_type", "micro"),
         budget_usd=float(trading_cfg.get("budget_usd", 10.0)),
-        risk_per_trade_pct=float(trading_cfg.get("risk_per_trade_pct", 10.0)),
+        risk_per_trade_pct=float(trading_cfg.get("risk_per_trade_pct", 2.0)),
         compounding_enabled=trading_cfg.get("compounding_enabled", True),
         max_daily_losses=int(trading_cfg.get("max_daily_losses", 4)),
+        risk_profile=trading_cfg.get("risk_profile", "balanced"),
     )
     ctx.risk_engine = risk_engine
 
@@ -311,6 +312,8 @@ async def lifespan(app_instance):
         max_open_positions=int(trading_cfg.get("max_open_positions", 1)),
         history_store=history_store,
         manage_manual_positions=ctx.manage_manual_positions,
+        post_loss_buffer_seconds=float(trading_cfg.get("post_loss_buffer_seconds", 12.0)),
+        anti_revenge_window_seconds=float(trading_cfg.get("anti_revenge_window_seconds", 45.0)),
     )
     await trade_manager.start()
     ctx.trade_manager = trade_manager

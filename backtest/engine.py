@@ -192,10 +192,12 @@ class BacktestEngine:
         point = 0.01 if is_gold else 0.00001
         digits = 2 if is_gold else 5
 
+        risk_profile_mode = bt_scorer.mode if bt_scorer.mode in ["conservative", "balanced", "aggressive"] else "balanced"
         risk_engine = GoldRiskEngine(
             budget_usd=self.initial_balance,
             risk_per_trade_pct=self.risk_per_trade_pct,
             compounding_enabled=True,
+            risk_profile=risk_profile_mode,
         )
 
         equity_curve: List[Dict[str, Any]] = [
@@ -302,6 +304,8 @@ class BacktestEngine:
                     symbol_info=sym_info,
                     account_info=acc_info,
                     sl_distance=risk_dist,
+                    confidence_tier=getattr(signal, "tier", None),
+                    score=getattr(signal, "score", None),
                 )
                 has_margin = risk_meta.get("has_margin", True)
 

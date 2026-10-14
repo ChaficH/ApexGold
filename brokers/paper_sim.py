@@ -12,7 +12,7 @@ import logging
 import math
 import random
 import time
-from typing import Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
 
@@ -379,6 +379,7 @@ class PaperSimAdapter(AbstractBrokerAdapter):
                 close=round(close_p, 2 if "XAU" in symbol else 5),
                 volume=volume,
                 is_synthetic=True,
+                source="SYNTHETIC",
             ))
             price = close_p
 

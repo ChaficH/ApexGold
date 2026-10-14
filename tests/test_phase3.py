@@ -7,10 +7,15 @@ Covers:
 - Item 12: Aligning backtesting with live trading logic, isolating the live scorer, and verifying comprehensive performance metrics.
 """
 
+import os
+import sys
 import time
 import pytest
 import pandas as pd
 import numpy as np
+
+# Ensure repo root is in python path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from backtest.engine import BacktestEngine, BacktestResult
 from strategy.confluence_scorer import ConfluenceScorer

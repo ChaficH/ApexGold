@@ -23,7 +23,7 @@ enum ENUM_BRIDGE_MODE
 input group "=== Bridge Configuration ==="
 input ENUM_BRIDGE_MODE InpBridgeMode   = BRIDGE_WEBREQUEST; // Bridge Communication Mode
 input string           InpServerUrl    = "http://127.0.0.1:8000/api/mt5_bridge/tick"; // REST Bridge URL
-input string           InpBridgeToken  = "";                // Bridge Auth Token (optional, match bridge_token in config.yaml)
+input string           InpBridgeToken  = "apex_secret_2026"; // Bridge Auth Token (matches bridge_token in config.yaml)
 input string           InpBindIP       = "127.0.0.1";       // TCP Listening IP
 input int              InpServerPort   = 15555;             // TCP Listening Port
 input int              InpTimerMS      = 100;               // Polling Cycle (100ms)

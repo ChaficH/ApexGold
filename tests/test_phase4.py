@@ -8,11 +8,16 @@ Verifies:
 3. Item 15: Indicator calculations NaN resilience, sparse history safety, and elimination of fabricated historical pattern edge.
 """
 
+import os
+import sys
 import time
 import pytest
 import numpy as np
 import pandas as pd
 from unittest.mock import AsyncMock, patch
+
+# Ensure repo root is in python path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from brokers.base import Bar, Tick
 from brokers.paper_sim import PaperSimAdapter

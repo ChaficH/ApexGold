@@ -52,6 +52,11 @@ class Bar:
     close: float
     volume: float = 0.0
     is_synthetic: bool = False
+    source: str = "BROKER"
+
+    def __post_init__(self):
+        if self.is_synthetic and self.source == "BROKER":
+            self.source = "SYNTHETIC"
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)

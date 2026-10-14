@@ -18,7 +18,7 @@ broker:
   #   - "mt5_mac_socket"  : Connects to local MT5 on macOS/Windows via ApexBridge.mq5 socket (127.0.0.1:15555)
   #   - "mt5_windows"     : Native MetaTrader5 Python package on Windows
   active_broker: "paper_sim"
-  bridge_token: ""          # Secret token for MT5 bridge authentication (leave blank to disable auth)
+  bridge_token: "apex_secret_2026"          # Secret token for MT5 bridge authentication (matches ApexBridge.mq5 default)
 
   mac_socket:
     host: "127.0.0.1"
@@ -57,7 +57,7 @@ trading:
 
   # Explicit Live Trading Opt-In:
   # When false, real broker execution is disabled and the engine defaults to paper simulation/scanner.
-  live_trading_enabled: false
+  live_trading_enabled: true
 
   # Protect Manually Opened MT5 Positions:
   # When false (default), the bot will NEVER modify, trail, or close trades opened manually by the user.
@@ -85,6 +85,7 @@ trading:
   account_type: "micro"
   budget_usd: 10.00
   risk_per_trade_pct: 2.0   # Conservative 2.0% risk per trade (safe small-account scaling)
+  risk_profile: "balanced"  # "conservative", "balanced", or "aggressive"
   compounding_enabled: true # Automatically scales budget as balance grows
 
   # Risk Guards & Circuit Breakers:
@@ -92,6 +93,8 @@ trading:
   max_daily_losses: 4       # Pause trading after 4 consecutive daily losses
   max_daily_drawdown_pct: 25.0
   correlation_guard: true   # Block opposing/redundant USD exposure across pairs
+  post_loss_buffer_seconds: 12.0       # Fast broker settlement buffer (not a 2m/5m freeze)
+  anti_revenge_window_seconds: 45.0    # Structural window preventing repeating same losing trade at same level
 
 # ------------------------------------------------------------------------------
 # Confluence & Strategy Scoring Engine (100-Point System)
@@ -137,9 +140,9 @@ news_reactor:
   high_impact_only: true
   currencies: ["USD", "XAU"]
 
-  # Pre-News & Post-News Lockout (15-Minute Shield)
-  pre_news_freeze_seconds: 900       # Stop opening new trades 15m before Red Folder
-  post_news_freeze_seconds: 900      # Freeze new trades 15m after Red Folder
+  # Pre-News & Post-News Lockout
+  pre_news_freeze_seconds: 90        # Pre-News Spread Buffer (90s before event)
+  post_news_freeze_seconds: 15       # Fast 15s post-release buffer before momentum capture
   lock_breakeven_on_open_trades: true # Move open profitable trades to BE before news
   block_on_calendar_unavailable: false # If true, blocks new trades when economic calendar cannot be reached
 

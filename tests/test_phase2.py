@@ -9,9 +9,14 @@ Covers:
 """
 
 import asyncio
+import os
+import sys
 import time
 from typing import Any, Dict, List, Optional, Union
 import pytest
+
+# Ensure repo root is in python path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from brokers.base import (
     AbstractBrokerAdapter,

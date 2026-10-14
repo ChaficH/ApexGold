@@ -32,11 +32,21 @@ logger = logging.getLogger("ApexGold.UIServer")
 
 app = FastAPI(title="ApexGold Trading Engine", version="1.0.0")
 
+ALLOWED_ORIGINS = [
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+custom_origins = os.getenv("APEX_ALLOWED_ORIGINS", "")
+if custom_origins:
+    ALLOWED_ORIGINS.extend([orig.strip() for orig in custom_origins.split(",") if orig.strip()])
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -55,7 +65,7 @@ class ServerContext:
         self.telegram: Optional[TelegramNotifier] = None
         self.config: Dict[str, Any] = {}
         self.active_symbol = "XAUUSD"
-        self.execution_mode = "full_auto"   # full_auto, confirm, scanner
+        self.execution_mode = "scanner"     # scanner (SAFE RUNTIME DEFAULT), confirm, full_auto
         self.strategy_mode = "auto_adaptive" # auto_adaptive (FLAGSHIP DEFAULT), cautious, standard, aggressive, hyper, manual
         self.aggressiveness_pct = 65.0      # 1% to 100% continuous dial
         
@@ -63,6 +73,7 @@ class ServerContext:
         self.live_trading_enabled: bool = False
         self.manage_manual_positions: bool = False
         self.bridge_token: str = ""
+        self.allow_pre_news_trajectory: bool = True
         
         # macOS Wine MT5 Bridge Pending Queue
         self.mt5_pending_actions: List[Dict[str, Any]] = []
@@ -107,10 +118,25 @@ endpoint_rate_limiter = EndpointRateLimiter()
 
 
 def verify_bridge_token(request: Optional[Request] = None, payload: Optional[Dict[str, Any]] = None):
-    """Authenticate incoming bridge requests via header, payload, or query parameter."""
+    """
+    Authenticate incoming bridge requests via header, payload, or query parameter.
+    If live trading is enabled or active, a non-empty bridge token is strictly required.
+    """
     required = (getattr(ctx, "bridge_token", "") or os.environ.get("APEX_BRIDGE_TOKEN", "")).strip()
+
+    # Requirement: Live bridge use strictly requires configured authentication
+    if ctx.is_live_trading_active() or ctx.live_trading_enabled:
+        if not required:
+            client_host = request.client.host if (request and request.client) else "unknown"
+            logger.critical(f"[BRIDGE AUTH ERROR] Live trading is enabled but no bridge authentication token is configured! Rejecting bridge access from {client_host}.")
+            raise HTTPException(
+                status_code=401,
+                detail="Live bridge access requires configured bridge token (bridge_token in config or APEX_BRIDGE_TOKEN env)"
+            )
+
     if not required:
-        return  # Bridge authentication not configured / open mode
+        return  # Bridge authentication not configured in scanner / paper mode
+
     header_token = (request.headers.get("X-Bridge-Token") or request.headers.get("x-bridge-token")) if request else None
     payload_token = payload.get("token") if payload and isinstance(payload, dict) else None
     query_token = request.query_params.get("token") if request else None
@@ -249,6 +275,8 @@ async def get_status():
         "is_paper_mode": not is_live,
         "broker_type": ctx.broker.__class__.__name__ if ctx.broker else "None",
         "account_type": getattr(ctx.risk_engine, "account_type", "micro") if ctx.risk_engine else "micro",
+        "risk_profile": getattr(ctx.risk_engine, "risk_profile", "balanced") if ctx.risk_engine else "balanced",
+        "risk_profile_info": ctx.risk_engine.get_risk_profile_info() if ctx.risk_engine else {},
         "manage_manual_positions": ctx.manage_manual_positions,
         "circuit_breaker_tripped": cb_tripped,
         "circuit_breaker_reason": cb_reason,
@@ -264,6 +292,17 @@ async def get_status():
         "news_state": news_full,
         "tf_trends": auto_brain.get("tf_trends", {"1H": "NEUTRAL", "15m": "NEUTRAL", "5m": "NEUTRAL", "1m": "NEUTRAL"}),
         "feed_logs": ctx.news_reactor.get_feed_logs(15) if ctx.news_reactor else [],
+        "allow_pre_news_trajectory": getattr(ctx, "allow_pre_news_trajectory", True),
+        "pre_news_trajectory": ctx.news_reactor.evaluate_pre_news_trajectory(
+            symbol=ctx.active_symbol,
+            dfs={
+                "1m": ctx.data_hub.get_df(ctx.active_symbol, "1m") if ctx.data_hub else None,
+                "5m": ctx.data_hub.get_df(ctx.active_symbol, "5m") if ctx.data_hub else None,
+                "15m": ctx.data_hub.get_df(ctx.active_symbol, "15m") if ctx.data_hub else None,
+                "1H": ctx.data_hub.get_df(ctx.active_symbol, "1H") if ctx.data_hub else None,
+            },
+            tick_velocity=getattr(ctx.news_reactor, "_latest_velocity", 0.0),
+        ) if (ctx.news_reactor and hasattr(ctx.news_reactor, "evaluate_pre_news_trajectory")) else {},
     }
 
 
@@ -392,8 +431,8 @@ async def action_resume():
     """Resume automated trade executions."""
     if not ctx.trade_manager:
         raise HTTPException(status_code=500, detail="TradeManager not ready")
-    ctx.trade_manager.resume_trading()
-    return {"status": "OK", "message": "Trading resumed."}
+    ok, msg = await ctx.trade_manager.resume_trading()
+    return {"status": "OK" if ok else "BLOCKED", "message": msg}
 
 
 @app.post("/api/actions/reset_cooldown")
@@ -402,6 +441,36 @@ async def action_reset_cooldown():
     if ctx.trade_manager:
         ctx.trade_manager.reset_cooldown()
     return {"status": "OK", "message": "Anti-revenge cooldown cleared."}
+
+
+@app.post("/api/actions/toggle_pre_news_trajectory")
+async def action_toggle_pre_news_trajectory():
+    """Toggle smart pre-news trajectory front-running on/off."""
+    current = getattr(ctx, "allow_pre_news_trajectory", True)
+    ctx.allow_pre_news_trajectory = not current
+    if ctx.scorer:
+        ctx.scorer.allow_pre_news_trajectory = ctx.allow_pre_news_trajectory
+    state_str = "ENABLED" if ctx.allow_pre_news_trajectory else "DISABLED"
+    logger.info(f"[PRE-NEWS ENGINE] Smart Pre-News Trajectory is now {state_str}.")
+    return {
+        "status": "OK",
+        "allow_pre_news_trajectory": ctx.allow_pre_news_trajectory,
+        "message": f"Pre-news trajectory engine {state_str}.",
+    }
+
+
+@app.post("/api/actions/risk_profile")
+async def action_set_risk_profile(payload: Dict[str, Any]):
+    """Switch active risk profile (conservative, balanced, aggressive)."""
+    profile = str(payload.get("profile", "")).lower()
+    if ctx.risk_engine:
+        ctx.risk_engine.set_risk_profile(profile)
+        return {
+            "status": "OK",
+            "profile": ctx.risk_engine.risk_profile,
+            "info": ctx.risk_engine.get_risk_profile_info(),
+        }
+    raise HTTPException(status_code=500, detail="Risk engine not ready")
 
 
 @app.get("/api/history")
@@ -440,7 +509,16 @@ async def action_close_position(ticket: int):
     if not ctx.broker:
         raise HTTPException(status_code=500, detail="Broker not ready")
     success = await ctx.broker.close_position(ticket)
-    if not success:
+    # Re-query broker state to verify actual closure
+    open_positions = await ctx.broker.get_open_positions()
+    still_open = any((int(p.ticket) if str(p.ticket).isdigit() else p.ticket) == ticket for p in open_positions)
+    if not success or still_open:
+        if ctx.trade_manager:
+            ctx.trade_manager._contradictory_state_active = True
+            ctx.trade_manager._contradictory_state_reason = f"CRITICAL: Emergency close failed for position #{ticket}! Still open on broker."
+            ctx.trade_manager.pause_trading(minutes=1440)
+            if ctx.history_store:
+                await ctx.history_store.record_audit_event("CRITICAL_CLOSE_FAILED", ctx.trade_manager._contradictory_state_reason)
         return {"status": "ERROR", "message": f"Broker failed to close position #{ticket}", "ticket": ticket}
     if ctx.trade_manager and hasattr(ctx.trade_manager, "_managed_positions"):
         ctx.trade_manager._managed_positions.pop(ticket, None)
@@ -1106,6 +1184,25 @@ async def mt5_bridge_rates(payload: Dict[str, Any], request: Request = None):
 @app.websocket("/ws")
 async def websocket_telemetry(websocket: WebSocket):
     """Sub-second telemetry stream delivering live charts, score gauge, and Chameleon state."""
+    # Origin verification for CSRF / cross-site WebSocket hijacking protection
+    origin = websocket.headers.get("origin")
+    if origin:
+        normalized_origin = origin.rstrip("/")
+        allowed_normalized = [o.rstrip("/") for o in ALLOWED_ORIGINS]
+        if normalized_origin not in allowed_normalized:
+            logger.warning(f"[WEBSOCKET REJECTED] Connection rejected from unauthorized origin: {origin}")
+            await websocket.close(code=1008, reason="Unauthorized origin")
+            return
+
+    # If live trading is active and a bridge token is configured, enforce token
+    required = (getattr(ctx, "bridge_token", "") or os.environ.get("APEX_BRIDGE_TOKEN", "")).strip()
+    if ctx.is_live_trading_active() and required:
+        token = websocket.query_params.get("token") or websocket.headers.get("x-bridge-token")
+        if token != required:
+            logger.warning("[WEBSOCKET REJECTED] Missing or invalid authentication token for live trading telemetry stream.")
+            await websocket.close(code=1008, reason="Authentication required for live telemetry stream")
+            return
+
     await ws_manager.connect(websocket)
     try:
         while True:
