@@ -393,9 +393,9 @@ class ConfluenceScorer:
                 "pill_text": pill_text,
                 "full_reason": full_reason,
                 "reason": reason_str,
-                "target_rr": 3.0,
-                "be_lock_r": 0.8,
-                "stall_exit_seconds": 90.0,
+                "target_rr": 2.8,
+                "be_lock_r": 0.65,
+                "stall_exit_seconds": 120.0,
                 "last_update": now,
             }
             return self.auto_brain_state
@@ -406,7 +406,7 @@ class ConfluenceScorer:
         # ----------------------------------------------------------------------
         vel_mult = tick_velocity if tick_velocity > 0 else 1.0
         dial_pct = 78.0 if vel_mult >= 1.5 else (74.0 if is_london_ny_active else 72.0)
-        threshold = 62
+        threshold = 64
         reason_str = f"High Velocity Flow inside Box ({'London/NY Active' if is_london_ny_active else 'Velocity Surge'})"
         pill_text = f"🧠 Auto-Brain: {dial_pct:.0f}% (Fast Scalp: Flow Momentum | Min: {threshold})"
         full_reason = f"Fast Hit-and-Run Scalp Mode — {reason_str} | Threshold: {threshold}/100"
@@ -419,9 +419,9 @@ class ConfluenceScorer:
             "pill_text": pill_text,
             "full_reason": full_reason,
             "reason": reason_str,
-            "target_rr": 1.2,
-            "be_lock_r": 0.45,
-            "stall_exit_seconds": 4.0,
+            "target_rr": 2.2,
+            "be_lock_r": 0.65,
+            "stall_exit_seconds": 60.0,
             "last_update": now,
         }
         return self.auto_brain_state
@@ -478,6 +478,66 @@ class ConfluenceScorer:
 
         if df_5m is None or len(df_5m) < 20 or df_1m is None or len(df_1m) < 10:
             return None
+
+        # =============================================================
+        # PROVEN SYSTEMIC HARD FILTERS: Eliminate False Trend Knife-Catching
+        # =============================================================
+
+        # 1. Battle-Tested 5m SuperTrend Directional Gate
+        # Strictly blocks BUY in Bear SuperTrend, strictly blocks SELL in Bull SuperTrend!
+        st_5m = TechnicalIndicators.calculate_supertrend(
+            df_5m["high"], df_5m["low"], df_5m["close"], period=10, multiplier=2.5
+        )
+        if st_5m.get("valid"):
+            if direction == "BUY" and st_5m.get("is_bear"):
+                logger.debug(f"[{symbol} BUY] Blocked: 5m SuperTrend is BEAR ({st_5m.get('line')}).")
+                return None
+            if direction == "SELL" and st_5m.get("is_bull"):
+                logger.debug(f"[{symbol} SELL] Blocked: 5m SuperTrend is BULL ({st_5m.get('line')}).")
+                return None
+
+        # 2. 15m SuperTrend Macro Trend Gate
+        st_15m = {"valid": False, "is_bull": False, "is_bear": False}
+        if df_15m is not None and len(df_15m) >= 20:
+            st_15m = TechnicalIndicators.calculate_supertrend(
+                df_15m["high"], df_15m["low"], df_15m["close"], period=10, multiplier=2.5
+            )
+            if st_15m.get("valid") and not is_impulse_active:
+                if direction == "BUY" and st_15m.get("is_bear"):
+                    logger.debug(f"[{symbol} BUY] Blocked: 15m SuperTrend is BEAR ({st_15m.get('line')}).")
+                    return None
+                if direction == "SELL" and st_15m.get("is_bull"):
+                    logger.debug(f"[{symbol} SELL] Blocked: 15m SuperTrend is BULL ({st_15m.get('line')}).")
+                    return None
+
+        # 3. Stochastic RSI Momentum Exhaustion Gate (ta.momentum.StochRSIIndicator)
+        stoch_5m = TechnicalIndicators.calculate_stoch_rsi(df_5m["close"])
+        if stoch_5m.get("valid") and not is_impulse_active:
+            if direction == "BUY" and stoch_5m.get("is_overbought"):
+                logger.debug(f"[{symbol} BUY] Blocked: 5m StochRSI Overbought (K={stoch_5m.get('k'):.1f} > 80).")
+                return None
+            if direction == "SELL" and stoch_5m.get("is_oversold"):
+                logger.debug(f"[{symbol} SELL] Blocked: 5m StochRSI Oversold (K={stoch_5m.get('k'):.1f} < 20).")
+                return None
+
+        # 4. Immediate 1m Execution Candle Gate
+        # Prevent selling into active bullish expansion candles or buying into red dumping candles
+        c_1m = df_1m["close"].values
+        o_1m = df_1m["open"].values
+        h_1m = df_1m["high"].values
+        l_1m = df_1m["low"].values
+        if direction == "BUY":
+            is_green = (c_1m[-1] > o_1m[-1])
+            is_hammer = (c_1m[-1] - l_1m[-1]) > 1.8 * max(0.05, abs(c_1m[-1] - o_1m[-1]))
+            if not is_green and not is_hammer and not is_impulse_active:
+                logger.debug(f"[{symbol} BUY] Blocked: 1m candle is red without hammer rejection.")
+                return None
+        else: # SELL
+            is_red = (c_1m[-1] < o_1m[-1])
+            is_star = (h_1m[-1] - c_1m[-1]) > 1.8 * max(0.05, abs(c_1m[-1] - o_1m[-1]))
+            if not is_red and not is_star and not is_impulse_active:
+                logger.debug(f"[{symbol} SELL] Blocked: 1m candle is green without shooting star rejection.")
+                return None
 
         breakdown = {
             "h1_macro": 0,
@@ -828,6 +888,14 @@ class ConfluenceScorer:
                 quant_pts += 4
                 reasons.append(f"Statistical Mean Retest Discount Zone (Z {zscore_data['zscore']:.1f}σ) (+4)")
 
+            # 5. SuperTrend & StochRSI Quantitative Edge
+            if st_5m.get("is_bull"):
+                quant_pts += 5
+                reasons.append("5m SuperTrend Bullish (+5)")
+            if stoch_5m.get("bullish_cross"):
+                quant_pts += 4
+                reasons.append(f"5m StochRSI Bullish Cross ({stoch_5m.get('k', 50):.1f}/{stoch_5m.get('d', 50):.1f}) (+4)")
+
         else: # SELL
             # 1. VWAP Confirmation
             if vwap_data.get("is_below"):
@@ -857,6 +925,14 @@ class ConfluenceScorer:
             elif zscore_data.get("is_bear_premium"):
                 quant_pts += 4
                 reasons.append(f"Statistical Mean Retest Premium Zone (Z {zscore_data['zscore']:.1f}σ) (+4)")
+
+            # 5. SuperTrend & StochRSI Quantitative Edge
+            if st_5m.get("is_bear"):
+                quant_pts += 5
+                reasons.append("5m SuperTrend Bearish (+5)")
+            if stoch_5m.get("bearish_cross"):
+                quant_pts += 4
+                reasons.append(f"5m StochRSI Bearish Cross ({stoch_5m.get('k', 50):.1f}/{stoch_5m.get('d', 50):.1f}) (+4)")
 
         breakdown["quant_alpha"] = min(20, max(-15, quant_pts))
 
@@ -927,31 +1003,31 @@ class ConfluenceScorer:
                 recent_high = max(h_1m[-5:])
                 raw_sl_dist = (recent_high + (0.40 if is_gold else 0.0004)) - current_price
 
-        min_sl = 2.50 if is_gold else 0.0015
-        max_sl = 4.80 if is_gold else 0.0045
+        min_sl = 2.20 if is_gold else 0.0015
+        max_sl = 3.20 if is_gold else 0.0035
         risk_r_dist = float(np.clip(raw_sl_dist, min_sl, max_sl))
 
         # Sub-regime and trade parameters
         if self.mode == "auto_adaptive":
             sub_regime = self.auto_brain_state.get("sub_regime", "WAVE_RUNNER")
-            target_rr = float(self.auto_brain_state.get("target_rr", 2.5))
+            target_rr = float(self.auto_brain_state.get("target_rr", 2.6))
             be_lock_r = float(self.auto_brain_state.get("be_lock_r", 0.65))
             stall_exit_seconds = float(self.auto_brain_state.get("stall_exit_seconds", 90.0))
         elif self.mode in ["hyper", "aggressive"]:
             sub_regime = "FAST_SCALP"
-            target_rr = 1.8 if self.mode == "hyper" else 2.0
+            target_rr = 2.0 if self.mode == "hyper" else 2.2
             be_lock_r = 0.65
-            stall_exit_seconds = 45.0 if self.mode == "hyper" else 60.0
+            stall_exit_seconds = 60.0
         elif self.mode == "cautious":
             sub_regime = "WAVE_RUNNER"
-            target_rr = 2.5
-            be_lock_r = 0.70
-            stall_exit_seconds = 90.0
+            target_rr = 2.8
+            be_lock_r = 0.65
+            stall_exit_seconds = 120.0
         else: # Standard / Manual
             sub_regime = "WAVE_RUNNER" if total_score >= 68 else "FAST_SCALP"
-            target_rr = 2.2
+            target_rr = 2.4
             be_lock_r = 0.65
-            stall_exit_seconds = 75.0
+            stall_exit_seconds = 90.0
 
         if sub_regime == "FAST_SCALP":
             regime = "ADAPTIVE_SCALP"

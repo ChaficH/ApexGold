@@ -683,60 +683,161 @@ class TechnicalIndicators:
             return {"is_squeeze": False, "bandwidth": 0.0, "valid": False}
 
     @classmethod
+    def calculate_supertrend(
+        cls,
+        high: Union[pd.Series, np.ndarray, list],
+        low: Union[pd.Series, np.ndarray, list],
+        close: Union[pd.Series, np.ndarray, list],
+        period: int = 10,
+        multiplier: float = 2.5
+    ) -> Dict[str, Any]:
+        """
+        Battle-Tested Quantitative ATR SuperTrend Algorithm.
+        Dynamically adapts bands to market volatility and generates clear institutional trend regimes.
+        Returns: direction (+1 for BULL, -1 for BEAR), trend line, and boolean state flags.
+        """
+        h = cls._to_numpy(high)
+        l = cls._to_numpy(low)
+        c = cls._to_numpy(close)
+        n = len(c)
+        if n < period + 2:
+            return {"direction": 0, "trend_name": "NEUTRAL", "line": 0.0, "is_bull": False, "is_bear": False, "valid": False}
+
+        tr = np.maximum(h - l, np.maximum(np.abs(h - np.roll(c, 1)), np.abs(l - np.roll(c, 1))))
+        tr[0] = h[0] - l[0]
+        atr = np.zeros(n, dtype=np.float64)
+        atr[period - 1] = np.mean(tr[:period])
+        for i in range(period, n):
+            atr[i] = (atr[i - 1] * (period - 1) + tr[i]) / period
+
+        hl2 = (h + l) / 2.0
+        bu = hl2 + (multiplier * atr)
+        bl = hl2 - (multiplier * atr)
+        fu = np.zeros(n, dtype=np.float64)
+        fl = np.zeros(n, dtype=np.float64)
+        trd = np.zeros(n, dtype=int)
+
+        for i in range(period, n):
+            fu[i] = bu[i] if (bu[i] < fu[i - 1] or c[i - 1] > fu[i - 1]) else fu[i - 1]
+            fl[i] = bl[i] if (bl[i] > fl[i - 1] or c[i - 1] < fl[i - 1]) else fl[i - 1]
+            if c[i] > fu[i - 1]:
+                trd[i] = 1
+            elif c[i] < fl[i - 1]:
+                trd[i] = -1
+            else:
+                trd[i] = trd[i - 1]
+
+        d = int(trd[-1])
+        line = float(fl[-1] if d == 1 else fu[-1])
+        return {
+            "direction": d,
+            "trend_name": "BULL" if d == 1 else ("BEAR" if d == -1 else "NEUTRAL"),
+            "line": round(line, 2),
+            "is_bull": (d == 1),
+            "is_bear": (d == -1),
+            "valid": True
+        }
+
+    @classmethod
+    def calculate_stoch_rsi(
+        cls,
+        close: Union[pd.Series, np.ndarray, list],
+        period: int = 14,
+        smooth_k: int = 3,
+        smooth_d: int = 3
+    ) -> Dict[str, Any]:
+        """
+        Stochastic RSI Oscillator using 'ta' library.
+        Identifies overbought tops (> 80) and oversold bottoms (< 20) to prevent knife-catching.
+        """
+        try:
+            import ta
+            s = pd.Series(cls._to_numpy(close))
+            if len(s) < period + smooth_k + smooth_d + 2:
+                return {"k": 50.0, "d": 50.0, "is_overbought": False, "is_oversold": False, "bullish_cross": False, "bearish_cross": False, "valid": False}
+
+            stoch = ta.momentum.StochRSIIndicator(close=s, window=period, smooth1=smooth_k, smooth2=smooth_d)
+            k_s = stoch.stochrsi_k()
+            d_s = stoch.stochrsi_d()
+            k = float(k_s.iloc[-1] * 100.0)
+            d = float(d_s.iloc[-1] * 100.0)
+            prev_k = float(k_s.iloc[-2] * 100.0)
+            prev_d = float(d_s.iloc[-2] * 100.0)
+
+            if np.isnan(k) or np.isnan(d):
+                return {"k": 50.0, "d": 50.0, "is_overbought": False, "is_oversold": False, "bullish_cross": False, "bearish_cross": False, "valid": False}
+
+            return {
+                "k": round(k, 1),
+                "d": round(d, 1),
+                "is_overbought": (k >= 80.0),
+                "is_oversold": (k <= 20.0),
+                "bullish_cross": (k > d and prev_k <= prev_d and k < 55.0),
+                "bearish_cross": (k < d and prev_k >= prev_d and k > 45.0),
+                "valid": True
+            }
+        except Exception:
+            return {"k": 50.0, "d": 50.0, "is_overbought": False, "is_oversold": False, "bullish_cross": False, "bearish_cross": False, "valid": False}
+
+    @classmethod
     def get_4tf_trends(cls, dfs: Dict[str, pd.DataFrame]) -> Dict[str, str]:
         """
-        Calculate mathematical directional bias for 1H, 15m, 5m, and 1m.
+        Calculate mathematical directional bias for 1H, 15m, 5m, and 1m using SuperTrend + Moving Averages.
         Returns: Dict mapping each timeframe to 'BULL', 'BEAR', or 'NEUTRAL'.
         """
         trends = {"1H": "NEUTRAL", "15m": "NEUTRAL", "5m": "NEUTRAL", "1m": "NEUTRAL"}
-        
+
         # 1H Macro Bias
         df_1h = dfs.get("1H")
         if df_1h is not None and len(df_1h) >= 20 and "close" in df_1h.columns:
+            st_1h = cls.calculate_supertrend(df_1h["high"], df_1h["low"], df_1h["close"], period=10, multiplier=2.5)
             c = df_1h["close"].values
             ema50 = cls.ema(c, min(50, len(c)))[-1]
-            slope = cls.ema_slope(c, min(50, len(c)))
-            if not np.isnan(ema50):
-                if c[-1] >= ema50 and slope >= -0.05:
+            if st_1h["valid"]:
+                if st_1h["is_bull"] and c[-1] >= ema50 * 0.998:
                     trends["1H"] = "BULL"
-                elif c[-1] <= ema50 and slope <= 0.05:
+                elif st_1h["is_bear"] and c[-1] <= ema50 * 1.002:
                     trends["1H"] = "BEAR"
+                else:
+                    trends["1H"] = st_1h["trend_name"]
 
-        # 15m Wave Bias
+        # 15m Session Wave Bias
         df_15m = dfs.get("15m")
         if df_15m is not None and len(df_15m) >= 20 and "close" in df_15m.columns:
+            st_15m = cls.calculate_supertrend(df_15m["high"], df_15m["low"], df_15m["close"], period=10, multiplier=2.5)
             c = df_15m["close"].values
             ema20 = cls.ema(c, 20)[-1]
-            ema50 = cls.ema(c, min(50, len(c)))[-1]
-            if not np.isnan(ema20) and not np.isnan(ema50):
-                if c[-1] >= ema20:
+            if st_15m["valid"]:
+                if st_15m["is_bull"] and c[-1] >= ema20 * 0.999:
                     trends["15m"] = "BULL"
-                elif c[-1] <= ema20:
+                elif st_15m["is_bear"] and c[-1] <= ema20 * 1.001:
                     trends["15m"] = "BEAR"
+                else:
+                    trends["15m"] = st_15m["trend_name"]
 
         # 5m Setup Bias
         df_5m = dfs.get("5m")
         if df_5m is not None and len(df_5m) >= 20 and "close" in df_5m.columns:
-            c = df_5m["close"].values
-            ema20 = cls.ema(c, 20)[-1]
-            if not np.isnan(ema20):
-                if c[-1] >= ema20:
-                    trends["5m"] = "BULL"
-                elif c[-1] < ema20:
-                    trends["5m"] = "BEAR"
+            st_5m = cls.calculate_supertrend(df_5m["high"], df_5m["low"], df_5m["close"], period=10, multiplier=2.5)
+            if st_5m["valid"]:
+                trends["5m"] = st_5m["trend_name"]
 
         # 1m Trigger Bias
         df_1m = dfs.get("1m")
         if df_1m is not None and len(df_1m) >= 10 and "close" in df_1m.columns:
+            st_1m = cls.calculate_supertrend(df_1m["high"], df_1m["low"], df_1m["close"], period=10, multiplier=2.0)
             c = df_1m["close"].values
-            ema9 = cls.ema(c, min(9, len(c)))[-1]
-            if not np.isnan(ema9):
-                if c[-1] >= ema9:
+            o = df_1m["open"].values
+            if st_1m["valid"]:
+                if st_1m["is_bull"] and c[-1] >= o[-1]:
                     trends["1m"] = "BULL"
-                elif c[-1] < ema9:
+                elif st_1m["is_bear"] and c[-1] <= o[-1]:
                     trends["1m"] = "BEAR"
+                else:
+                    trends["1m"] = st_1m["trend_name"]
 
         return trends
+
 
 
 

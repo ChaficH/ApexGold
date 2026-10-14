@@ -663,7 +663,7 @@ class TradeManager:
                     # =============================================================
                     # INTELLIGENT RULE 6: Fast Scalp Velocity Stall Exit
                     # =============================================================
-                    if pos.sub_regime == "FAST_SCALP" and floating_r >= 0.50 and (now - pos.entry_time >= 90.0):
+                    if pos.sub_regime == "FAST_SCALP" and floating_r >= 1.50 and (now - pos.entry_time >= 90.0):
                         current_vel = self.news_reactor._latest_velocity or 0.0
                         is_velocity_dead = (current_vel < 0.50 * max(0.5, pos.entry_velocity))
 
@@ -705,43 +705,34 @@ class TradeManager:
         Returns:
             (True, reason) -> Position must be closed immediately at market (cutting loss or locking profit).
         """
-        # 1. Minimum Hold Time: Give trade at least 90s to breathe past spread and develop!
-        if (now - pos.entry_time) < 90.0:
+        # 1. Minimum Hold Time: Give trade at least 60s to breathe past spread and develop!
+        if (now - pos.entry_time) < 60.0:
             return False, ""
 
-        # 2. Adverse Velocity Surge (Opposing Order Flow Spike) - ONLY bank profit, NEVER cut loss!
-        vel = self.news_reactor._latest_velocity or 1.0
-        if vel >= 3.0 * max(0.5, pos.entry_velocity):
-            if floating_r >= 0.80:
-                return True, f"Opposing Velocity Surge ({vel:.1f}x): Banked +{floating_r:.2f}R"
+        # 2. Asymmetric Risk Guard: Early Adverse Invalidation for Losing Trades!
+        # When a trade is underwater (floating_r <= -0.65R), check if institutional structure has invalidated the setup.
+        # This prevents taking full -1.0R / -2.5R losses by cutting at ~ -0.70R when market decisively breaks against us.
+        if floating_r <= -0.65:
+            # Check 5m SuperTrend structural alignment
+            df_5m = await self.data_hub.get_dataframe(pos.symbol, "5m", count=25)
+            if df_5m is not None and len(df_5m) >= 20:
+                st_5m = TechnicalIndicators.calculate_supertrend(
+                    df_5m["high"], df_5m["low"], df_5m["close"], period=10, multiplier=2.5
+                )
+                if st_5m.get("valid"):
+                    if pos.direction == "BUY" and st_5m.get("is_bear"):
+                        return True, f"Adverse 5m SuperTrend Bearish Break: Early Invalidation ({floating_r:.2f}R)"
+                    elif pos.direction == "SELL" and st_5m.get("is_bull"):
+                        return True, f"Adverse 5m SuperTrend Bullish Break: Early Invalidation ({floating_r:.2f}R)"
 
-        # 3. 1-Minute Micro-Structure Reversal / Engulfing
-        # NEVER cut at negative R! The Stop Loss defines the risk.
-        # Only bank profit when trade is already well in profit (>= +0.80R) and shows a strong reversal!
-        df_1m = await self.data_hub.get_dataframe(pos.symbol, "1m", count=4)
-        if df_1m is not None and len(df_1m) >= 2:
-            c1 = df_1m["close"].iloc[-1]
-            o1 = df_1m["open"].iloc[-1]
-            h1 = df_1m["high"].iloc[-1]
-            l1 = df_1m["low"].iloc[-1]
+            # Check Severe Opposing Velocity Shock
+            vel = self.news_reactor._latest_velocity or 1.0
+            if vel >= 3.5 * max(0.5, pos.entry_velocity):
+                return True, f"Severe Opposing Velocity Shock ({vel:.1f}x): Early Invalidation ({floating_r:.2f}R)"
 
-            c0 = df_1m["close"].iloc[-2]
-            o0 = df_1m["open"].iloc[-2]
-
-            # In a BUY trade: bank profit if severe upper rejection occurs while deep in profit
-            if pos.direction == "BUY" and floating_r >= 0.80:
-                upper_wick = h1 - max(o1, c1)
-                is_bear_engulf = (c1 < o1) and (c0 > o0) and (c1 < o0)
-                if upper_wick > 2.5 * max(0.10, abs(c1 - o1)) or is_bear_engulf:
-                    return True, f"Upper Rejection / Bearish Engulf: Banked Profit (+{floating_r:.2f}R)"
-
-            # In a SELL trade: bank profit if severe lower rejection occurs while deep in profit
-            elif pos.direction == "SELL" and floating_r >= 0.80:
-                lower_wick = min(o1, c1) - l1
-                is_bull_engulf = (c1 > o1) and (c0 < o0) and (c1 > o0)
-                if lower_wick > 2.5 * max(0.10, abs(c1 - o1)) or is_bull_engulf:
-                    return True, f"Lower Rejection / Bullish Engulf: Banked Profit (+{floating_r:.2f}R)"
-
+        # Note: Winning trades (floating_r > 0) are NOT choked by 1m noise!
+        # They are protected by the One-Way Ratchet Floor (BE at +0.65R, lock profit at +1.0R, +1.5R, +2.0R)
+        # to ensure positive mathematical expectancy.
         return False, ""
 
     async def _evaluate_dynamic_tp(

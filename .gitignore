@@ -59,3 +59,4 @@ data/*.sqlite3
 *.log
 logs/
 tmp/
+
