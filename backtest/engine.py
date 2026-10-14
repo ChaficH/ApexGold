@@ -2,9 +2,12 @@
 ApexGold Multi-Timeframe Historical Backtesting Engine.
 
 Runs the exact 100-Point Confluence Scorer and Adaptive Chameleon Trade Management
-across cached multi-timeframe historical data.
-Generates comprehensive performance statistics, equity curve coordinates,
-and trade-by-trade logs for the Web UI.
+across cached multi-timeframe historical data with:
+- Zero fabricated results (returns explicit insufficient-data error when data is lacking).
+- Zero look-ahead bias (strict completion alignment on higher-timeframe candles).
+- Conservative intrabar execution (assumes stop-loss hit when SL and TP are both touched in the same bar).
+- True execution costs (spread, slippage, round-trip commissions, lot size constraints via GoldRiskEngine).
+- Independent scorer instances to prevent mutating live strategy modes.
 """
 
 from dataclasses import dataclass, asdict
@@ -16,8 +19,10 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
+from brokers.base import AccountInfo, SymbolInfo
 from engine.data_hub import DataHub
 from engine.indicators import TechnicalIndicators
+from execution.gold_risk import GoldRiskEngine
 from strategy.confluence_scorer import ConfluenceScorer, ConfluenceSignal
 
 logger = logging.getLogger("ApexGold.BacktestEngine")
@@ -43,6 +48,7 @@ class BacktestTrade:
     regime: str
     score: int
     exit_reason: str
+    trading_cost: float = 0.0
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -65,6 +71,13 @@ class BacktestResult:
     max_drawdown_pct: float
     equity_curve: List[Dict[str, Any]]
     trades: List[Dict[str, Any]]
+    avg_win_usd: float = 0.0
+    avg_loss_usd: float = 0.0
+    avg_return_r: float = 0.0
+    trading_costs_usd: float = 0.0
+    rejected_trades: int = 0
+    insufficient_data: bool = False
+    error_message: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -73,20 +86,25 @@ class BacktestResult:
 class BacktestEngine:
     """
     High-Speed Multi-Timeframe Backtest Runner.
-    Simulates real execution with spread, slippage, and Chameleon trade morphing.
+    Simulates real execution with spread, slippage, commission, and Chameleon trade management.
+    Never invents or fabricates data.
     """
 
     def __init__(
         self,
         scorer: Optional[ConfluenceScorer] = None,
         initial_balance: float = 10.0,
-        risk_per_trade_pct: float = 10.0,
-        spread_points: float = 0.25, # $0.25 on Gold
+        risk_per_trade_pct: float = 2.0,
+        spread_points: float = 0.25,  # $0.25 on Gold
+        slippage_points: float = 0.05,
+        commission_per_lot: float = 7.0,  # $7 per standard lot round-trip ($0.07 per 0.01 lot)
     ):
-        self.scorer = scorer or ConfluenceScorer(mode="balanced")
+        self.scorer = scorer or ConfluenceScorer(mode="standard")
         self.initial_balance = initial_balance
         self.risk_per_trade_pct = risk_per_trade_pct
         self.spread_points = spread_points
+        self.slippage_points = slippage_points
+        self.commission_per_lot = commission_per_lot
 
     async def run(
         self,
@@ -97,9 +115,17 @@ class BacktestEngine:
     ) -> BacktestResult:
         """
         Execute multi-timeframe backtest over the specified number of historical days.
+        Uses an isolated ConfluenceScorer instance to avoid mutating the live trading mode.
         """
-        self.scorer.set_mode(mode.lower())
-        logger.info(f"Starting {days}-day backtest on {symbol} (Mode: {self.scorer.mode.upper()})...")
+        # Independent scorer instance: prevents mutating live strategy settings
+        bt_scorer = ConfluenceScorer(
+            threshold_aggressive=getattr(self.scorer, "threshold_aggressive", 60),
+            threshold_balanced=getattr(self.scorer, "threshold_balanced", 68),
+            threshold_sniper=getattr(self.scorer, "threshold_sniper", 82),
+            mode=mode.lower() if mode else "balanced",
+            aggressiveness_pct=getattr(self.scorer, "aggressiveness_pct", 55.0),
+        )
+        logger.info(f"Starting {days}-day backtest on {symbol} (Mode: {bt_scorer.mode.upper()})...")
 
         # Pull historical data from DataHub
         bars_1h = await data_hub.get_dataframe(symbol, "1H", count=days * 24)
@@ -107,28 +133,70 @@ class BacktestEngine:
         bars_5m = await data_hub.get_dataframe(symbol, "5m", count=days * 24 * 12)
         bars_1m = await data_hub.get_dataframe(symbol, "1m", count=min(10080, days * 24 * 60))
 
+        # Check for insufficient data: NEVER return fabricated / fallback trades!
         if bars_5m is None or len(bars_5m) < 50:
-            logger.warning("Insufficient historical data in DataHub for backtest, generating synthetic run.")
-            return self._generate_fallback_backtest(symbol, days)
+            logger.warning(f"Insufficient historical data in DataHub for backtest on {symbol}. Returning explicit status.")
+            return BacktestResult(
+                symbol=symbol,
+                initial_balance=self.initial_balance,
+                final_equity=self.initial_balance,
+                net_profit=0.0,
+                return_pct=0.0,
+                total_trades=0,
+                winning_trades=0,
+                losing_trades=0,
+                win_rate_pct=0.0,
+                profit_factor=0.0,
+                max_drawdown_usd=0.0,
+                max_drawdown_pct=0.0,
+                equity_curve=[{"time": int(time.time()), "equity": round(self.initial_balance, 2)}],
+                trades=[],
+                avg_win_usd=0.0,
+                avg_loss_usd=0.0,
+                avg_return_r=0.0,
+                trading_costs_usd=0.0,
+                rejected_trades=0,
+                insufficient_data=True,
+                error_message="Insufficient historical candle data. Please fetch more history from MT5 before running a backtest.",
+            )
 
-        return self._simulate(symbol, bars_1h, bars_15m, bars_5m, bars_1m)
+        return self._simulate(symbol, bt_scorer, bars_1h, bars_15m, bars_5m, bars_1m)
 
     def _simulate(
         self,
         symbol: str,
-        df_1h: pd.DataFrame,
-        df_15m: pd.DataFrame,
+        bt_scorer: ConfluenceScorer,
+        df_1h: Optional[pd.DataFrame],
+        df_15m: Optional[pd.DataFrame],
         df_5m: pd.DataFrame,
-        df_1m: pd.DataFrame,
+        df_1m: Optional[pd.DataFrame],
     ) -> BacktestResult:
         """
-        Step-by-step multi-timeframe simulation.
-        Iterates across 5m/1m candles to generate signals and simulate Chameleon execution.
+        Chronological multi-timeframe simulation.
+        Enforces:
+        - Strict higher-timeframe completion (no look-ahead bias).
+        - Conservative intrabar handling when SL and TP are both inside one bar range.
+        - GoldRiskEngine sizing and trade rejection.
+        - Real execution costs (spread, slippage, commission).
+        - Chronological single-position constraint (max_open_positions: 1).
         """
         balance = self.initial_balance
         peak_equity = balance
         max_drawdown_usd = 0.0
         max_drawdown_pct = 0.0
+        rejected_trades = 0
+        total_trading_costs = 0.0
+
+        is_gold = any(k in symbol.upper() for k in ["XAU", "GOLD"])
+        contract_size = 100.0 if is_gold else 100000.0
+        point = 0.01 if is_gold else 0.00001
+        digits = 2 if is_gold else 5
+
+        risk_engine = GoldRiskEngine(
+            budget_usd=self.initial_balance,
+            risk_per_trade_pct=self.risk_per_trade_pct,
+            compounding_enabled=True,
+        )
 
         equity_curve: List[Dict[str, Any]] = [
             {"time": int(df_5m["time"].iloc[0]), "equity": round(balance, 2)}
@@ -136,130 +204,203 @@ class BacktestEngine:
         trades: List[BacktestTrade] = []
         ticket_counter = 1
 
-        # We step across 5-minute bars
         n_bars = len(df_5m)
-        step = 1
+        i = 50  # Start after warmup window
 
-        i = 50 # Start after warmup window
-        while i < n_bars - 10:
+        while i < n_bars - 1:
             current_bar = df_5m.iloc[i]
-            cur_time = current_bar["time"]
+            bar_start_time = float(current_bar["time"])
+            decision_time = bar_start_time + 300.0  # Decision made at 5m close
 
-            # Slice history up to current candle to prevent look-ahead bias
+            # -------------------------------------------------------------
+            # Prevent Look-Ahead Bias: Only use completed higher-TF candles
+            # -------------------------------------------------------------
             hist_5m = df_5m.iloc[:i + 1]
-            hist_1h = df_1h[df_1h["time"] <= cur_time]
-            hist_15m = df_15m[df_15m["time"] <= cur_time]
-            hist_1m = df_1m[df_1m["time"] <= cur_time]
+
+            if df_1h is not None and not df_1h.empty:
+                hist_1h = df_1h[df_1h["time"] + 3600.0 <= decision_time]
+            else:
+                hist_1h = hist_5m
+
+            if df_15m is not None and not df_15m.empty:
+                hist_15m = df_15m[df_15m["time"] + 900.0 <= decision_time]
+            else:
+                hist_15m = hist_5m
+
+            if df_1m is not None and not df_1m.empty:
+                hist_1m = df_1m[df_1m["time"] + 60.0 <= decision_time]
+            else:
+                hist_1m = hist_5m
+
+            # Require minimum history on higher timeframes
+            if len(hist_1h) < 5 or len(hist_15m) < 10:
+                i += 1
+                continue
 
             dfs = {
                 "1H": hist_1h,
                 "15m": hist_15m,
                 "5m": hist_5m,
-                "1m": hist_1m if len(hist_1m) >= 5 else hist_5m,
+                "1m": hist_1m,
             }
 
-            bid = current_bar["close"]
-            ask = bid + self.spread_points
+            bid = float(current_bar["close"])
+            ask = round(bid + self.spread_points, digits)
 
-            buy_sig, sell_sig = self.scorer.evaluate(
+            buy_sig, sell_sig = bt_scorer.evaluate(
                 symbol=symbol,
                 dfs=dfs,
                 current_tick_bid=bid,
                 current_tick_ask=ask,
-                utc_timestamp=cur_time,
+                utc_timestamp=decision_time,
             )
 
             signal = buy_sig if (buy_sig and (not sell_sig or buy_sig.score >= sell_sig.score)) else sell_sig
 
-            if signal and signal.score >= self.scorer.get_active_threshold():
-                # Simulate Trade Execution
-                entry_p = signal.entry_price
-                sl_p = signal.suggested_sl
-                tp_p = signal.suggested_tp
-                risk_dist = signal.risk_r_dist
+            if signal and signal.score >= bt_scorer.get_active_threshold():
                 direction = signal.direction
+                raw_entry = float(signal.entry_price)
+                sl_p = float(signal.suggested_sl)
+                tp_p = float(signal.suggested_tp)
                 regime = signal.regime
 
-                # $1.00 risk target on $10 balance (10%)
-                risk_usd = balance * (self.risk_per_trade_pct / 100.0)
+                # Realistic Entry with Spread & Slippage
+                if direction == "BUY":
+                    entry_p = round(ask + self.slippage_points, digits)
+                else:
+                    entry_p = round(bid - self.slippage_points, digits)
 
-                # Simulate Chameleon Trade Management forward over subsequent bars
+                risk_dist = abs(entry_p - sl_p)
+                if risk_dist <= point:
+                    i += 1
+                    continue
+
+                # Position Sizing via GoldRiskEngine
+                sym_info = SymbolInfo(
+                    symbol=symbol,
+                    bid=bid,
+                    ask=ask,
+                    point=point,
+                    digits=digits,
+                    spread=self.spread_points,
+                    contract_size=contract_size,
+                    tick_size=point,
+                    tick_value=point * contract_size,
+                    volume_min=0.01,
+                    volume_max=100.0,
+                    volume_step=0.01,
+                )
+
+                acc_info = AccountInfo(
+                    balance=balance,
+                    equity=balance,
+                    margin=0.0,
+                    free_margin=balance,
+                    currency="USD",
+                )
+                lot_size, risk_meta = risk_engine.calculate_lot_size(
+                    symbol_info=sym_info,
+                    account_info=acc_info,
+                    sl_distance=risk_dist,
+                )
+                has_margin = risk_meta.get("has_margin", True)
+
+                # Reject trade if minimum lot exceeds permitted risk budget
+                if not has_margin or lot_size <= 0.0:
+                    rejected_trades += 1
+                    i += 1
+                    continue
+
+                # Monetary risk budget for this trade
+                risk_usd = risk_dist * lot_size * contract_size
+
+                # Trading cost calculation (Commission + Slippage + Spread)
+                comm = round(lot_size * self.commission_per_lot, 2)
+                slip_cost = round(self.slippage_points * lot_size * contract_size, 2)
+                trade_costs = round(comm + slip_cost, 2)
+                total_trading_costs += trade_costs
+
+                # -------------------------------------------------------------
+                # Forward Simulation over Subsequent Bars
+                # -------------------------------------------------------------
                 exit_p = entry_p
-                exit_time = cur_time
+                exit_time = decision_time
                 exit_reason = "TIME_EXIT"
-                return_r = 0.0
                 ratchet_stage = 0
-
                 highest_r = 0.0
+                f = i + 1
 
                 for f in range(i + 1, min(i + 40, n_bars)):
                     bar_f = df_5m.iloc[f]
-                    h_f = bar_f["high"]
-                    l_f = bar_f["low"]
-                    c_f = bar_f["close"]
-                    exit_time = bar_f["time"]
+                    h_f = float(bar_f["high"])
+                    l_f = float(bar_f["low"])
+                    c_f = float(bar_f["close"])
+                    bar_f_time = float(bar_f["time"])
+                    exit_time = bar_f_time + 300.0
 
                     # Calculate current R reached
                     if direction == "BUY":
                         cur_r = (h_f - entry_p) / risk_dist
-                        cur_drawdown_r = (l_f - entry_p) / risk_dist
                     else:
                         cur_r = (entry_p - l_f) / risk_dist
-                        cur_drawdown_r = (entry_p - h_f) / risk_dist
 
                     if cur_r > highest_r:
                         highest_r = cur_r
 
-                    # Ratchet Floor: at +0.6R -> move SL to BE
-                    if ratchet_stage < 1 and cur_r >= 0.6:
+                    # Ratchet Floor: One-Way Stop Protection (never loosens)
+                    if ratchet_stage < 1 and cur_r >= 0.65:
                         ratchet_stage = 1
-                        sl_p = entry_p + (self.spread_points if direction == "BUY" else -self.spread_points)
+                        new_sl = round(entry_p + self.spread_points if direction == "BUY" else entry_p - self.spread_points, digits)
+                        sl_p = max(sl_p, new_sl) if direction == "BUY" else min(sl_p, new_sl)
 
-                    # Ratchet Floor: at +1.0R -> lock +0.5R
-                    elif ratchet_stage < 2 and cur_r >= 1.0:
+                    elif ratchet_stage < 2 and cur_r >= 1.00:
                         ratchet_stage = 2
-                        sl_p = entry_p + (0.5 * risk_dist if direction == "BUY" else -0.5 * risk_dist)
+                        new_sl = round(entry_p + (0.45 * risk_dist) if direction == "BUY" else entry_p - (0.45 * risk_dist), digits)
+                        sl_p = max(sl_p, new_sl) if direction == "BUY" else min(sl_p, new_sl)
 
-                    # Ratchet Floor: at +1.5R -> lock +1.0R
-                    elif ratchet_stage < 3 and cur_r >= 1.5:
+                    elif ratchet_stage < 3 and cur_r >= 1.50:
                         ratchet_stage = 3
-                        sl_p = entry_p + (1.0 * risk_dist if direction == "BUY" else -1.0 * risk_dist)
+                        new_sl = round(entry_p + (0.85 * risk_dist) if direction == "BUY" else entry_p - (0.85 * risk_dist), digits)
+                        sl_p = max(sl_p, new_sl) if direction == "BUY" else min(sl_p, new_sl)
 
-                    # Check SL hit
-                    if direction == "BUY" and l_f <= sl_p:
+                    # ---------------------------------------------------------
+                    # Check Intrabar SL / TP Hits with Conservative Collision
+                    # ---------------------------------------------------------
+                    sl_hit = (l_f <= sl_p) if direction == "BUY" else (h_f >= sl_p)
+                    tp_hit = (h_f >= tp_p) if direction == "BUY" else (l_f <= tp_p)
+
+                    # Conservative Resolution: If BOTH SL and TP are reached in the same bar,
+                    # assume the adverse outcome (Stop Loss was hit first)
+                    if sl_hit and tp_hit:
                         exit_p = sl_p
                         exit_reason = "BREAKEVEN_LOCK" if ratchet_stage >= 1 else "SL_HIT"
-                        return_r = (exit_p - entry_p) / risk_dist
                         break
-                    elif direction == "SELL" and h_f >= sl_p:
+                    elif sl_hit:
                         exit_p = sl_p
                         exit_reason = "BREAKEVEN_LOCK" if ratchet_stage >= 1 else "SL_HIT"
-                        return_r = (entry_p - exit_p) / risk_dist
                         break
-
-                    # Check TP hit
-                    if direction == "BUY" and h_f >= tp_p:
+                    elif tp_hit:
                         exit_p = tp_p
                         exit_reason = "TP_HIT"
-                        return_r = signal.target_rr
-                        break
-                    elif direction == "SELL" and l_f <= tp_p:
-                        exit_p = tp_p
-                        exit_reason = "TP_HIT"
-                        return_r = signal.target_rr
                         break
 
-                    # Exhaustion bank in Runner mode if stalled at +1.2R
+                    # Exhaustion bank in Runner mode if stalled past 15 bars
                     if regime == "ADAPTIVE_RUNNER" and (f - i) > 15 and highest_r >= 1.2:
                         exit_p = c_f
                         exit_reason = "EXHAUSTION_BANK"
-                        return_r = (exit_p - entry_p) / risk_dist if direction == "BUY" else (entry_p - exit_p) / risk_dist
                         break
 
-                pnl = round(return_r * risk_usd, 2)
-                balance = round(balance + pnl, 2)
+                # Calculate Net P&L (Real Gross P&L minus trading costs)
+                if direction == "BUY":
+                    gross_pnl = (exit_p - entry_p) * lot_size * contract_size
+                else:
+                    gross_pnl = (entry_p - exit_p) * lot_size * contract_size
 
-                # Update drawdown
+                net_pnl = round(gross_pnl - trade_costs, 2)
+                return_r = round(net_pnl / max(0.01, risk_usd), 2)
+                balance = round(balance + net_pnl, 2)
+
+                # Drawdown tracking
                 if balance > peak_equity:
                     peak_equity = balance
                 dd_usd = round(peak_equity - balance, 2)
@@ -272,22 +413,23 @@ class BacktestEngine:
 
                 trades.append(BacktestTrade(
                     ticket=ticket_counter,
-                    entry_time=int(cur_time),
-                    entry_time_str=datetime.fromtimestamp(cur_time, tz=timezone.utc).strftime("%Y-%m-%d %H:%M"),
+                    entry_time=int(decision_time),
+                    entry_time_str=datetime.fromtimestamp(decision_time, tz=timezone.utc).strftime("%Y-%m-%d %H:%M"),
                     exit_time=int(exit_time),
                     exit_time_str=datetime.fromtimestamp(exit_time, tz=timezone.utc).strftime("%Y-%m-%d %H:%M"),
                     symbol=symbol,
                     direction=direction,
-                    volume=0.01,
-                    entry_price=round(entry_p, 2),
-                    exit_price=round(exit_p, 2),
-                    sl=round(sl_p, 2),
-                    tp=round(tp_p, 2),
-                    pnl=pnl,
-                    return_r=round(return_r, 2),
+                    volume=lot_size,
+                    entry_price=round(entry_p, digits),
+                    exit_price=round(exit_p, digits),
+                    sl=round(sl_p, digits),
+                    tp=round(tp_p, digits),
+                    pnl=net_pnl,
+                    return_r=return_r,
                     regime=regime,
                     score=signal.score,
                     exit_reason=exit_reason,
+                    trading_cost=trade_costs,
                 ))
                 ticket_counter += 1
 
@@ -296,20 +438,28 @@ class BacktestEngine:
                     "equity": round(balance, 2),
                 })
 
-                # Skip forward past this trade
-                i = f + 2
+                # Chronological Single-Position Constraint:
+                # Step past the completed trade before evaluating next signal
+                i = f + 1
             else:
                 i += 1
 
-        # Calculate Summary Metrics
+        # Summary Metrics
         total_trades = len(trades)
         winning_trades = sum(1 for t in trades if t.pnl > 0)
         losing_trades = sum(1 for t in trades if t.pnl < 0)
         win_rate = round((winning_trades / total_trades) * 100.0, 1) if total_trades > 0 else 0.0
 
-        gross_profit = sum(t.pnl for t in trades if t.pnl > 0)
-        gross_loss = abs(sum(t.pnl for t in trades if t.pnl < 0))
+        wins_usd = [t.pnl for t in trades if t.pnl > 0]
+        losses_usd = [t.pnl for t in trades if t.pnl < 0]
+
+        gross_profit = sum(wins_usd)
+        gross_loss = abs(sum(losses_usd))
         profit_factor = round(gross_profit / gross_loss, 2) if gross_loss > 0 else (99.0 if gross_profit > 0 else 0.0)
+
+        avg_win_usd = round(sum(wins_usd) / len(wins_usd), 2) if wins_usd else 0.0
+        avg_loss_usd = round(sum(losses_usd) / len(losses_usd), 2) if losses_usd else 0.0
+        avg_return_r = round(sum(t.return_r for t in trades) / total_trades, 2) if total_trades > 0 else 0.0
 
         net_profit = round(balance - self.initial_balance, 2)
         return_pct = round((net_profit / self.initial_balance) * 100.0, 1)
@@ -327,86 +477,12 @@ class BacktestEngine:
             profit_factor=profit_factor,
             max_drawdown_usd=max_drawdown_usd,
             max_drawdown_pct=max_drawdown_pct,
+            avg_win_usd=avg_win_usd,
+            avg_loss_usd=avg_loss_usd,
+            avg_return_r=avg_return_r,
+            trading_costs_usd=round(total_trading_costs, 2),
+            rejected_trades=rejected_trades,
+            insufficient_data=False,
             equity_curve=equity_curve,
             trades=[t.to_dict() for t in trades],
         )
-
-    def _generate_fallback_backtest(self, symbol: str, days: int) -> BacktestResult:
-        """Realistic analytical simulation when offline candle count is limited."""
-        balance = self.initial_balance
-        peak = balance
-        max_dd = 0.0
-        now = int(time.time())
-        trades: List[Dict[str, Any]] = []
-        curve: List[Dict[str, Any]] = [{"time": now - (days * 86400), "equity": balance}]
-
-        sample_trades_data = [
-            ("BUY", 1.8, "TP_HIT", "ADAPTIVE_SCALP", 74),
-            ("BUY", 2.5, "TP_HIT", "ADAPTIVE_RUNNER", 86),
-            ("SELL", -1.0, "SL_HIT", "ADAPTIVE_SCALP", 64),
-            ("BUY", 0.0, "BREAKEVEN_LOCK", "ADAPTIVE_SCALP", 70),
-            ("BUY", 3.2, "TP_HIT", "ADAPTIVE_RUNNER", 88),
-            ("SELL", 1.4, "EXHAUSTION_BANK", "ADAPTIVE_RUNNER", 78),
-            ("BUY", -1.0, "SL_HIT", "ADAPTIVE_SCALP", 62),
-            ("BUY", 2.2, "TP_HIT", "ADAPTIVE_RUNNER", 84),
-            ("SELL", 1.8, "TP_HIT", "ADAPTIVE_SCALP", 72),
-            ("BUY", 2.8, "TP_HIT", "ADAPTIVE_RUNNER", 85),
-            ("SELL", 0.0, "BREAKEVEN_LOCK", "ADAPTIVE_SCALP", 68),
-            ("BUY", 2.5, "TP_HIT", "ADAPTIVE_RUNNER", 82),
-        ]
-
-        for i, (dirn, r_ret, exit_r, reg, sc) in enumerate(sample_trades_data):
-            trade_time = now - ((len(sample_trades_data) - i) * 7200)
-            risk = balance * 0.10
-            pnl = round(r_ret * risk, 2)
-            balance = round(balance + pnl, 2)
-            if balance > peak:
-                peak = balance
-            dd = peak - balance
-            if dd > max_dd:
-                max_dd = dd
-
-            trades.append({
-                "ticket": 200000 + i,
-                "entry_time": trade_time,
-                "entry_time_str": datetime.fromtimestamp(trade_time, tz=timezone.utc).strftime("%Y-%m-%d %H:%M"),
-                "exit_time": trade_time + 1800,
-                "exit_time_str": datetime.fromtimestamp(trade_time + 1800, tz=timezone.utc).strftime("%Y-%m-%d %H:%M"),
-                "symbol": symbol,
-                "direction": dirn,
-                "volume": 0.01,
-                "entry_price": 2385.00,
-                "exit_price": 2385.00 + (r_ret * 2.0),
-                "sl": 2383.00,
-                "tp": 2390.00,
-                "pnl": pnl,
-                "return_r": r_ret,
-                "regime": reg,
-                "score": sc,
-                "exit_reason": exit_r,
-            })
-            curve.append({"time": trade_time + 1800, "equity": balance})
-
-        wins = sum(1 for t in trades if t["pnl"] > 0)
-        losses = sum(1 for t in trades if t["pnl"] < 0)
-        profit_gross = sum(t["pnl"] for t in trades if t["pnl"] > 0)
-        loss_gross = abs(sum(t["pnl"] for t in trades if t["pnl"] < 0))
-        pf = round(profit_gross / max(1.0, loss_gross), 2)
-
-        return BacktestResult(
-            symbol=symbol,
-            initial_balance=self.initial_balance,
-            final_equity=balance,
-            net_profit=round(balance - self.initial_balance, 2),
-            return_pct=round(((balance - self.initial_balance) / self.initial_balance) * 100.0, 1),
-            total_trades=len(trades),
-            winning_trades=wins,
-            losing_trades=losses,
-            win_rate_pct=round((wins / len(trades)) * 100.0, 1),
-            profit_factor=pf,
-            max_drawdown_usd=round(max_dd, 2),
-            max_drawdown_pct=round((max_dd / peak) * 100.0, 1),
-            equity_curve=curve,
-            trades=trades,
-        )
-
