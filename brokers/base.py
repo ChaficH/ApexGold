@@ -51,6 +51,12 @@ class Bar:
     low: float
     close: float
     volume: float = 0.0
+    is_synthetic: bool = False
+    source: str = "BROKER"
+
+    def __post_init__(self):
+        if self.is_synthetic and self.source == "BROKER":
+            self.source = "SYNTHETIC"
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -94,6 +100,19 @@ class SymbolInfo:
     volume_min: float = 0.01
     volume_max: float = 100.0
     volume_step: float = 0.01
+    stops_level: int = 0
+
+    @property
+    def min_lot(self) -> float:
+        return self.volume_min
+
+    @property
+    def max_lot(self) -> float:
+        return self.volume_max
+
+    @property
+    def step_lot(self) -> float:
+        return self.volume_step
 
     def __post_init__(self):
         if self.spread == 0.0 and self.ask >= self.bid:
@@ -145,6 +164,22 @@ class OrderResult:
     price: float = 0.0
     volume: float = 0.0
     error: Optional[str] = None
+
+@dataclass
+class ClosedDeal:
+    """Historical closed deal record from broker."""
+    ticket: Union[int, str]
+    symbol: str
+    direction: str
+    volume: float
+    open_price: float
+    close_price: float
+    open_time: float
+    close_time: float
+    profit: float
+    commission: float = 0.0
+    swap: float = 0.0
+    comment: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -245,4 +280,8 @@ class AbstractBrokerAdapter(ABC):
     async def get_pending_orders(self, symbol: Optional[str] = None) -> List[LimitOrder]:
         """Retrieve all currently active pending orders."""
         return []
+
+    async def get_closed_deal(self, ticket: Union[int, str]) -> Optional[ClosedDeal]:
+        """Retrieve real executed closed deal history for ticket if supported."""
+        return None
 

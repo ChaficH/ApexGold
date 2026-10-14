@@ -18,6 +18,7 @@ broker:
   #   - "mt5_mac_socket"  : Connects to local MT5 on macOS/Windows via ApexBridge.mq5 socket (127.0.0.1:15555)
   #   - "mt5_windows"     : Native MetaTrader5 Python package on Windows
   active_broker: "paper_sim"
+  bridge_token: "apex_secret_2026"          # Secret token for MT5 bridge authentication (matches ApexBridge.mq5 default)
 
   mac_socket:
     host: "127.0.0.1"
@@ -54,11 +55,19 @@ trading:
     - "GBPUSD"
     - "USDJPY"
 
+  # Explicit Live Trading Opt-In:
+  # When false, real broker execution is disabled and the engine defaults to paper simulation/scanner.
+  live_trading_enabled: true
+
+  # Protect Manually Opened MT5 Positions:
+  # When false (default), the bot will NEVER modify, trail, or close trades opened manually by the user.
+  manage_manual_positions: false
+
   # Execution Modes:
-  #   - "full_auto"  : Executes live trades immediately when score threshold is crossed
+  #   - "scanner"    : Read-only live technical scanner & confluence analyzer (Default safe mode)
   #   - "confirm"    : Emits alerts & prepares 1-click execution in the Web UI
-  #   - "scanner"    : Read-only live technical scanner & confluence analyzer
-  execution_mode: "full_auto"
+  #   - "full_auto"  : Executes live trades immediately when score threshold is crossed (requires live_trading_enabled: true)
+  execution_mode: "scanner"
 
   # Strategy Transmission Modes:
   #   - "auto_adaptive" : Flagship Smart Auto-Pilot Brain (Default: auto-dials 1%-100% every 5s)
@@ -76,6 +85,7 @@ trading:
   account_type: "micro"
   budget_usd: 10.00
   risk_per_trade_pct: 2.0   # Conservative 2.0% risk per trade (safe small-account scaling)
+  risk_profile: "balanced"  # "conservative", "balanced", or "aggressive"
   compounding_enabled: true # Automatically scales budget as balance grows
 
   # Risk Guards & Circuit Breakers:
@@ -83,6 +93,8 @@ trading:
   max_daily_losses: 4       # Pause trading after 4 consecutive daily losses
   max_daily_drawdown_pct: 25.0
   correlation_guard: true   # Block opposing/redundant USD exposure across pairs
+  post_loss_buffer_seconds: 12.0       # Fast broker settlement buffer (not a 2m/5m freeze)
+  anti_revenge_window_seconds: 45.0    # Structural window preventing repeating same losing trade at same level
 
 # ------------------------------------------------------------------------------
 # Confluence & Strategy Scoring Engine (100-Point System)
@@ -128,9 +140,11 @@ news_reactor:
   high_impact_only: true
   currencies: ["USD", "XAU"]
 
-  # Pre-News Lockout
-  pre_news_freeze_seconds: 180       # T-180s: Stop opening new trades before Red Folder
+  # Pre-News & Post-News Lockout
+  pre_news_freeze_seconds: 90        # Pre-News Spread Buffer (90s before event)
+  post_news_freeze_seconds: 15       # Fast 15s post-release buffer before momentum capture
   lock_breakeven_on_open_trades: true # Move open profitable trades to BE before news
+  block_on_calendar_unavailable: false # If true, blocks new trades when economic calendar cannot be reached
 
   # Post-News Momentum Capture
   post_news_cooldown_seconds: 3      # Wait 3s after release for initial spike

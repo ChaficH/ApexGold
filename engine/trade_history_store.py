@@ -29,6 +29,7 @@ class TradeHistoryStore:
         self._cached_history: Optional[List[Dict[str, Any]]] = None
         self._last_calc_time: float = 0.0
         self._known_tickets: Set[int] = set()
+        self._purged_tickets: Set[int] = set()
         self._cleared_cutoff_time: float = 0.0
 
     async def initialize(self) -> None:
@@ -55,6 +56,15 @@ class TradeHistoryStore:
             self._cleared_cutoff_time = float(row[0]) if row and row[0] else 0.0
 
             cursor.execute("""
+                CREATE TABLE IF NOT EXISTS purged_tickets (
+                    ticket INTEGER PRIMARY KEY,
+                    purged_at REAL NOT NULL
+                );
+            """)
+            cursor.execute("SELECT ticket FROM purged_tickets;")
+            self._purged_tickets = {int(r[0]) for r in cursor.fetchall() if r[0] is not None}
+
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS trade_history (
                     ticket INTEGER PRIMARY KEY,
                     symbol TEXT NOT NULL,
@@ -75,6 +85,19 @@ class TradeHistoryStore:
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_trade_history_close_time 
                 ON trade_history(close_time DESC);
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS audit_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    event_type TEXT NOT NULL,
+                    details TEXT NOT NULL,
+                    timestamp REAL NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp
+                ON audit_log(timestamp DESC);
             """)
             # Auto-purge any duplicate trades on startup
             # Safe deduplication: Only remove duplicate entries sharing the exact same ticket, or merge simulated placeholders
@@ -110,6 +133,8 @@ class TradeHistoryStore:
         """Save a finalized trade to SQLite with duplicate prevention."""
         t_int = int(ticket)
         if t_int in self._known_tickets:
+            return
+        if t_int in self._purged_tickets:
             return
         if float(close_time) <= self._cleared_cutoff_time:
             return
@@ -312,14 +337,34 @@ class TradeHistoryStore:
             self._last_calc_time = now
             return stats
 
-    async def clear_history(self) -> Dict[str, Any]:
+    async def clear_history(self, broker_time: Optional[float] = None) -> Dict[str, Any]:
         """Completely purge all recorded trade history and reset win rate / P&L statistics."""
         now_ts = time.time()
-        self._cleared_cutoff_time = now_ts
         async with self._lock:
             def _delete():
                 with sqlite3.connect(self.db_path) as conn:
                     cursor = conn.cursor()
+                    # 1. Capture all existing tickets and maximum close time in trade_history
+                    cursor.execute("SELECT ticket, close_time FROM trade_history;")
+                    rows = cursor.fetchall()
+                    existing_tickets = [int(r[0]) for r in rows if r[0] is not None]
+                    max_db_close = max([float(r[1]) for r in rows if r[1] is not None] + [0.0])
+
+                    # Calculate effective cutoff covering both local time and MT5 broker clock
+                    b_time = float(broker_time) if broker_time else 0.0
+                    eff_cutoff = max(now_ts, max_db_close + 1.0, b_time + 1.0)
+
+                    # 2. Record all existing tickets into purged_tickets table
+                    cursor.execute("""
+                        CREATE TABLE IF NOT EXISTS purged_tickets (
+                            ticket INTEGER PRIMARY KEY,
+                            purged_at REAL NOT NULL
+                        );
+                    """)
+                    for t in existing_tickets:
+                        cursor.execute("INSERT OR IGNORE INTO purged_tickets (ticket, purged_at) VALUES (?, ?);", (t, eff_cutoff))
+
+                    # 3. Purge trade_history
                     cursor.execute("DELETE FROM trade_history;")
                     cursor.execute("""
                         CREATE TABLE IF NOT EXISTS meta_settings (
@@ -327,15 +372,97 @@ class TradeHistoryStore:
                             value TEXT NOT NULL
                         );
                     """)
-                    cursor.execute("INSERT OR REPLACE INTO meta_settings (key, value) VALUES ('cleared_cutoff_time', ?);", (str(now_ts),))
+                    cursor.execute("INSERT OR REPLACE INTO meta_settings (key, value) VALUES ('cleared_cutoff_time', ?);", (str(eff_cutoff),))
                     conn.commit()
+                    return existing_tickets, eff_cutoff
 
             loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, _delete)
+            deleted_tickets, cutoff = await loop.run_in_executor(None, _delete)
+            self._purged_tickets.update(deleted_tickets)
+            self._cleared_cutoff_time = cutoff
             self._known_tickets.clear()
             self._cached_stats = None
             self._cached_history = None
-            logger.info(f"[TRADE HISTORY CLEARED] All past trade records deleted from SQLite. Cutoff timestamp set to {now_ts}.")
+            logger.info(f"[TRADE HISTORY CLEARED] Purged {len(deleted_tickets)} past tickets. Cutoff set to {cutoff}.")
 
         return await self.get_stats(force_refresh=True)
+
+    async def delete_trade(self, ticket: int) -> bool:
+        """Permanently delete an individual trade by ticket and add to purged set."""
+        t_int = int(ticket)
+        async with self._lock:
+            def _del_one():
+                with sqlite3.connect(self.db_path) as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("DELETE FROM trade_history WHERE ticket = ?;", (t_int,))
+                    cursor.execute("""
+                        CREATE TABLE IF NOT EXISTS purged_tickets (
+                            ticket INTEGER PRIMARY KEY,
+                            purged_at REAL NOT NULL
+                        );
+                    """)
+                    cursor.execute("INSERT OR IGNORE INTO purged_tickets (ticket, purged_at) VALUES (?, ?);", (t_int, time.time()))
+                    conn.commit()
+
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, _del_one)
+            self._purged_tickets.add(t_int)
+            self._known_tickets.discard(t_int)
+            self._cached_stats = None
+            self._cached_history = None
+            logger.info(f"[TRADE DELETED] Ticket #{t_int} deleted from SQLite and permanently purged.")
+        return True
+
+    async def purge_ticket(self, ticket: int) -> None:
+        """Mark a ticket as purged so MT5 cannot ingest it into history."""
+        t_int = int(ticket)
+        self._purged_tickets.add(t_int)
+        self._known_tickets.discard(t_int)
+        loop = asyncio.get_running_loop()
+        def _insert():
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS purged_tickets (
+                        ticket INTEGER PRIMARY KEY,
+                        purged_at REAL NOT NULL
+                    );
+                """)
+                cursor.execute("INSERT OR IGNORE INTO purged_tickets (ticket, purged_at) VALUES (?, ?);", (t_int, time.time()))
+                cursor.execute("DELETE FROM trade_history WHERE ticket = ?;", (t_int,))
+                conn.commit()
+        await loop.run_in_executor(None, _insert)
+
+    async def record_audit_event(self, event_type: str, details: str) -> None:
+        """Persist safety, operational recovery, and emergency action audit log events."""
+        now_ts = time.time()
+        loop = asyncio.get_running_loop()
+
+        def _insert():
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "INSERT INTO audit_log (event_type, details, timestamp) VALUES (?, ?, ?);",
+                    (event_type, details, now_ts),
+                )
+                conn.commit()
+
+        await loop.run_in_executor(None, _insert)
+        logger.info(f"[AUDIT EVENT: {event_type}] {details}")
+
+    async def get_audit_events(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """Retrieve recent persistent audit events."""
+        loop = asyncio.get_running_loop()
+
+        def _fetch():
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT event_type, details, timestamp, created_at FROM audit_log ORDER BY timestamp DESC LIMIT ?;",
+                    (limit,),
+                )
+                return [dict(r) for r in cursor.fetchall()]
+
+        return await loop.run_in_executor(None, _fetch)
 

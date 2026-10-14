@@ -102,9 +102,38 @@ class ConfluenceSignal:
     limit_price: Optional[float] = None
     invalidation_price: Optional[float] = None
     historical_edge: Optional[Dict[str, Any]] = None
+    is_pre_news_trajectory: bool = False
+    pre_news_trajectory_confidence: float = 0.0
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
+
+
+class SignalResult(tuple):
+    """
+    Two-tuple of (buy_signal, sell_signal) supporting tuple unpacking
+    as well as direct property delegation to the primary active signal.
+    """
+    def __new__(cls, buy_signal: Optional[ConfluenceSignal], sell_signal: Optional[ConfluenceSignal]):
+        return super().__new__(cls, (buy_signal, sell_signal))
+
+    @property
+    def buy(self) -> Optional[ConfluenceSignal]:
+        return self[0]
+
+    @property
+    def sell(self) -> Optional[ConfluenceSignal]:
+        return self[1]
+
+    @property
+    def primary(self) -> Optional[ConfluenceSignal]:
+        return self[0] if self[0] is not None else self[1]
+
+    def __getattr__(self, name: str) -> Any:
+        p = self.primary
+        if p is not None and hasattr(p, name):
+            return getattr(p, name)
+        raise AttributeError(f"'SignalResult' object has no attribute '{name}'")
 
 
 class ConfluenceScorer:
@@ -126,6 +155,7 @@ class ConfluenceScorer:
         self.threshold_sniper = threshold_sniper
         self.mode = mode.lower() if mode else "auto_adaptive"
         self.aggressiveness_pct = float(aggressiveness_pct)
+        self.allow_pre_news_trajectory: bool = True
 
         self.tf_trends: Dict[str, str] = {"1H": "NEUTRAL", "15m": "NEUTRAL", "5m": "NEUTRAL", "1m": "NEUTRAL"}
 
@@ -221,13 +251,18 @@ class ConfluenceScorer:
 
     def evaluate_auto_brain(
         self,
-        dfs: Dict[str, pd.DataFrame],
-        current_spread: float,
-        max_spread: float,
-        tick_velocity: float,
-        news_reactor: Any,
+        dfs: Optional[Dict[str, pd.DataFrame]] = None,
+        current_spread: float = 0.25,
+        max_spread: float = 0.80,
+        tick_velocity: float = 1.0,
+        news_reactor: Any = None,
         symbol: str = "XAUUSD",
         now_ts: Optional[float] = None,
+        df_1h: Optional[pd.DataFrame] = None,
+        df_15m: Optional[pd.DataFrame] = None,
+        df_5m: Optional[pd.DataFrame] = None,
+        df_1m: Optional[pd.DataFrame] = None,
+        **kwargs: Any,
     ) -> Dict[str, Any]:
         """
         Sub-Regime Brain Evaluator (polled every 5 seconds).
@@ -238,14 +273,25 @@ class ConfluenceScorer:
         """
         now = now_ts or time.time()
 
+        if dfs is None:
+            dfs = {}
+        if df_1h is not None:
+            dfs["1H"] = df_1h
+        if df_15m is not None:
+            dfs["15m"] = df_15m
+        if df_5m is not None:
+            dfs["5m"] = df_5m
+        if df_1m is not None:
+            dfs["1m"] = df_1m
+
         # Update real-time mathematical directional bias across all 4 timeframes
         self.tf_trends = TechnicalIndicators.get_4tf_trends(dfs)
         self.auto_brain_state["tf_trends"] = self.tf_trends
 
-        # Rate-limit evaluation updates to once every 2.0s to avoid UI jitter
-        if now - self.auto_brain_state.get("last_update", 0.0) < 2.0:
+        # Rate-limit evaluation updates to once every 2.0s to avoid UI jitter (skip if now_ts provided)
+        last_up = self.auto_brain_state.get("last_update", 0.0)
+        if now_ts is None and (now - last_up < 2.0):
             return self.auto_brain_state
-
 
         df_1h = dfs.get("1H")
         df_15m = dfs.get("15m")
@@ -269,26 +315,101 @@ class ConfluenceScorer:
         news_confidence = 0.50
         news_summary = ""
 
+        is_news_freeze = False
         if news_reactor:
-            cal_state = news_reactor.check_calendar_state()
+            cal_state = news_reactor.check_calendar_state(current_utc=now)
+            is_news_freeze = cal_state.get("is_news_freeze", False)
             study = news_reactor.analyze_news_fundamental_bias(symbol)
             news_bias_direction = study.get("direction", "NEUTRAL")
             news_confidence = study.get("confidence", 0.50)
             news_summary = study.get("summary", "")
 
-            if cal_state.get("is_news_freeze", False):
+            if is_news_freeze:
                 is_near_major_news = True
-                ev = cal_state.get("event") or {}
+                ev = cal_state.get("nearest_event") or {}
                 news_name = ev.get("title", "High-Impact USD News")
             else:
                 cd = cal_state.get("countdown_seconds")
                 if cd is not None and cd <= 1200: # Within 20 min
                     is_near_major_news = True
-                    ev = cal_state.get("event") or {}
+                    ev = cal_state.get("nearest_event") or {}
                     news_name = ev.get("title", "Upcoming High-Impact USD News")
 
-        # If news is active, but we have strong fundamental study clarity (confidence >= 70%):
-        # DO NOT freeze! Dial up intelligent News Momentum Study mode!
+        # ----------------------------------------------------------------------
+        # Strict High-Impact News Freeze Gate: HARD LOCK (Cannot be bypassed)
+        # ----------------------------------------------------------------------
+        if is_news_freeze:
+            dial_pct = 10.0
+            threshold = 95
+            reason_str = f"High-Impact News Freeze Active: {news_name} — Entries Strictly Locked"
+            pill_text = f"🛑 NEWS FREEZE: {news_name} | Entries Locked"
+            full_reason = f"High-Impact News Safety Gate — {reason_str}"
+            self.auto_brain_state = {
+                "is_auto": (self.mode == "auto_adaptive"),
+                "sub_regime": "DEFENSIVE_SHIELD",
+                "dial_pct": dial_pct,
+                "active_threshold": threshold,
+                "pill_text": pill_text,
+                "full_reason": full_reason,
+                "reason": reason_str,
+                "target_rr": 2.0,
+                "be_lock_r": 0.6,
+                "stall_exit_seconds": 60.0,
+                "last_update": now,
+                "news_bias": news_bias_direction,
+                "news_confidence": news_confidence,
+                "is_news_freeze": True,
+            }
+            return self.auto_brain_state
+
+        # ----------------------------------------------------------------------
+        # Smart Pre-News Trajectory Window (Zone A: T-45m to T-90s)
+        # Allows automated front-running entries if confidence >= 75%
+        # ----------------------------------------------------------------------
+        traj_data = {}
+        if news_reactor and hasattr(news_reactor, "evaluate_pre_news_trajectory"):
+            traj_data = news_reactor.evaluate_pre_news_trajectory(
+                symbol=symbol,
+                dfs={"15m": df_15m, "5m": df_5m, "1m": df_1m, "1H": df_1h},
+                tick_velocity=tick_velocity,
+                current_utc=now,
+            )
+
+        traj_active = traj_data.get("active", False)
+        traj_conf = traj_data.get("confidence", 0.0)
+        traj_bias = traj_data.get("trajectory_bias", "NEUTRAL")
+
+        if self.allow_pre_news_trajectory and traj_active and traj_conf >= 0.75 and traj_bias in ("BUY", "SELL") and not is_wide_spread:
+            dial_pct = 78.0
+            threshold = 63
+            ev_title = traj_data.get("event_title", news_name)
+            fund_bias = traj_data.get("fundamental_bias", "NEUTRAL")
+            reason_str = f"🎯 PRE_NEWS_TRAJECTORY: {traj_bias} on {ev_title} (Confidence {traj_data.get('confidence_pct', 78)}% | Fund: {fund_bias})"
+            pill_text = f"🎯 PRE_NEWS_TRAJECTORY: {traj_bias} ({traj_data.get('confidence_pct', 78)}%) | Min: {threshold}"
+            full_reason = f"Pre-News Trajectory Engine — {reason_str} | Threshold: {threshold}/100"
+            self.auto_brain_state = {
+                "is_auto": (self.mode == "auto_adaptive"),
+                "sub_regime": "PRE_NEWS_TRAJECTORY",
+                "dial_pct": dial_pct,
+                "active_threshold": threshold,
+                "pill_text": pill_text,
+                "full_reason": full_reason,
+                "reason": reason_str,
+                "target_rr": 3.5,
+                "be_lock_r": 0.40,
+                "stall_exit_seconds": 60.0,
+                "last_update": now,
+                "news_bias": traj_bias,
+                "news_confidence": traj_conf,
+                "is_news_freeze": False,
+                "is_pre_news_trajectory": True,
+                "trajectory_bias": traj_bias,
+                "trajectory_data": traj_data,
+            }
+            return self.auto_brain_state
+
+        # If news is approaching (outside freeze) and we have strong fundamental clarity (confidence >= 70%):
+        # Dial up intelligent News Momentum Study mode!
         if is_near_major_news and news_confidence >= 0.70 and news_bias_direction in ["BUY", "SELL"] and not is_wide_spread:
             dial_pct = 76.0
             threshold = 64
@@ -309,6 +430,7 @@ class ConfluenceScorer:
                 "last_update": now,
                 "news_bias": news_bias_direction,
                 "news_confidence": news_confidence,
+                "is_news_freeze": False,
             }
             return self.auto_brain_state
 
@@ -369,10 +491,21 @@ class ConfluenceScorer:
             h1_aligned = (abs(slope) > 0.05) or (c_1h[-1] > ema50 if slope > 0 else c_1h[-1] < ema50)
 
             swings_1h = TechnicalIndicators.find_swings(df_1h["high"].values, df_1h["low"].values, window=3)
-            # Estimate room to run
-            if swings_1h["highs"] and swings_1h["lows"]:
-                recent_range = max(df_1h["high"].values[-5:]) - min(df_1h["low"].values[-5:])
-                h1_open_room = recent_range >= 2.5
+            # 1H Structural Wall Check: distance to nearest opposing 1H swing high/low >= 1.8 * ATR_15m
+            atr_15m_ref = 2.50
+            if df_15m is not None and len(df_15m) >= 15:
+                calc_atr = TechnicalIndicators.atr(df_15m["high"].values, df_15m["low"].values, df_15m["close"].values, 14)[-1]
+                if not np.isnan(calc_atr) and calc_atr > 0:
+                    atr_15m_ref = float(calc_atr)
+            required_room = 1.8 * atr_15m_ref
+            cur_p = c_1h[-1]
+
+            if slope >= 0:
+                opposing_highs = [sh["price"] for sh in swings_1h.get("highs", []) if sh["price"] > cur_p]
+                h1_open_room = (min(opposing_highs) - cur_p >= required_room) if opposing_highs else True
+            else:
+                opposing_lows = [sl["price"] for sl in swings_1h.get("lows", []) if sl["price"] < cur_p]
+                h1_open_room = (cur_p - max(opposing_lows) >= required_room) if opposing_lows else True
 
         # ----------------------------------------------------------------------
         # Sub-Regime 2: Institutional Wave Runner (55%-68% Aggressiveness)
@@ -429,17 +562,43 @@ class ConfluenceScorer:
     def evaluate(
         self,
         symbol: str,
-        dfs: Dict[str, pd.DataFrame],
-        current_tick_bid: float,
-        current_tick_ask: float,
+        dfs: Optional[Dict[str, pd.DataFrame]] = None,
+        current_tick_bid: Optional[float] = None,
+        current_tick_ask: Optional[float] = None,
         is_impulse_active: bool = False,
         utc_timestamp: Optional[float] = None,
-    ) -> Tuple[Optional[ConfluenceSignal], Optional[ConfluenceSignal]]:
+        df_1h: Optional[pd.DataFrame] = None,
+        df_15m: Optional[pd.DataFrame] = None,
+        df_5m: Optional[pd.DataFrame] = None,
+        df_1m: Optional[pd.DataFrame] = None,
+        tick_velocity: Optional[float] = None,
+        **kwargs: Any,
+    ) -> SignalResult:
         """
         Evaluate market data for both BUY and SELL directions.
-        Returns (buy_signal, sell_signal).
+        Returns SignalResult(buy_signal, sell_signal).
         """
         now_ts = utc_timestamp or time.time()
+
+        if dfs is None:
+            dfs = {}
+        if df_1h is not None:
+            dfs["1H"] = df_1h
+        if df_15m is not None:
+            dfs["15m"] = df_15m
+        if df_5m is not None:
+            dfs["5m"] = df_5m
+        if df_1m is not None:
+            dfs["1m"] = df_1m
+
+        if current_tick_bid is None:
+            ref_df = dfs.get("1m") if dfs.get("1m") is not None else (dfs.get("5m") if dfs.get("5m") is not None else dfs.get("15m"))
+            if ref_df is not None and not ref_df.empty:
+                current_tick_bid = float(ref_df["close"].iloc[-1])
+            else:
+                current_tick_bid = 2650.0
+        if current_tick_ask is None:
+            current_tick_ask = round(current_tick_bid + 0.25, 2)
 
         buy_signal = self._evaluate_direction(
             symbol=symbol,
@@ -459,7 +618,7 @@ class ConfluenceScorer:
             utc_timestamp=now_ts,
         )
 
-        return buy_signal, sell_signal
+        return SignalResult(buy_signal, sell_signal)
 
     def _evaluate_direction(
         self,
@@ -479,14 +638,24 @@ class ConfluenceScorer:
         if df_5m is None or len(df_5m) < 20 or df_1m is None or len(df_1m) < 10:
             return None
 
+        # Hard Gate: Strictly block new trade evaluations during active high-impact news freeze
+        if self.auto_brain_state.get("is_news_freeze", False):
+            logger.debug(f"[{symbol} {direction}] Blocked: High-impact news freeze is active.")
+            return None
+
         is_gold = any(k in symbol.upper() for k in ["XAU", "GOLD"])
 
         # =============================================================
-        # 0. INSTITUTIONAL SUPPLY & DEMAND ZONE ENGINE
+        # 0. INSTITUTIONAL SUPPLY & DEMAND ZONE + LIQUIDITY TRAP ENGINE
         # =============================================================
         zones = TechnicalIndicators.detect_supply_demand_zones(
             df_5m=df_5m,
             df_15m=df_15m,
+            current_price=current_price,
+            is_gold=is_gold
+        )
+        traps = TechnicalIndicators.detect_liquidity_traps(
+            df_5m=df_5m,
             current_price=current_price,
             is_gold=is_gold
         )
@@ -501,25 +670,31 @@ class ConfluenceScorer:
         is_red_1m = (c_1m[-1] < o_1m[-1])
         is_star_1m = (h_1m[-1] - c_1m[-1]) > 1.8 * max(0.05, abs(c_1m[-1] - o_1m[-1]))
 
-        # High-probability Zone Reversals at Range Extremes
+        # High-probability Zone Reversals at Range Extremes (including verified bear/bull traps)
         is_demand_reversal = (
             direction == "BUY" and
-            zones.get("in_demand_zone", False) and
-            (zones.get("liquidity_sweep_bull", False) or is_green_1m or is_hammer_1m)
+            (zones.get("in_demand_zone", False) or traps.get("is_bear_trap", False)) and
+            (zones.get("liquidity_sweep_bull", False) or traps.get("is_bear_trap", False) or is_green_1m or is_hammer_1m)
         )
         is_supply_reversal = (
             direction == "SELL" and
-            zones.get("in_supply_zone", False) and
-            (zones.get("liquidity_sweep_bear", False) or is_red_1m or is_star_1m)
+            (zones.get("in_supply_zone", False) or traps.get("is_bull_trap", False)) and
+            (zones.get("liquidity_sweep_bear", False) or traps.get("is_bull_trap", False) or is_red_1m or is_star_1m)
         )
         is_zone_reversal = is_demand_reversal or is_supply_reversal
 
         # STRICT INSTITUTIONAL ZONE BOUND PROTECTION:
         # Never sell into a Demand/Support Zone, never buy into a Supply/Resistance Zone!
-        if direction == "SELL" and zones.get("in_demand_zone", False):
+        # (Exception: High-confidence Zone A Pre-News Trajectory or post-news impulse momentum)
+        is_pre_news_aligned = (
+            self.auto_brain_state.get("sub_regime") == "PRE_NEWS_TRAJECTORY" and
+            self.auto_brain_state.get("trajectory_bias") == direction and
+            self.auto_brain_state.get("is_pre_news_trajectory", False)
+        )
+        if direction == "SELL" and zones.get("in_demand_zone", False) and not traps.get("is_bull_trap", False) and not is_pre_news_aligned and not is_impulse_active:
             logger.debug(f"[{symbol} SELL] BLOCKED: Inside Demand Zone ({zones['demand_floor']:.2f} - {zones['demand_ceiling']:.2f}). No selling into support floor!")
             return None
-        if direction == "BUY" and zones.get("in_supply_zone", False):
+        if direction == "BUY" and zones.get("in_supply_zone", False) and not traps.get("is_bear_trap", False) and not is_pre_news_aligned and not is_impulse_active:
             logger.debug(f"[{symbol} BUY] BLOCKED: Inside Supply Zone ({zones['supply_floor']:.2f} - {zones['supply_ceiling']:.2f}). No buying into ceiling!")
             return None
 
@@ -556,7 +731,7 @@ class ConfluenceScorer:
 
         # 3. Stochastic RSI Momentum Exhaustion Gate (ta.momentum.StochRSIIndicator)
         stoch_5m = TechnicalIndicators.calculate_stoch_rsi(df_5m["close"])
-        if stoch_5m.get("valid") and not is_impulse_active:
+        if stoch_5m.get("valid") and not is_impulse_active and not is_pre_news_aligned:
             if direction == "BUY" and stoch_5m.get("is_overbought"):
                 logger.debug(f"[{symbol} BUY] Blocked: 5m StochRSI Overbought (K={stoch_5m.get('k'):.1f} > 80).")
                 return None
@@ -575,6 +750,16 @@ class ConfluenceScorer:
                 logger.debug(f"[{symbol} SELL] Blocked: 1m candle is green without shooting star rejection.")
                 return None
 
+        # 5. Institutional Liquidity Trap & False Breakout Gate
+        # Strictly prevent buying the top of a bull trap or selling the bottom of a bear trap
+        if traps.get("valid"):
+            if direction == "BUY" and traps.get("is_bull_trap"):
+                logger.debug(f"[{symbol} BUY] Blocked: Active Bull Trap / Liquidity Sweep top ({traps.get('trap_reason')}).")
+                return None
+            if direction == "SELL" and traps.get("is_bear_trap"):
+                logger.debug(f"[{symbol} SELL] Blocked: Active Bear Trap / Liquidity Sweep bottom ({traps.get('trap_reason')}).")
+                return None
+
         breakdown = {
             "h1_macro": 0,
             "m15_wave": 0,
@@ -582,6 +767,7 @@ class ConfluenceScorer:
             "m1_trigger": 0,
             "smc_institutional": 0,
             "quant_alpha": 0,
+            "market_structure": 0,
         }
         reasons: List[str] = []
 
@@ -621,8 +807,13 @@ class ConfluenceScorer:
                     reasons.append("1H EMA50 Resistance Reject (+8)")
 
             swings_1h = TechnicalIndicators.find_swings(h_1h, l_1h, window=3)
-            atr_1h = TechnicalIndicators.atr(h_1h, l_1h, c_1h, period=14)[-1]
-            est_target_dist = (atr_1h * 1.5) if not np.isnan(atr_1h) and atr_1h > 0 else 3.0
+            # 1H Structural Wall Check distance: 1.8 * ATR_15m
+            atr_15m_ref = 2.50
+            if df_15m is not None and len(df_15m) >= 15:
+                calc_atr = TechnicalIndicators.atr(df_15m["high"].values, df_15m["low"].values, df_15m["close"].values, 14)[-1]
+                if not np.isnan(calc_atr) and calc_atr > 0:
+                    atr_15m_ref = float(calc_atr)
+            est_target_dist = 1.8 * atr_15m_ref
 
             h1_room_to_run = TechnicalIndicators.check_room_to_run(
                 entry_price=current_price,
@@ -729,8 +920,8 @@ class ConfluenceScorer:
 
         # Setup Type B: Consolidation Box Breakout (Only in open room, never breaking into boundary walls!)
         if breakdown["m5_setup"] < 30 and len(df_5m) >= 12:
-            recent_high = np.max(h_5m[-10:-1])
-            recent_low = np.min(l_5m[-10:-1])
+            recent_high = np.max(h_5m[-11:-1])
+            recent_low = np.min(l_5m[-11:-1])
 
             dt = datetime.fromtimestamp(utc_timestamp, tz=timezone.utc)
             hour = dt.hour + (dt.minute / 60.0)
@@ -747,13 +938,15 @@ class ConfluenceScorer:
 
         # Setup Type D: Institutional Demand / Supply Zone Reversal & Liquidity Sweep
         if is_demand_reversal:
-            pts = 32 if zones.get("liquidity_sweep_bull") else 28
+            pts = 35 if (zones.get("liquidity_sweep_bull") or traps.get("is_bear_trap")) else 28
             breakdown["m5_setup"] = max(breakdown["m5_setup"], pts)
-            reasons.append(f"Institutional Demand Zone Bounce / Liquidity Sweep ({zones['demand_floor']:.2f}) (+{pts})")
+            trap_extra = f" / Bear Trap Sweep ({traps.get('trap_reason')})" if traps.get("is_bear_trap") else ""
+            reasons.append(f"Institutional Demand Zone Bounce / Liquidity Sweep ({zones['demand_floor']:.2f}){trap_extra} (+{pts})")
         elif is_supply_reversal:
-            pts = 32 if zones.get("liquidity_sweep_bear") else 28
+            pts = 35 if (zones.get("liquidity_sweep_bear") or traps.get("is_bull_trap")) else 28
             breakdown["m5_setup"] = max(breakdown["m5_setup"], pts)
-            reasons.append(f"Institutional Supply Zone Reject / Liquidity Sweep ({zones['supply_ceiling']:.2f}) (+{pts})")
+            trap_extra = f" / Bull Trap Sweep ({traps.get('trap_reason')})" if traps.get("is_bull_trap") else ""
+            reasons.append(f"Institutional Supply Zone Reject / Liquidity Sweep ({zones['supply_ceiling']:.2f}){trap_extra} (+{pts})")
 
         # Setup Type C: Strong Trend Momentum Continuation
         if breakdown["m5_setup"] < 20:
@@ -942,6 +1135,19 @@ class ConfluenceScorer:
                 quant_pts += 4
                 reasons.append(f"5m StochRSI Bullish Cross ({stoch_5m.get('k', 50):.1f}/{stoch_5m.get('d', 50):.1f}) (+4)")
 
+            # 6. Dreiss Choppiness Index (Freqtrade standard)
+            ci_5m = TechnicalIndicators.calculate_choppiness_index(df_5m["high"], df_5m["low"], df_5m["close"], period=14)
+            if ci_5m.get("valid"):
+                if ci_5m.get("is_trending"):
+                    quant_pts += 6
+                    reasons.append(f"Choppiness Index Trending (CI {ci_5m['ci']:.1f} < 40) (+6)")
+                elif ci_5m.get("is_choppy"):
+                    if not is_zone_reversal:
+                        quant_pts -= 6
+                        reasons.append(f"Choppiness Index Chop Warning (CI {ci_5m['ci']:.1f} >= 60) (-6 Penalty)")
+                    else:
+                        reasons.append(f"Choppiness Index Range Box (CI {ci_5m['ci']:.1f}) (Neutral)")
+
         else: # SELL
             # 1. VWAP Confirmation
             if vwap_data.get("is_below"):
@@ -980,7 +1186,55 @@ class ConfluenceScorer:
                 quant_pts += 4
                 reasons.append(f"5m StochRSI Bearish Cross ({stoch_5m.get('k', 50):.1f}/{stoch_5m.get('d', 50):.1f}) (+4)")
 
+            # 6. Dreiss Choppiness Index (Freqtrade standard)
+            ci_5m = TechnicalIndicators.calculate_choppiness_index(df_5m["high"], df_5m["low"], df_5m["close"], period=14)
+            if ci_5m.get("valid"):
+                if ci_5m.get("is_trending"):
+                    quant_pts += 6
+                    reasons.append(f"Choppiness Index Trending (CI {ci_5m['ci']:.1f} < 40) (+6)")
+                elif ci_5m.get("is_choppy"):
+                    if not is_zone_reversal:
+                        quant_pts -= 6
+                        reasons.append(f"Choppiness Index Chop Warning (CI {ci_5m['ci']:.1f} >= 60) (-6 Penalty)")
+                    else:
+                        reasons.append(f"Choppiness Index Range Box (CI {ci_5m['ci']:.1f}) (Neutral)")
+
         breakdown["quant_alpha"] = min(20, max(-15, quant_pts))
+
+        # -------------------------------------------------------------
+        # 4d. Market Structure (HH/HL/LH/LL, BOS, CHoCH)
+        # -------------------------------------------------------------
+        struct_5m = TechnicalIndicators.detect_market_structure(df_5m["high"], df_5m["low"], df_5m["close"], window=3)
+        ms_pts = 0
+        if struct_5m.get("valid"):
+            if direction == "BUY":
+                if struct_5m.get("is_bullish"):
+                    ms_pts += 8
+                    reasons.append("5m Bullish Market Structure HH/HL (+8)")
+                if struct_5m.get("bos_bull"):
+                    ms_pts += 6
+                    reasons.append("5m Bullish BOS Continuation (+6)")
+                if struct_5m.get("choch_bull"):
+                    ms_pts += 8
+                    reasons.append("5m Bullish CHoCH Reversal (+8)")
+                if struct_5m.get("is_bearish") and not is_zone_reversal:
+                    ms_pts -= 8
+                    reasons.append("5m Opposing Bearish Structure LH/LL (-8)")
+            else: # SELL
+                if struct_5m.get("is_bearish"):
+                    ms_pts += 8
+                    reasons.append("5m Bearish Market Structure LH/LL (+8)")
+                if struct_5m.get("bos_bear"):
+                    ms_pts += 6
+                    reasons.append("5m Bearish BOS Continuation (+6)")
+                if struct_5m.get("choch_bear"):
+                    ms_pts += 8
+                    reasons.append("5m Bearish CHoCH Reversal (+8)")
+                if struct_5m.get("is_bullish") and not is_zone_reversal:
+                    ms_pts -= 8
+                    reasons.append("5m Opposing Bullish Structure HH/HL (-8)")
+
+        breakdown["market_structure"] = min(20, max(-12, ms_pts))
 
         # Fundamental News Study Integration
         news_bias = self.auto_brain_state.get("news_bias")
@@ -991,6 +1245,18 @@ class ConfluenceScorer:
             else:
                 breakdown["news_bias"] = -20
                 reasons.append("Opposing Fundamental News Bias (-20)")
+
+        # Smart Pre-News Trajectory Integration (Zone A)
+        sub_regime_active = self.auto_brain_state.get("sub_regime")
+        traj_bias_active = self.auto_brain_state.get("trajectory_bias")
+        is_pre_news_active = self.auto_brain_state.get("is_pre_news_trajectory", False)
+        if sub_regime_active == "PRE_NEWS_TRAJECTORY" and traj_bias_active in ("BUY", "SELL"):
+            if traj_bias_active == direction:
+                breakdown["pre_news_trajectory"] = 12
+                reasons.append("🎯 Pre-News Trajectory Alignment Boost (+12)")
+            else:
+                breakdown["pre_news_trajectory"] = -25
+                reasons.append("Counter Pre-News Trajectory Penalty (-25)")
 
         # -------------------------------------------------------------
         # Institutional Multi-Timeframe Trend Confluence Filter
@@ -1136,7 +1402,8 @@ class ConfluenceScorer:
                 calc_tp = min(calc_tp, zones["mid_range"])
             suggested_tp = round(calc_tp, 2 if is_gold else 5)
 
-        full_reason = f"{tier} ({total_score}/100) -> [{sub_regime}] {regime} | " + ", ".join(reasons)
+        prefix = "🎯 PRE_NEWS_TRAJECTORY " if is_pre_news_active else ""
+        full_reason = f"{prefix}{tier} ({total_score}/100) -> [{sub_regime}] {regime} | " + ", ".join(reasons)
 
         return ConfluenceSignal(
             symbol=symbol,
@@ -1158,4 +1425,6 @@ class ConfluenceScorer:
             order_type=order_type,
             limit_price=limit_price,
             invalidation_price=invalidation_price,
+            is_pre_news_trajectory=is_pre_news_active,
+            pre_news_trajectory_confidence=float(self.auto_brain_state.get("news_confidence", 0.0)) if is_pre_news_active else 0.0,
         )

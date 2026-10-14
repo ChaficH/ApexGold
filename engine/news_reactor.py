@@ -142,22 +142,31 @@ class NewsReactor:
     def __init__(
         self,
         enabled: bool = True,
-        pre_news_freeze_seconds: int = 180,
+        pre_news_freeze_seconds: int = 90,
         post_news_momentum_window_sec: int = 300,
         post_news_cooldown_seconds: int = 3,
         max_spread_multiplier: float = 2.5,
         tick_velocity_window_ms: int = 800,
         impulse_tick_density_mult: float = 3.0,
         tracked_currencies: Optional[List[str]] = None,
+        block_on_calendar_unavailable: bool = False,
+        post_news_freeze_seconds: int = 15,
     ):
         self.enabled = enabled
         self.pre_news_freeze_seconds = pre_news_freeze_seconds
+        self.post_news_freeze_seconds = post_news_freeze_seconds
         self.post_news_momentum_window_sec = post_news_momentum_window_sec
         self.post_news_cooldown_seconds = post_news_cooldown_seconds
         self.max_spread_multiplier = max_spread_multiplier
         self.tick_velocity_window_ms = tick_velocity_window_ms
         self.impulse_tick_density_mult = impulse_tick_density_mult
         self.tracked_currencies = tracked_currencies or ["USD", "XAU", "EUR", "GBP"]
+        self.block_on_calendar_unavailable = block_on_calendar_unavailable
+
+        # Calendar and feed availability
+        self._is_calendar_available: bool = False
+        self.calendar_status: str = "INITIALIZING"
+        self.headlines_status: str = "INITIALIZING"
 
         # Timezone Setup
         self.iana_tz_name, self.local_tz, self.utc_offset_str = detect_system_timezone()
@@ -292,13 +301,19 @@ class NewsReactor:
                         raw_data = await resp.json()
                         self._parse_full_calendar(raw_data)
                         self._last_calendar_fetch = time.time()
+                        self._is_calendar_available = True
+                        self.calendar_status = "AVAILABLE"
                         logger.info(f"Loaded {len(self._all_events)} events ({len(self._major_events)} Major) into NewsReactor.")
                         return
+                    else:
+                        logger.warning(f"ForexFactory calendar endpoint returned HTTP {resp.status}.")
         except Exception as e:
-            logger.warning(f"Could not load live economic calendar ({e}). Using robust fallback schedule.")
+            logger.warning(f"Could not load live economic calendar ({e}). Feed marked UNAVAILABLE. Fake schedule generation is disabled.")
 
-        if not self._all_events:
-            self._populate_fallback_calendar()
+        self._is_calendar_available = False
+        self.calendar_status = "UNAVAILABLE"
+        self._all_events = []
+        self._major_events = []
 
     def _parse_full_calendar(self, raw_events: List[Dict[str, Any]]) -> None:
         """Parse raw calendar items into timezone-converted CalendarEvent objects."""
@@ -486,9 +501,10 @@ class NewsReactor:
         for item in reversed(new_items):
             self._headlines.appendleft(item)
 
-        # Seed realistic live market headlines if offline or feeds empty
-        if not self._headlines:
-            self._seed_fallback_headlines()
+        if self._headlines:
+            self.headlines_status = "AVAILABLE"
+        else:
+            self.headlines_status = "UNAVAILABLE"
 
     def score_gold_sentiment(self, text: str) -> Tuple[str, str]:
         """
@@ -530,16 +546,17 @@ class NewsReactor:
                 sentiment_badge=badge,
             ))
 
-    def get_complete_news_state(self) -> Dict[str, Any]:
+    def get_complete_news_state(self, current_utc: Optional[float] = None) -> Dict[str, Any]:
         """
         Generate complete real-time payload:
         1. Local Timezone info & Market Sessions
-        2. 'Happening Right Now' Active Alert (T-2m to T+15m)
+        2. 'Happening Right Now' Active Alert (T-freeze to T+cooldown)
         3. Hero Next Major News Countdown
         4. Full Timeline Table (Major + Minor)
         5. Breaking Live Headlines Stream with Gold Sentiment
+        6. Explicit Calendar Availability Status
         """
-        now = time.time()
+        now = current_utc if current_utc is not None else time.time()
         session_info = self.get_market_session_status()
 
         # Update dynamic relative times and status on all events
@@ -557,30 +574,36 @@ class NewsReactor:
                 m = int((diff % 3600) // 60)
                 ev.relative_time = f"in {h:02d}h {m:02d}m" if h > 0 else f"in {m}m"
 
-        # 1. State Machine: HAPPENING RIGHT NOW (Within T-2m to T+15m)
+        # 1. State Machine & High-Impact Freeze Detection
         happening_now_event: Optional[Dict[str, Any]] = None
-        happening_mode = "NONE" # "PRE_NEWS_SHIELD", "POST_NEWS_MOMENTUM", "COOLING"
+        happening_mode = "NONE" # "PRE_NEWS_SHIELD_LOCK", "POST_NEWS_FREEZE_LOCK", "POST_NEWS_MOMENTUM_CAPTURE", "NONE"
+        is_news_freeze = False
 
         for ev in self._all_events:
             diff = ev.timestamp_utc - now # positive = future, negative = past
-            if -900 <= diff <= 120: # -15m to +2m
+            if ev.impact == "HIGH":
+                # Strict freeze window before and after high-impact events
+                if -self.post_news_freeze_seconds <= diff <= self.pre_news_freeze_seconds:
+                    is_news_freeze = True
+                    happening_now_event = ev.to_dict()
+                    if diff >= 0:
+                        happening_mode = "PRE_NEWS_SHIELD_LOCK"
+                    elif -self.post_news_cooldown_seconds <= diff < 0:
+                        happening_mode = "WHIPSAW_SPIKE_COOLING"
+                    else:
+                        happening_mode = "POST_NEWS_FREEZE_LOCK"
+                    break
+            elif -900 <= diff <= 120:
                 happening_now_event = ev.to_dict()
-                if 0 <= diff <= 120:
-                    happening_mode = "PRE_NEWS_SHIELD_LOCK"
-                elif -self.post_news_cooldown_seconds <= diff < 0:
-                    happening_mode = "WHIPSAW_SPIKE_COOLING"
-                elif -self.post_news_momentum_window_sec <= diff < -self.post_news_cooldown_seconds:
-                    happening_mode = "POST_NEWS_MOMENTUM_CAPTURE"
-                else:
-                    happening_mode = "POST_RELEASE_SETTLING"
-                break
+                happening_mode = "POST_RELEASE_SETTLING"
 
         # 2. Hero Next Major News Countdown
         next_major_event: Optional[Dict[str, Any]] = None
         countdown_seconds: Optional[int] = None
         countdown_formatted = "None Scheduled"
 
-        for ev in self._major_events:
+        major_events_list = self._major_events if self._major_events else [e for e in self._all_events if e.impact == "HIGH"]
+        for ev in major_events_list:
             diff = ev.timestamp_utc - now
             if diff > 0:
                 next_major_event = ev.to_dict()
@@ -609,6 +632,9 @@ class NewsReactor:
 
         return {
             "timezone": session_info,
+            "calendar_status": self.calendar_status,
+            "is_calendar_available": self._is_calendar_available,
+            "headlines_status": self.headlines_status,
             "happening_now": {
                 "active": happening_now_event is not None,
                 "event": happening_now_event,
@@ -621,12 +647,12 @@ class NewsReactor:
             },
             "timeline": timeline,
             "headlines": headlines_list,
-            "is_news_freeze": (happening_mode in ["PRE_NEWS_SHIELD_LOCK", "WHIPSAW_SPIKE_COOLING"]),
+            "is_news_freeze": is_news_freeze,
         }
 
     def check_calendar_state(self, current_utc: Optional[float] = None) -> Dict[str, Any]:
         """Backward-compatible fast calendar state check for trading loop."""
-        state = self.get_complete_news_state()
+        state = self.get_complete_news_state(current_utc=current_utc)
         happening = state.get("happening_now", {})
         next_maj = state.get("next_major_news", {})
         
@@ -639,12 +665,14 @@ class NewsReactor:
         msg = "Normal Market Flow"
         if is_freeze:
             ev_title = nearest_ev.get("title", "High-Impact Release") if nearest_ev else "Release"
-            msg = f"[PRE-NEWS SHIELD] '{ev_title}' active! Entries locked."
+            msg = f"[HIGH-IMPACT NEWS FREEZE] '{ev_title}' active! Entries locked."
         elif is_momentum:
             ev_title = nearest_ev.get("title", "Release") if nearest_ev else "Release"
             msg = f"[POST-NEWS MOMENTUM] Sniping institutional wave on '{ev_title}'."
         elif nearest_ev:
             msg = f"Next: {nearest_ev.get('title')} ({nearest_ev.get('currency')}) in {next_maj.get('countdown_formatted')}"
+        elif not self._is_calendar_available:
+            msg = "Economic calendar feed unavailable."
 
         return {
             "is_news_freeze": is_freeze,
@@ -653,6 +681,8 @@ class NewsReactor:
             "nearest_event": nearest_ev,
             "countdown_seconds": cd,
             "message": msg,
+            "calendar_status": self.calendar_status,
+            "is_calendar_available": self._is_calendar_available,
         }
 
     def on_tick(self, tick: Tick, atr_15m: float = 2.50) -> Dict[str, Any]:
@@ -705,13 +735,257 @@ class NewsReactor:
 
     def _parse_economic_num(self, val_str: str) -> Optional[float]:
         """Safely parse numbers with units like %, K, M, B from calendar strings."""
-        if not val_str or val_str.strip() in ["-", "", "None"]:
+        if not val_str or str(val_str).strip() in ["-", "", "None"]:
             return None
-        cleaned = re.sub(r"[^\d\.\-+]", "", val_str.strip())
+        s = str(val_str).strip()
+        mult = 1.0
+        if s.endswith("%"):
+            mult = 1.0
+        elif s.upper().endswith("K"):
+            mult = 1e3
+        elif s.upper().endswith("M"):
+            mult = 1e6
+        elif s.upper().endswith("B"):
+            mult = 1e9
+        cleaned = re.sub(r"[^\d\.\-+]", "", s)
         try:
-            return float(cleaned)
+            return float(cleaned) * mult
         except ValueError:
             return None
+
+    def determine_fundamental_forecast_bias(self, event: CalendarEvent) -> Tuple[str, str]:
+        """
+        Determine fundamental forecast bias for Gold (XAUUSD) based on Forecast vs. Previous:
+        - For standard USD strength/inflation metrics (CPI, Core CPI, PPI, NFP, ADP, GDP, Retail Sales, ISM, PMI, Fed Rate, JOLTS):
+          * Forecast < Previous (Cooling USD / Dovish) -> BULLISH_GOLD
+          * Forecast > Previous (Hotter USD / Hawkish) -> BEARISH_GOLD
+        - For inverse USD metrics (Unemployment Rate, Initial Jobless Claims):
+          * Forecast > Previous (Weakening Labor) -> BULLISH_GOLD
+          * Forecast < Previous (Tightening Labor) -> BEARISH_GOLD
+        """
+        fcast_num = self._parse_economic_num(event.forecast)
+        prev_num = self._parse_economic_num(event.previous)
+        t_lower = event.title.lower()
+
+        if fcast_num is None or prev_num is None:
+            return "NEUTRAL", f"No forecast/previous numbers available for '{event.title}'"
+
+        diff = fcast_num - prev_num
+
+        # Check inverse USD metrics first
+        inverse_metrics = [
+            "unemployment rate",
+            "jobless claims",
+            "initial claims",
+            "continuing claims",
+            "unemployment claims",
+            "claims",
+        ]
+        is_inverse = any(k in t_lower for k in inverse_metrics)
+
+        # Standard USD metrics
+        standard_metrics = [
+            "cpi", "core cpi", "ppi", "nfp", "non-farm", "payrolls",
+            "adp", "gdp", "retail sales", "ism", "pmi", "fed rate",
+            "interest rate", "jolts", "employment change",
+        ]
+        is_standard = any(k in t_lower for k in standard_metrics)
+
+        if is_inverse:
+            if diff > 0:
+                return "BULLISH_GOLD", f"Weakening Labor: Forecast {event.forecast} > Previous {event.previous} -> Bullish Gold"
+            elif diff < 0:
+                return "BEARISH_GOLD", f"Tightening Labor: Forecast {event.forecast} < Previous {event.previous} -> Bearish Gold"
+            return "NEUTRAL", f"Forecast {event.forecast} matches Previous {event.previous}"
+
+        if is_standard or True:
+            # Default to standard USD strength logic if non-inverse
+            if diff < 0:
+                return "BULLISH_GOLD", f"Cooling USD: Forecast {event.forecast} < Previous {event.previous} -> Bullish Gold"
+            elif diff > 0:
+                return "BEARISH_GOLD", f"Hotter USD: Forecast {event.forecast} > Previous {event.previous} -> Bearish Gold"
+            return "NEUTRAL", f"Forecast {event.forecast} matches Previous {event.previous}"
+
+    def evaluate_pre_news_trajectory(
+        self,
+        symbol: str = "XAUUSD",
+        dfs: Optional[Dict[str, Any]] = None,
+        tick_velocity: float = 0.0,
+        current_utc: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """
+        Smart Pre-News Trajectory & Drift Analyzer (T-45m to T-90s window).
+        Combines:
+        1. 40% Weight — Institutional Order-Flow Drift: 15m, 5m, 1m price action + EMA slopes.
+        2. 30% Weight — Tick Accumulation & Volume: tick velocity and candle body expansion (> 60% of range).
+        3. 30% Weight — Fundamental Forecast Agreement: technical drift matches fundamental bias.
+        """
+        now = current_utc if current_utc is not None else time.time()
+        upcoming_events = [
+            ev for ev in self._all_events
+            if 0 < (ev.timestamp_utc - now) <= 2700  # within 45 minutes
+            and ev.impact in ("HIGH", "MEDIUM")
+            and ev.currency in ("USD", "XAU")
+        ]
+
+        if not upcoming_events:
+            return {
+                "active": False,
+                "confidence": 0.0,
+                "confidence_pct": 0,
+                "trajectory_bias": "NEUTRAL",
+                "drift_direction": "NONE",
+                "fundamental_bias": "NEUTRAL",
+                "event": None,
+                "seconds_to_event": 0,
+                "reasons": ["No upcoming High/Medium USD/Gold news release within 45 minutes"],
+            }
+
+        nearest_ev = min(upcoming_events, key=lambda x: x.timestamp_utc)
+        seconds_to_event = int(nearest_ev.timestamp_utc - now)
+
+        # 1. Fundamental Forecast Bias
+        fundamental_bias, fund_reason = self.determine_fundamental_forecast_bias(nearest_ev)
+
+        # 2. 40% Weight — Institutional Order-Flow Drift (15m, 5m, 1m)
+        order_flow_pts = 10
+        drift_direction = "NEUTRAL"
+        timeframe_signals = {}
+
+        if dfs:
+            from engine.indicators import TechnicalIndicators
+            tf_votes = []
+            for tf in ["15m", "5m", "1m"]:
+                df = dfs.get(tf)
+                if df is not None and len(df) >= 10:
+                    c = df["close"].values
+                    ema9 = TechnicalIndicators.ema(c, min(9, len(c)))[-1]
+                    ema21 = TechnicalIndicators.ema(c, min(21, len(c)))[-1]
+                    slope = TechnicalIndicators.ema_slope(c, min(14, len(c)))
+                    if c[-1] > ema9 and c[-1] > ema21 and slope > 0.01:
+                        tf_votes.append("BUY")
+                        timeframe_signals[tf] = "BUY"
+                    elif c[-1] < ema9 and c[-1] < ema21 and slope < -0.01:
+                        tf_votes.append("SELL")
+                        timeframe_signals[tf] = "SELL"
+                    else:
+                        timeframe_signals[tf] = "NEUTRAL"
+
+            buy_votes = sum(1 for v in tf_votes if v == "BUY")
+            sell_votes = sum(1 for v in tf_votes if v == "SELL")
+
+            if buy_votes == 3:
+                order_flow_pts = 40
+                drift_direction = "BUY"
+            elif sell_votes == 3:
+                order_flow_pts = 40
+                drift_direction = "SELL"
+            elif buy_votes >= 2 and sell_votes == 0:
+                order_flow_pts = 28
+                drift_direction = "BUY"
+            elif sell_votes >= 2 and buy_votes == 0:
+                order_flow_pts = 28
+                drift_direction = "SELL"
+            elif buy_votes > sell_votes:
+                order_flow_pts = 20
+                drift_direction = "BUY"
+            elif sell_votes > buy_votes:
+                order_flow_pts = 20
+                drift_direction = "SELL"
+            else:
+                order_flow_pts = 12
+                drift_direction = "NEUTRAL"
+        else:
+            # Fallback if DataFrames not passed
+            order_flow_pts = 25
+            drift_direction = "BUY" if fundamental_bias == "BULLISH_GOLD" else ("SELL" if fundamental_bias == "BEARISH_GOLD" else "NEUTRAL")
+
+        # 3. 30% Weight — Tick Accumulation & Candle Body Expansion (> 60% of range)
+        volume_pts = 10
+        body_expanded = False
+        if dfs:
+            # Check 1m and 5m recent candle bodies
+            for tf_check in ["1m", "5m"]:
+                df_check = dfs.get(tf_check)
+                if df_check is not None and len(df_check) >= 3:
+                    c = df_check["close"].values
+                    o = df_check["open"].values
+                    h = df_check["high"].values
+                    l = df_check["low"].values
+                    recent_bodies = [abs(c[i] - o[i]) for i in range(-3, 0)]
+                    recent_ranges = [max(h[i] - l[i], 0.01) for i in range(-3, 0)]
+                    ratios = [b / r for b, r in zip(recent_bodies, recent_ranges)]
+                    if any(r >= 0.60 for r in ratios):
+                        body_expanded = True
+                        break
+
+        effective_vel = tick_velocity if tick_velocity > 0 else self._latest_velocity
+        is_velocity_elevated = effective_vel >= 0.15 or self._latest_density_ratio >= 1.25
+
+        if body_expanded and is_velocity_elevated:
+            volume_pts = 30
+        elif body_expanded or is_velocity_elevated:
+            volume_pts = 22
+        else:
+            volume_pts = 12
+
+        # 4. 30% Weight — Fundamental Forecast Agreement
+        fundamental_pts = 10
+        fundamental_agreed = False
+        if fundamental_bias in ("BULLISH_GOLD", "BEARISH_GOLD"):
+            expected_dir = "BUY" if fundamental_bias == "BULLISH_GOLD" else "SELL"
+            if drift_direction == expected_dir:
+                fundamental_pts = 30
+                fundamental_agreed = True
+            elif drift_direction == "NEUTRAL":
+                fundamental_pts = 20
+                fundamental_agreed = True
+            else:
+                # Contradiction: technical drift opposing fundamental forecast
+                fundamental_pts = 5
+                fundamental_agreed = False
+        else:
+            # Neutral fundamental forecast
+            fundamental_pts = 20
+            fundamental_agreed = True
+
+        total_pts = min(100, max(0, order_flow_pts + volume_pts + fundamental_pts))
+        confidence = round(total_pts / 100.0, 2)
+
+        trajectory_bias = drift_direction if (drift_direction in ("BUY", "SELL") and confidence >= 0.50) else (
+            "BUY" if fundamental_bias == "BULLISH_GOLD" and confidence >= 0.70 else (
+                "SELL" if fundamental_bias == "BEARISH_GOLD" and confidence >= 0.70 else "NEUTRAL"
+            )
+        )
+
+        reasons = [
+            f"Upcoming event: {nearest_ev.title} ({nearest_ev.currency}) in {seconds_to_event}s",
+            fund_reason,
+            f"Order-Flow Drift: {drift_direction} ({order_flow_pts}/40 pts)",
+            f"Volume/Expansion: {'Expanded (>60%)' if body_expanded else 'Moderate'} ({volume_pts}/30 pts)",
+            f"Fundamental Agreement: {'Matched' if fundamental_agreed else 'Divergent'} ({fundamental_pts}/30 pts)",
+            f"Total Trajectory Confidence: {total_pts}% -> Bias: {trajectory_bias}",
+        ]
+
+        return {
+            "active": True,
+            "confidence": confidence,
+            "confidence_pct": total_pts,
+            "trajectory_bias": trajectory_bias,
+            "drift_direction": drift_direction,
+            "fundamental_bias": fundamental_bias,
+            "event": nearest_ev.to_dict(),
+            "event_title": nearest_ev.title,
+            "event_impact": nearest_ev.impact,
+            "seconds_to_event": seconds_to_event,
+            "forecast": nearest_ev.forecast,
+            "previous": nearest_ev.previous,
+            "order_flow_pts": order_flow_pts,
+            "volume_pts": volume_pts,
+            "fundamental_pts": fundamental_pts,
+            "reasons": reasons,
+        }
+
 
     def analyze_news_fundamental_bias(self, symbol: str = "XAUUSD") -> Dict[str, Any]:
         """
@@ -833,26 +1107,24 @@ class NewsReactor:
     def can_open_baseline_trade(self) -> Tuple[bool, str]:
         """
         Smart News Entry Gate:
-        Instead of a blind defensive freeze, studies news data and sentiment to allow intelligent momentum entries.
-        Only pauses during extreme spread blowout or final 30s before unreleased major prints.
+        Enforces strict high-impact news freeze and spread blowout shield.
+        During confirmed high-impact economic news freeze windows, new entries are strictly locked.
         """
         if self._is_spread_blown_out:
             return False, f"Spread blown out ({self.max_spread_multiplier}x normal). Broker slippage shield active."
 
+        if not self._is_calendar_available:
+            if self.block_on_calendar_unavailable:
+                return False, "Economic calendar feed unavailable (strict safety lock enabled)."
+
         state = self.check_calendar_state()
-        study = self.analyze_news_fundamental_bias()
-
-        # If pre-news shield is active, check if we have strong fundamental study clarity
         if state.get("is_news_freeze", False):
-            if study.get("confidence", 0.0) >= 0.70 and study.get("direction") in ["BUY", "SELL"]:
-                return True, f"News Study Active: {study['direction']} bias ({study['summary']})"
-            
-            # Brief 30s pause right before numbers release if data is pending
-            cd = state.get("countdown_seconds")
-            if cd is not None and 0 < cd <= 30:
-                return False, f"Awaiting initial economic release print ({cd}s)..."
+            nearest = state.get("nearest_event") or {}
+            ev_title = nearest.get("title", "High-Impact Release")
+            return False, f"High-impact news freeze active for '{ev_title}'. New entries strictly locked."
 
-        return True, "Trading conditions nominal."
+        warning_str = " (Warning: Economic calendar feed unavailable)" if not self._is_calendar_available else ""
+        return True, f"Trading conditions nominal.{warning_str}"
 
     def get_feed_logs(self, count: int = 20) -> List[Dict[str, Any]]:
         """Return latest activity logs."""

@@ -5,62 +5,60 @@
 [![MetaTrader 5](https://img.shields.io/badge/MetaTrader-5-red.svg)](https://www.metatrader5.com/)
 [![License](https://img.shields.io/badge/License-Proprietary-yellow.svg)]()
 
-ApexGold is an institutional-grade, fully automated quantitative trading engine and real-time Web Dashboard built in Python and MQL5. Engineered specifically for **Gold (`XAUUSD` / `XAUUSDc` / `XAUUSDm`)** and high-liquidity Forex majors (`EURUSD`, `GBPUSD`, `USDJPY`), it is designed to safely scale accounts of all sizes—from micro capital (**$10.00** demo/cent accounts) to standard portfolios—using strict asymmetric risk management, multi-timeframe trend alignment, and real-time market-following execution.
+ApexGold is an institutional-grade, fully autonomous quantitative trading platform and real-time Web Dashboard built in Python and MQL5. Engineered specifically for **Gold (`XAUUSD` / `XAUUSDc` / `XAUUSDm`)** and high-liquidity Forex majors (`EURUSD`, `GBPUSD`, `USDJPY`), it is designed to safely scale accounts of all sizes—from micro capital (**$10.00** demo/cent accounts) to standard portfolios—using strict asymmetric risk management, multi-timeframe trend alignment, and real-time market-following execution.
 
 ---
 
-## ⚡ Core Features & Architecture
+## ⚡ Core Features & Strategy Architecture
 
 ### 1. Adaptive "Chameleon" Execution Engine (250ms Loop)
-- **Dynamic Classification**: Automatically tags trade setups as `⚡ FAST_SCALP` ($1.2\text{R}$ target) or `🚀 WAVE_RUNNER` ($2.5\text{R}-4.0\text{R}$ target) based on 1H/15m institutional volume expansion.
-- **Multi-Stage Volatility Ratchet SL**:
-  - $+0.65\text{R} \to$ Locks Breakeven with spread buffer.
+- **Dynamic Classification**: Automatically morphs trade setups between `⚡ FAST_SCALP` ($1.2\text{R}-2.2\text{R}$ target) and `🚀 WAVE_RUNNER` ($2.5\text{R}-4.0\text{R}$ target) based on 1H/15m institutional volume expansion.
+- **Multi-Stage Volatility Ratchet SL Floor**:
+  - $+0.45\text{R}/+0.65\text{R} \to$ Locks Breakeven with spread buffer.
   - $+1.00\text{R} \to$ Locks guaranteed $+0.45\text{R}$ profit floor.
   - $+1.50\text{R} \to$ Locks guaranteed $+0.85\text{R}$ profit floor.
   - $+2.00\text{R} \to$ Locks guaranteed $+1.35\text{R}$ profit floor.
   - $+2.50\text{R}+ \to$ Structural trailing behind dynamic swing levels.
-- **Dynamic Take-Profit Expansion**: If market surges into target with high momentum and low counter-wicks, pushes TP out $+1.25\text{R}$ to capture extended institutional waves.
-- **Stall & Reversal Exits**: Bank profits immediately upon detecting adverse flow spikes or structural rejection wicks while deep in profit.
+- **Dynamic Take-Profit Expansion**: Surges with high trend momentum push TP out to $4.0\text{R}-5.0\text{R}$ to capture runaway institutional extensions.
+- **Stall & Early Invalidation Exits**: Banks profits immediately upon detecting adverse order-flow stall (4.0s tick velocity stall in scalps) or structural invalidation.
 
-### 2. 100-Point Confluence Scoring Engine & Trend Alignment
+### 2. Smart Pre-News Trajectory & Free-Roll Engine
+Replaces passive, blind 15-minute news blackouts with an intelligent 3-zone system:
+- **Zone A ($T-45\text{m}$ to $T-90\text{s}$ — Pre-News Trajectory Window)**:
+  - Evaluates fundamental forecast vs. previous data (e.g. CPI cooling vs. heating USD).
+  - Measures institutional order-flow drift (15m, 5m, 1m EMA alignment) and candle expansion.
+  - When **Trajectory Confidence $\ge 78\%$** and confluence score $\ge 63$, automatically enters the trade with a `+12pt` trajectory alignment boost (`🎯 PRE_NEWS_TRAJECTORY`).
+- **Zone B ($T-90\text{s}$ to $T-0\text{s}$ — Final Spread-Spike Buffer)**:
+  - Freezes new raw market entries right before release as liquidity providers widen spreads.
+  - **$T-90\text{s}$ Free-Roll Lock**: If an open position is winning $\ge +0.40\text{R}$, locks Stop Loss to $\text{Entry} + \text{Spread} + 0.20\text{R}$ guaranteed profit and expands Take Profit to $4.0\text{R}$ (completely risk-free runner).
+  - **$T-60\text{s}$ Pre-News Scratch**: If an open position is stalled or negative ($< +0.40\text{R}$), auto-closes before release to prevent two-way spread blowout.
+- **Zone C ($T+15\text{s}$ to $T+15\text{m}$ — Post-Release Impulse Momentum)**:
+  - Once live broker spread normalizes, rides post-news breakout waves with a `+15pt` momentum boost.
+
+### 3. 100-Point Confluence Scoring Engine & Market Structure
 - **4-Timeframe Analysis**:
-  - **1-Hour (1H)**: Macro institutional trend, EMA 50 slope, and structural room-to-run ($20\text{ pts}$).
-  - **15-Minute (15m)**: Session wave direction, EMA 20/50 alignment, and ADX momentum ($25\text{ pts}$).
-  - **5-Minute (5m)**: Setup structure, value-zone pullbacks, and box breakouts ($30\text{ pts}$).
-  - **1-Minute (1m)**: Precision sniper execution trigger, sweeps, and engulfing signals ($25\text{ pts}$).
-- **Hard Counter-Trend Block**: Strictly prohibits trades that fight both 1H and 15m trends.
-- **HTF Divergence Penalty**: If 1H and 15m diverge, applies a $-25$ penalty and caps max score at $68/100$, preventing counter-trend Sniper signals.
-- **Quantitative & SMC Confluence**:
-  - Institutional Volume-Weighted Average Price (**VWAP**) confirmation.
-  - Kaufman's Adaptive Moving Average (**KAMA**) noise filtering via `package:ta`.
-  - Statistical Trend Quality & $R^2$ regression via `scipy.stats.linregress`.
-  - Smart Money Concepts (**SMC**): Order Block (OB) retests, Fair Value Gaps (FVG), and CHOCH/BOS structures via `smartmoneyconcepts`.
+  - **1-Hour (1H)**: Macro institutional trend, EMA 50 slope, and 1H structural wall clearance ($1.8 \times \text{ATR}_{15m}$).
+  - **15-Minute (15m)**: Session wave direction, EMA 20/50 alignment, and ADX momentum.
+  - **5-Minute (5m)**: Setup structure, value-zone pullbacks, and consolidation box breakouts.
+  - **1-Minute (1m)**: Precision execution trigger, sweeps, and candle momentum.
+- **Proven SMC & Quantitative Edge**:
+  - Institutional Volume-Weighted Average Price (**VWAP**) & Kaufman Adaptive Moving Average (**KAMA**).
+  - Statistical Trend Quality ($R^2 \ge 0.60$) & Z-Score Mean Retest levels.
+  - Dreiss Choppiness Index (CI) to gate consolidation chop ($\text{CI} \ge 60$).
+  - Smart Money Concepts (**SMC**): Liquidity Sweeps, Order Block Imbalance, and Bull/Bear Trap detection.
 
-### 3. Strict Exposure & Small-Account Protection
-- **Committed Exposure Guard**: Total exposure ($\text{Open Positions} + \text{Pending Orders}$) is strictly enforced. Accounts under $\$150$ are hard-capped at **1 single committed order**.
-- **Zero Order Flooding / Stacking**: Pending limits cannot be stacked at adjacent ticks.
-- **75-Second Limit Timeout & Drift Protection**: Unfilled limit orders auto-cancel after 75s or if price drifts $> \$2.50$ away.
-- **Post-Loss Circuit Breaker**: Activates a 5-minute (300s) cooling-off period after any stop-loss closure to prevent revenge trading (pauses for 30 minutes after 2 consecutive losses).
-- **Volatility-Adaptive Stop Loss**: Never artificially squashes Gold SL into market noise; maintains full ATR breathing room ($\$3.50-\$5.50$).
-
-### 4. Millisecond News & Tick-Velocity Reactor
-- **Timezone-Aware Economic Calendar**: Live countdown to CPI, NFP, FOMC, and interest rate releases.
-- **Fundamental News Study**: Pre-news lockout ($T-180\text{s}$) prevents opening into red-folder volatility, while locking profitable trades to Breakeven so they ride releases risk-free.
-- **Breaking News Sentiment**: Ingests real-time financial headlines (CNBC, MarketWatch) to calculate fundamental market sentiment.
-
-### 5. Institutional Dark-Mode Web Dashboard
-- **TradingView Lightweight Charts**: Smooth real-time candle streaming (1:1 tick sync with MT5).
-- **Interactive SL/TP Controls**: Inline editing for open positions and pending limit orders with quick $+1$, $-1$, and Lock BE chips.
-- **Live 4-TF Indicators**: Real-time directional bias badges (`1H: ▲`, `15m: ▲`, `5m: ▼`, `1m: ▲`).
-- **Telemetry**: 4 FPS WebSocket feed providing instant equity, margin, spread, and algorithmic state.
+### 4. Adaptive Position Sizing ($10 to $10,000+)
+- **Mathematical Lot Allocation**: Calculates lot size based on exact MT5 balance, equity, leverage, contract size ($100\text{ oz}$ on standard gold), and ATR-based stop-loss distance.
+- **Micro-Account Safe ($10–$25)**: For accounts $\le \$25$, allows a calibrated minimum stop loss distance of $\$1.50$, allowing a $0.01$ lot trade to fit within the risk budget without exceeding risk limits.
+- **Zero Risk Exceedance**: Rounding always truncates downward; calculated monetary risk strictly never exceeds the configured risk budget.
 
 ---
 
 ## 🛠️ System Requirements
 
 - **Operating System**: macOS (12.0+ Monterey, Ventura, Sonoma, Sequoia) or Windows (10 / 11) or Linux (Ubuntu 22.04+)
-- **Python**: Version 3.10, 3.11, or 3.12 (Python 3.10+ recommended)
-- **MetaTrader 5**: Desktop terminal (optional if running in built-in Paper Simulator mode)
+- **Python**: Version 3.10, 3.11, or 3.12 (Python 3.11/3.12 recommended)
+- **MetaTrader 5**: Desktop terminal (demo or live account)
 
 ---
 
@@ -70,6 +68,7 @@ ApexGold is an institutional-grade, fully automated quantitative trading engine 
 ```bash
 git clone https://github.com/ChaficH/ApexGold.git
 cd ApexGold
+git checkout Chafic_Branch
 ```
 
 ### 2. Set Up Virtual Environment
@@ -92,119 +91,169 @@ pip install -r requirements.txt
 
 ---
 
-## 🚀 Running the Trading Engine
+## 🔑 Bridge Authentication Token (How to Set or Change)
 
-### Step 1: Launch the Server
-```bash
-# macOS / Linux
-python3 main.py
+To protect your live trading account, the MetaTrader 5 bridge uses a shared secret token:
+- **Default Token:** Both `config.yaml` and `mql5/ApexBridge.mq5` are **already pre-configured** with the matching default token:
+  ```yaml
+  bridge_token: "apex_secret_2026"
+  ```
+  **You do not need to do anything if you keep this default!** The EA and Python server connect seamlessly out-of-the-box.
 
-# Windows
-python main.py
+- **To Change the Token (Optional Custom Password):**
+  1. Open [`config.yaml`](config.yaml) and update:
+     ```yaml
+     broker:
+       bridge_token: "my_custom_secret_123"
+     ```
+  2. In MetaTrader 5, right-click the `ApexBridge` EA on your chart $\to$ **Properties (F7)** $\to$ **Inputs**:
+     - Set `InpBridgeToken` = `"my_custom_secret_123"`
+  3. Click **OK**.
+
+---
+
+## 🍎 How to Run Live Trading on macOS (Wine / CrossOver MT5)
+
+MetaTrader 5 on macOS runs in an Apple Wine/CrossOver container. The bridge operates via high-speed local WebRequest (`http://127.0.0.1:8000/api/mt5_bridge/tick`) with automated queue fallback.
+
+### Step 1: Configure `config.yaml` for Live Execution
+Open [`config.yaml`](config.yaml) and ensure:
+```yaml
+broker:
+  active_broker: "mt5_mac_socket"
+  bridge_token: "apex_secret_2026"
+
+trading:
+  primary_symbol: "XAUUSD"          # or XAUUSDc / XAUUSDm depending on your broker
+  live_trading_enabled: true         # Enabled for live execution
+  execution_mode: "full_auto"       # "full_auto" for autonomous entry, or "confirm" for 1-click UI confirmation
+  budget_usd: 10.00                 # Sized automatically to your account
+  risk_per_trade_pct: 2.5
 ```
 
-### Step 2: Access the Dashboard
-Open your web browser and navigate to:
+### Step 2: Enable WebRequest in MetaTrader 5 (One-Time Setup)
+1. In MetaTrader 5, open **Tools $\to$ Options** (or press `Ctrl + O` / `Cmd + ,`).
+2. Click the **Expert Advisors** tab.
+3. Check **"Allow Algo Trading"**.
+4. Check **"Allow WebRequest for listed URL"**.
+5. Click the green `+` icon and add:
+   ```text
+   http://127.0.0.1:8000
+   ```
+6. Click **OK**.
+7. Ensure the **"Algo Trading"** button on the main MT5 top toolbar is green / active.
+
+### Step 3: Install & Compile the Bridge EA in MT5
+1. Inside MT5, open **MetaEditor** (press `F4`).
+2. In the Navigator tree on the left, right-click `Experts` $\to$ **Open Folder**.
+3. Copy [`mql5/ApexBridge.mq5`](mql5/ApexBridge.mq5) into that `Experts` folder.
+4. In MetaEditor, open `ApexBridge.mq5` and press **Compile** (`F7`). Ensure output shows `0 errors, 0 warnings`.
+5. Return to MT5, find `ApexBridge` in the Navigator tree under **Expert Advisors**, and drag it onto your active Gold (`XAUUSD`) chart.
+6. In the EA Inputs dialog:
+   - `InpBridgeMode` = `BRIDGE_WEBREQUEST`
+   - `InpServerUrl` = `http://127.0.0.1:8000/api/mt5_bridge/tick`
+   - `InpBridgeToken` = `apex_secret_2026`
+7. Click **OK**. The top-right corner of the MT5 chart will show a smiling face icon.
+
+### Step 4: Start the ApexGold Engine
+In your macOS terminal:
+```bash
+python main.py
+```
+Open your browser to:
 ```text
 http://127.0.0.1:8000
 ```
-
-The system will start immediately in **Paper Simulator** mode with simulated/live historical data. You can inspect the charts, run backtests, test signals, and adjust strategy gears directly from the UI.
-
----
-
-## 🍎 Connecting MetaTrader 5 on macOS (Wine / CrossOver)
-
-MetaTrader 5 on macOS runs inside an Apple Wine/CrossOver container. ApexGold includes a zero-latency local HTTP WebRequest bridge (**`ApexBridge.mq5`**) designed specifically for macOS Wine compatibility.
-
-### 3-Step Setup:
-
-1. **Allow Local WebRequest in MT5**:
-   - In MT5, open **Tools $\to$ Options** (or press `Ctrl + O` / `Cmd + ,`).
-   - Click the **Expert Advisors** tab.
-   - Check **"Allow WebRequest for listed URL"**.
-   - Click the green `+` icon and add:
-     ```text
-     http://127.0.0.1:8000
-     ```
-   - Check **"Allow Algo Trading"** in the dialog AND on the main MT5 top toolbar.
-
-2. **Compile the Expert Advisor in Wine**:
-   - Open **MetaEditor** (press `F4` inside MT5).
-   - In the Navigator tree on the left, right-click `Experts` $\to$ **Open Folder**.
-   - Copy [`mql5/ApexBridge.mq5`](file:///Users/chaficalhakim/Desktop/Trading%20script/mql5/ApexBridge.mq5) into the `Experts` directory.
-   - In MetaEditor, open `ApexBridge.mq5` and press **Compile** (`F7`).
-   - Confirm the output window displays `0 errors, 0 warnings`.
-
-3. **Attach to Chart**:
-   - In MT5, drag `ApexBridge` onto an active Gold chart (`XAUUSD`, `GOLD`, or `XAUUSDc`).
-   - In the Inputs tab:
-     - `InpBridgeMode` = `BRIDGE_WEBREQUEST`
-     - `InpServerUrl` = `http://127.0.0.1:8000/api/mt5_bridge/tick`
-   - In `config.yaml`, ensure:
-     ```yaml
-     broker:
-       active_broker: "mt5_mac_socket"
-     ```
-   - The dashboard top status will change to:
-     ```text
-     MT5 MAC WINE BRIDGE (LIVE) 🟢
-     ```
+The status banner will display:
+```text
+🟢 MT5 MAC WINE BRIDGE (LIVE) | Connected | Execution Mode: FULL_AUTO
+```
 
 ---
 
-## 🪟 Connecting MetaTrader 5 on Windows
+## 🪟 How to Run Live Trading on Windows
 
-On Windows, you have two flexible connection options:
+On Windows, you can choose between native IPC connection (recommended) or the WebRequest EA bridge:
 
-### Option A: Native MetaTrader 5 Python Adapter
-1. Ensure the Windows `MetaTrader5` package is installed:
+### Option A: Native MetaTrader 5 Python Connection (Recommended for Windows)
+
+1. **Install the native MetaTrader 5 library:**
    ```cmd
    pip install MetaTrader5
    ```
-2. In `config.yaml`, configure:
+
+2. **Configure `config.yaml`:**
    ```yaml
    broker:
      active_broker: "mt5_windows"
      windows_mt5:
-       terminal_path: ""       # Leave blank for default path or specify terminal64.exe
-       login: 12345678         # Your MT5 account number
-       password: "YourPassword"
-       server: "Exness-Real10" # Your broker server name
-   ```
-3. Run `python main.py`. The engine will connect directly to the running MT5 terminal via native IPC.
+       terminal_path: ""       # Leave empty to use default installation, or set path to terminal64.exe
+       login: 12345678         # Your MT5 account login number (optional if MT5 is already logged in)
+       password: ""            # Your MT5 account password
+       server: ""              # Broker server (e.g. "Exness-Real10", "ICMarkets-Demo")
 
-### Option B: ApexBridge EA WebRequest
-Works identically to the macOS setup above:
-1. Allow `http://127.0.0.1:8000` in MT5 under **Tools $\to$ Options $\to$ Expert Advisors**.
-2. Compile and attach `mql5/ApexBridge.mq5` to your chart.
-3. In `config.yaml`, set `active_broker: "mt5_mac_socket"`.
+   trading:
+     live_trading_enabled: true
+     execution_mode: "full_auto"
+   ```
+
+3. **Open MetaTrader 5:**
+   Launch your desktop MT5 terminal and log into your account. Make sure **"Algo Trading"** is toggled on in the top toolbar.
+
+4. **Launch ApexGold:**
+   ```cmd
+   python main.py
+   ```
+   The engine connects directly to the running MT5 terminal via native Windows IPC.
 
 ---
 
-## ⚙️ Configuration Reference (`config.yaml`)
+### Option B: ApexBridge EA via WebRequest (Works on both Windows & Mac)
 
-```yaml
-trading:
-  primary_symbol: "XAUUSD"          # Active symbol (XAUUSD, GOLD, EURUSD, etc.)
-  execution_mode: "full_auto"       # "full_auto", "confirm" (1-click), or "scanner"
-  strategy_mode: "auto_adaptive"    # "auto_adaptive", "cautious", "standard", "aggressive", "hyper"
-  account_type: "micro"             # "micro", "cent", "standard", "paper"
-  budget_usd: 10.00                 # Base capital sizing
-  risk_per_trade_pct: 2.0           # Fractional risk percentage per trade
-  compounding_enabled: true         # Automatically scales sizing with account balance growth
-  max_open_positions: 1             # Strict focus on 1 high-probability trade at a time
+Follow the exact same steps as the macOS setup above:
+1. In MT5: **Tools $\to$ Options $\to$ Expert Advisors** $\to$ Allow WebRequest to `http://127.0.0.1:8000`.
+2. Attach `mql5/ApexBridge.mq5` to your Gold chart.
+3. In `config.yaml`, set:
+   ```yaml
+   broker:
+     active_broker: "mt5_mac_socket"
+     bridge_token: "apex_secret_2026"
+   trading:
+     live_trading_enabled: true
+     execution_mode: "full_auto"
+   ```
+4. Run:
+   ```cmd
+   python main.py
+   ```
 
-strategy:
-  thresholds:
-    aggressive: 60                  # Minimum score for aggressive scalp
-    balanced: 68                    # Minimum score for standard entry
-    sniper: 82                      # Minimum score for Tier 1 Sniper entry
+---
 
-news_reactor:
-  enabled: true
-  pre_news_freeze_seconds: 180      # Stop opening new trades 3m before Red Folder news
-  lock_breakeven_on_open_trades: true # Move profitable trades to BE before news release
+## 🎮 Execution Modes Explained
+
+You can set the execution mode in `config.yaml` or toggle it directly live in the web dashboard:
+
+| Execution Mode | How It Works |
+| :--- | :--- |
+| **`scanner`** (Safe Default) | Read-only market analysis. Computes live scores, charts, and signals without placing any orders. |
+| **`confirm`** (1-Click Semi-Auto) | Emits real-time sound alerts and displays a 1-click **Execute Trade** button on the UI dashboard and Telegram. Requires 1 manual click per setup. |
+| **`full_auto`** (Fully Autonomous) | **Zero manual intervention.** When confluence threshold is reached, automatically sizes, calculates SL/TP, and submits orders to MT5 autonomously. |
+
+---
+
+## 🧪 Running the Full Test Suite
+
+ApexGold contains 95 automated regression, integration, and risk-control tests:
+
+```bash
+# Run the complete test suite
+python -m pytest tests/ -v
+
+# Run only the smart pre-news & free-roll engine tests
+python -m pytest tests/test_smart_pre_news_engine.py -v
+
+# Run static compilation check across all modules
+python -m py_compile main.py backtest/*.py brokers/*.py engine/*.py execution/*.py strategy/*.py ui/*.py tests/*.py
 ```
 
 ---
@@ -212,35 +261,30 @@ news_reactor:
 ## 📂 Repository Structure
 
 ```text
-├── config.yaml                  # Master settings (Risk, Broker, News, Scoring)
+├── config.yaml                  # Master settings (Risk, Broker, News, Tokens, Execution)
 ├── requirements.txt             # Python dependencies
-├── main.py                      # FastAPI server, WebSockets & trading loop
+├── main.py                      # FastAPI server, WebSockets & autonomous trading loop
 ├── README.md                    # Setup, architecture & operations manual
-├── .gitignore                   # Ignores databases, cache, logs & local state
 ├── mql5/
 │   └── ApexBridge.mq5           # MQL5 Bridge EA with WebRequest & TCP socket support
 ├── brokers/
 │   ├── base.py                  # AbstractBrokerAdapter & unified data classes
 │   ├── paper_sim.py             # Built-in paper trading simulator
-│   ├── mt5_mac_socket.py        # High-speed macOS/Wine & TCP bridge adapter
+│   ├── mt5_mac_socket.py        # High-speed macOS/Wine & HTTP queue bridge adapter
 │   └── mt5_windows.py           # Native Windows MetaTrader5 adapter
 ├── engine/
 │   ├── data_hub.py              # Multi-timeframe bar fetcher & SQLite cache
 │   ├── indicators.py            # Technical indicators, 4-TF trends & SMC math
-│   ├── news_reactor.py          # Economic calendar, headlines & velocity shield
-│   ├── historical_matcher.py    # Pattern matching & statistical expectancy
+│   ├── news_reactor.py          # Pre-news trajectory analyzer, economic calendar & velocity shield
 │   └── trade_history_store.py   # Closed deals, statistics & win-rate tracking
 ├── strategy/
-│   └── confluence_scorer.py     # 100-Point Confluence Scorer & Chameleon classifier
+│   └── confluence_scorer.py     # 100-Point Confluence Scorer, Zone A rules & 1H structural wall
 ├── execution/
-│   ├── gold_risk.py             # Contract calculator, lot sizer & spread buffer
-│   └── trade_manager.py         # 250ms Chameleon management loop & ratchet SL
-├── backtest/
-│   └── engine.py                # Multi-timeframe backtester & replay engine
-├── telemetry/
-│   └── telegram_bot.py          # Mobile alerts for signals & executions
+│   ├── gold_risk.py             # Contract calculator, adaptive lot sizer & small-account risk cap
+│   └── trade_manager.py         # 250ms Chameleon loop, T-90s Free-Roll lock & T-60s scratch
+├── tests/                       # 95 automated test suites
 └── ui/
-    ├── server.py                # REST API endpoints & 4 FPS WebSocket broadcaster
+    ├── server.py                # REST API endpoints, token verification & 4 FPS WebSocket hub
     └── index.html               # Dark-mode TradingView Lightweight Charts Web UI
 ```
 

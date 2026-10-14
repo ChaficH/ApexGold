@@ -10,12 +10,15 @@ import asyncio
 import logging
 import platform
 import time
-from typing import Dict, List, Optional, Union
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional, Union
 
 from brokers.base import (
     AbstractBrokerAdapter,
     AccountInfo,
     Bar,
+    ClosedDeal,
+    LimitOrder,
     OrderResult,
     OrderType,
     Position,
@@ -247,18 +250,51 @@ class WindowsMT5Adapter(AbstractBrokerAdapter):
         tp: Optional[float] = None,
         comment: str = "ApexGold"
     ) -> OrderResult:
-        """Send market order to MT5 with attached SL and TP."""
+        """Send market or pending limit order to MT5 with attached SL and TP."""
         if not self.is_connected():
             return OrderResult(success=False, error="Not connected to Windows MT5")
 
         tick = await self.get_tick(symbol)
-        mt5_order_type = mt5.ORDER_TYPE_BUY if order_type == OrderType.BUY else mt5.ORDER_TYPE_SELL
-        exec_price = tick.ask if order_type == OrderType.BUY else tick.bid
-        if price is not None and price > 0:
-            exec_price = price
+        loop = asyncio.get_running_loop()
+
+        # Correct Order Type & Action Mapping
+        is_pending = False
+        if order_type == OrderType.BUY_LIMIT:
+            mt5_action = mt5.TRADE_ACTION_PENDING
+            mt5_order_type = mt5.ORDER_TYPE_BUY_LIMIT
+            exec_price = price if (price is not None and price > 0) else (tick.ask - 0.50)
+            is_pending = True
+        elif order_type == OrderType.SELL_LIMIT:
+            mt5_action = mt5.TRADE_ACTION_PENDING
+            mt5_order_type = mt5.ORDER_TYPE_SELL_LIMIT
+            exec_price = price if (price is not None and price > 0) else (tick.bid + 0.50)
+            is_pending = True
+        elif order_type == OrderType.BUY:
+            mt5_action = mt5.TRADE_ACTION_DEAL
+            mt5_order_type = mt5.ORDER_TYPE_BUY
+            exec_price = price if (price is not None and price > 0) else tick.ask
+        elif order_type == OrderType.SELL:
+            mt5_action = mt5.TRADE_ACTION_DEAL
+            mt5_order_type = mt5.ORDER_TYPE_SELL
+            exec_price = price if (price is not None and price > 0) else tick.bid
+        else:
+            return OrderResult(success=False, error=f"Unsupported order type: {order_type}")
+
+        # Dynamic filling mode negotiation
+        if is_pending:
+            filling_type = mt5.ORDER_FILLING_RETURN
+        else:
+            sym_info = await loop.run_in_executor(None, lambda: mt5.symbol_info(symbol))
+            filling_mode = getattr(sym_info, "filling_mode", 0) if sym_info else 0
+            if filling_mode & 1:
+                filling_type = mt5.ORDER_FILLING_FOK
+            elif filling_mode & 2:
+                filling_type = mt5.ORDER_FILLING_IOC
+            else:
+                filling_type = mt5.ORDER_FILLING_RETURN
 
         request = {
-            "action": mt5.TRADE_ACTION_DEAL,
+            "action": mt5_action,
             "symbol": symbol,
             "volume": float(volume),
             "type": mt5_order_type,
@@ -267,7 +303,7 @@ class WindowsMT5Adapter(AbstractBrokerAdapter):
             "magic": 15555,
             "comment": comment,
             "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": mt5.ORDER_FILLING_IOC,
+            "type_filling": filling_type,
         }
 
         if sl is not None and sl > 0:
@@ -275,26 +311,26 @@ class WindowsMT5Adapter(AbstractBrokerAdapter):
         if tp is not None and tp > 0:
             request["tp"] = float(tp)
 
-        loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(None, lambda: mt5.order_send(request))
 
         if result is None:
             return OrderResult(success=False, error=f"MT5 order_send returned None: {mt5.last_error()}")
 
-        if result.retcode != mt5.TRADE_RETCODE_DONE:
+        if result.retcode not in (mt5.TRADE_RETCODE_DONE, mt5.TRADE_RETCODE_PLACED):
             error_msg = f"Order failed [retcode={result.retcode}]: {result.comment}"
             logger.error(error_msg)
             return OrderResult(success=False, error=error_msg)
 
+        ticket = result.order or result.deal
         logger.info(
-            f"[WINDOWS MT5 ORDER FILLED] Deal #{result.deal} / Order #{result.order} "
+            f"[WINDOWS MT5 ORDER OK] Deal #{result.deal} / Order #{result.order} "
             f"{order_type.value} {volume} {symbol} @ {result.price:.2f}"
         )
         return OrderResult(
             success=True,
-            ticket=result.order,
-            price=float(result.price),
-            volume=float(result.volume),
+            ticket=ticket,
+            price=float(result.price if result.price > 0 else exec_price),
+            volume=float(result.volume if result.volume > 0 else volume),
             error=None,
         )
 
@@ -304,18 +340,29 @@ class WindowsMT5Adapter(AbstractBrokerAdapter):
         sl: float,
         tp: float
     ) -> bool:
-        """Modify existing position SL/TP in MT5."""
+        """Modify existing position SL/TP in MT5. Never modifies an unrelated position."""
         if not self.is_connected():
+            return False
+
+        ticket_int = int(ticket)
+        loop = asyncio.get_running_loop()
+
+        # Strict identity verification: ensure ticket actually exists in open positions
+        positions = await loop.run_in_executor(
+            None,
+            lambda: mt5.positions_get(ticket=ticket_int)
+        )
+        if not positions:
+            logger.error(f"[WINDOWS MT5 MODIFY REJECTED] Position #{ticket_int} not found. Refusing to modify unrelated positions.")
             return False
 
         request = {
             "action": mt5.TRADE_ACTION_SLTP,
-            "position": int(ticket),
+            "position": ticket_int,
             "sl": float(sl),
             "tp": float(tp),
         }
 
-        loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(None, lambda: mt5.order_send(request))
 
         if result and result.retcode == mt5.TRADE_RETCODE_DONE:
@@ -415,4 +462,111 @@ class WindowsMT5Adapter(AbstractBrokerAdapter):
                 comment=str(p.comment),
             ))
         return result
+
+    async def cancel_order(self, ticket: Union[int, str]) -> bool:
+        """Cancel a pending MT5 limit/stop order."""
+        if not self.is_connected():
+            return False
+
+        ticket_int = int(ticket)
+        request = {
+            "action": mt5.TRADE_ACTION_REMOVE,
+            "order": ticket_int,
+        }
+
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(None, lambda: mt5.order_send(request))
+
+        if result and result.retcode in (mt5.TRADE_RETCODE_DONE, mt5.TRADE_RETCODE_PLACED):
+            logger.info(f"[WINDOWS MT5 CANCEL OK] Pending order #{ticket_int} deleted.")
+            return True
+
+        err = result.comment if result else str(mt5.last_error())
+        logger.error(f"[WINDOWS MT5 CANCEL FAILED] #{ticket_int}: {err}")
+        return False
+
+    async def get_pending_orders(self, symbol: Optional[str] = None) -> List[Any]:
+        """Fetch all active pending limit orders from MT5."""
+        if not self.is_connected():
+            return []
+
+        from brokers.base import LimitOrder
+        loop = asyncio.get_running_loop()
+        raw_orders = await loop.run_in_executor(None, mt5.orders_get)
+        if not raw_orders:
+            return []
+
+        orders: List[LimitOrder] = []
+        for o in raw_orders:
+            if symbol and o.symbol != symbol:
+                continue
+            if o.type == mt5.ORDER_TYPE_BUY_LIMIT:
+                ord_type = "BUY_LIMIT"
+            elif o.type == mt5.ORDER_TYPE_SELL_LIMIT:
+                ord_type = "SELL_LIMIT"
+            else:
+                continue
+
+            orders.append(LimitOrder(
+                ticket=int(o.ticket),
+                symbol=str(o.symbol),
+                order_type=ord_type,
+                price=float(o.price_open),
+                volume=float(o.volume_current),
+                sl=float(o.sl),
+                tp=float(o.tp),
+                created_time=float(o.time_setup),
+                comment=str(o.comment),
+            ))
+        return orders
+
+    async def get_closed_deal(self, ticket: Union[int, str]) -> Optional[ClosedDeal]:
+        """Fetch executed closed deal from MT5 history if available."""
+        if not self.is_connected() or mt5 is None:
+            return None
+
+        loop = asyncio.get_running_loop()
+        def _get_deal():
+            t_int = int(ticket) if str(ticket).isdigit() else 0
+            if t_int <= 0:
+                return None
+            now_dt = datetime.now()
+            from_dt = now_dt - timedelta(days=7)
+            deals = mt5.history_deals_get(position=t_int)
+            if not deals:
+                deals = mt5.history_deals_get(from_dt, now_dt, position=t_int)
+            if not deals:
+                return None
+
+            # Find closing deal (DEAL_ENTRY_OUT or last deal)
+            exit_deal = None
+            for d in reversed(deals):
+                if getattr(d, "entry", None) == 1:
+                    exit_deal = d
+                    break
+            if not exit_deal:
+                exit_deal = deals[-1]
+
+            entry_deal = deals[0]
+            direction = "BUY" if getattr(entry_deal, "type", 0) == 0 else "SELL"
+            return ClosedDeal(
+                ticket=t_int,
+                symbol=str(getattr(exit_deal, "symbol", "")),
+                direction=direction,
+                volume=float(getattr(exit_deal, "volume", 0.0)),
+                open_price=float(getattr(entry_deal, "price", 0.0)),
+                close_price=float(getattr(exit_deal, "price", 0.0)),
+                open_time=float(getattr(entry_deal, "time", 0.0)),
+                close_time=float(getattr(exit_deal, "time", 0.0)),
+                profit=float(getattr(exit_deal, "profit", 0.0)),
+                commission=float(getattr(exit_deal, "commission", 0.0)),
+                swap=float(getattr(exit_deal, "swap", 0.0)),
+                comment=str(getattr(exit_deal, "comment", "")),
+            )
+
+        try:
+            return await loop.run_in_executor(None, _get_deal)
+        except Exception as e:
+            logger.warning(f"Error retrieving closed deal for #{ticket}: {e}")
+            return None
 

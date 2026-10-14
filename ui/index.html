@@ -185,6 +185,21 @@
     </span>
   </div>
 
+  <!-- CONDITIONAL ALERT: SMART PRE-NEWS TRAJECTORY WINDOW -->
+  <div id="banner-pre-news-trajectory" class="hidden px-4 py-1.5 border-b border-purple-500/50 flex items-center justify-between text-xs shrink-0 bg-purple-950/40">
+    <div class="flex items-center space-x-2 font-bold">
+      <span class="w-2 h-2 rounded-full bg-purple-400 animate-pulse"></span>
+      <span class="text-purple-300 uppercase tracking-wider">🎯 PRE-NEWS TRAJECTORY:</span>
+      <span id="traj-bias-badge" class="px-2 py-0.5 rounded text-[10px] font-mono font-black uppercase bg-purple-500/30 text-purple-200 border border-purple-500/40">BULLISH GOLD (82%)</span>
+      <span id="traj-event-name" class="text-gray-300 text-[11px]">Upcoming USD Release</span>
+    </div>
+    <div class="flex items-center space-x-2">
+      <button id="btn-toggle-pre-news" onclick="togglePreNewsTrajectory()" title="Toggle smart pre-news trajectory front-running" class="px-2.5 py-0.5 rounded text-[10px] font-bold uppercase transition bg-purple-600/30 text-purple-200 border border-purple-500/50 hover:bg-purple-600/50">
+        PRE-NEWS: ON
+      </button>
+    </div>
+  </div>
+
   <!-- ROW 2: SMART TRANSMISSION & MARKET TELEMETRY STRIP (ADAPTIVE RESPONSIVE ROW) -->
   <section class="bg-[#0A0E18] border-b border-[#1A2333] px-3.5 py-1.5 flex items-center justify-between text-xs shrink-0 gap-2.5 overflow-x-auto no-scrollbar">
     <!-- Left: Transmission Modes & Live Scroller -->
@@ -426,10 +441,11 @@
                   <th class="p-1.5">Prices</th>
                   <th class="p-1.5 text-right">P&L</th>
                   <th class="p-1.5 text-right">Reason</th>
+                  <th class="p-1.5 text-center w-6"></th>
                 </tr>
               </thead>
               <tbody id="trade-history-tbody" class="divide-y divide-[#1A2333]/60">
-                <tr><td colspan="5" class="p-4 text-center text-gray-500">No closed trades yet. Recorded trades persist in SQLite forever.</td></tr>
+                <tr><td colspan="6" class="p-4 text-center text-gray-500">No closed trades yet. Recorded trades persist in SQLite forever.</td></tr>
               </tbody>
             </table>
           </div>
@@ -1158,30 +1174,37 @@
         if (histBadge) histBadge.innerText = data.history.length;
 
         const tbody = document.getElementById('trade-history-tbody');
-        if (tbody && data.history.length > 0) {
-          tbody.innerHTML = data.history.map(h => {
-            const pnl = h.pnl || 0.0;
-            const pnlR = h.pnl_r || 0.0;
-            const isBuy = (h.direction === 'BUY' || h.direction === '0');
-            const dirStr = isBuy ? 'BUY' : 'SELL';
-            return `
-              <tr class="hover:bg-gray-900/60 transition">
-                <td class="p-1.5 text-gray-400 text-[10px] whitespace-nowrap">${h.close_time_str || '--:--:--'}</td>
-                <td class="p-1.5 whitespace-nowrap">
-                  <span class="font-bold ${isBuy ? 'text-emerald-400' : 'text-red-400'}">${dirStr}</span>
-                  <span class="text-gray-300 text-[10px]">${h.volume}</span>
-                </td>
-                <td class="p-1.5 text-gray-300 text-[10px] whitespace-nowrap">${Number(h.open_price).toFixed(2)} &rarr; ${Number(h.close_price).toFixed(2)}</td>
-                <td class="p-1.5 text-right font-black whitespace-nowrap ${pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}">
-                  ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}
-                  <span class="text-[9px] block text-gray-400 font-normal">${pnlR >= 0 ? '+' : ''}${pnlR.toFixed(2)}R</span>
-                </td>
-                <td class="p-1.5 text-right text-[10px] text-gray-300 max-w-[100px] truncate" title="${h.close_reason}">
-                  ${h.close_reason || 'Manual'}
-                </td>
-              </tr>
-            `;
-          }).join('');
+        if (tbody) {
+          if (data.history.length > 0) {
+            tbody.innerHTML = data.history.map(h => {
+              const pnl = h.pnl || 0.0;
+              const pnlR = h.pnl_r || 0.0;
+              const isBuy = (h.direction === 'BUY' || h.direction === '0');
+              const dirStr = isBuy ? 'BUY' : 'SELL';
+              return `
+                <tr class="hover:bg-gray-900/60 transition group" id="trade-row-${h.ticket}">
+                  <td class="p-1.5 text-gray-400 text-[10px] whitespace-nowrap">${h.close_time_str || '--:--:--'}</td>
+                  <td class="p-1.5 whitespace-nowrap">
+                    <span class="font-bold ${isBuy ? 'text-emerald-400' : 'text-red-400'}">${dirStr}</span>
+                    <span class="text-gray-300 text-[10px]">${h.volume}</span>
+                  </td>
+                  <td class="p-1.5 text-gray-300 text-[10px] whitespace-nowrap">${Number(h.open_price).toFixed(2)} &rarr; ${Number(h.close_price).toFixed(2)}</td>
+                  <td class="p-1.5 text-right font-black whitespace-nowrap ${pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}">
+                    ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}
+                    <span class="text-[9px] block text-gray-400 font-normal">${pnlR >= 0 ? '+' : ''}${pnlR.toFixed(2)}R</span>
+                  </td>
+                  <td class="p-1.5 text-right text-[10px] text-gray-300 max-w-[100px] truncate" title="${h.close_reason}">
+                    ${h.close_reason || 'Manual'}
+                  </td>
+                  <td class="p-1.5 text-center whitespace-nowrap">
+                    <button onclick="deleteTrade(${h.ticket})" title="Delete trade #${h.ticket}" class="text-gray-500 hover:text-red-400 hover:bg-red-950/60 px-1 py-0.5 rounded text-[10px] transition">✕</button>
+                  </td>
+                </tr>
+              `;
+            }).join('');
+          } else {
+            tbody.innerHTML = '<tr><td colspan="6" class="p-4 text-center text-gray-500">No closed trades yet. Recorded trades persist in SQLite forever.</td></tr>';
+          }
         }
       }
 
@@ -1189,6 +1212,51 @@
       if (data.news_state) {
         cachedNewsState = data.news_state;
         renderNewsCommandCenter(data.news_state);
+      }
+
+      // 10b. Smart Pre-News Trajectory Banner Update
+      const trajBanner = document.getElementById('banner-pre-news-trajectory');
+      const traj = data.pre_news_trajectory;
+      const allowTraj = data.allow_pre_news_trajectory !== false;
+      const btnToggle = document.getElementById('btn-toggle-pre-news');
+      if (btnToggle) {
+        btnToggle.innerText = allowTraj ? 'PRE-NEWS: ON' : 'PRE-NEWS: OFF';
+        btnToggle.className = allowTraj
+          ? 'px-2.5 py-0.5 rounded text-[10px] font-bold uppercase transition bg-purple-600/30 text-purple-200 border border-purple-500/50 hover:bg-purple-600/50'
+          : 'px-2.5 py-0.5 rounded text-[10px] font-bold uppercase transition bg-gray-800 text-gray-400 border border-gray-700 hover:bg-gray-700';
+      }
+      if (traj && traj.active && trajBanner) {
+        trajBanner.classList.remove('hidden');
+        trajBanner.classList.add('flex');
+        const badge = document.getElementById('traj-bias-badge');
+        if (badge) {
+          badge.innerText = `${traj.trajectory_bias} (${traj.confidence_pct}%)`;
+          if (traj.trajectory_bias === 'BUY') {
+            badge.className = 'px-2 py-0.5 rounded text-[10px] font-mono font-black uppercase bg-emerald-500/30 text-emerald-300 border border-emerald-500/50';
+          } else if (traj.trajectory_bias === 'SELL') {
+            badge.className = 'px-2 py-0.5 rounded text-[10px] font-mono font-black uppercase bg-rose-500/30 text-rose-300 border border-rose-500/50';
+          } else {
+            badge.className = 'px-2 py-0.5 rounded text-[10px] font-mono font-black uppercase bg-purple-500/30 text-purple-200 border border-purple-500/40';
+          }
+        }
+        const evName = document.getElementById('traj-event-name');
+        if (evName) {
+          evName.innerText = `${traj.event_title} in ${Math.round(traj.seconds_to_event / 60)}m | ${traj.fundamental_bias}`;
+        }
+      } else if (trajBanner) {
+        trajBanner.classList.add('hidden');
+        trajBanner.classList.remove('flex');
+      }
+    }
+
+    async function togglePreNewsTrajectory() {
+      try {
+        const res = await fetch('/api/actions/toggle_pre_news_trajectory', { method: 'POST' });
+        const resData = await res.json();
+        showToast(resData.message || 'Toggled pre-news trajectory');
+        fetchStatus();
+      } catch (err) {
+        showToast(`Failed: ${err.message}`, 'error');
       }
     }
 
@@ -1693,6 +1761,43 @@
       }
     }
 
+    async function deleteTrade(ticket) {
+      if (!confirm(`Delete trade #${ticket} from history? This will permanently remove it and recalculate win rate.`)) {
+        return;
+      }
+      try {
+        appendLog('HISTORY', `Deleting trade #${ticket}...`);
+        const res = await fetch('/api/actions/delete_trade', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ticket: Number(ticket) })
+        });
+        const data = await res.json();
+        if (data.status === 'OK') {
+          appendLog('HISTORY', `Trade #${ticket} permanently deleted.`);
+          const row = document.getElementById(`trade-row-${ticket}`);
+          if (row) row.remove();
+          if (window.lastTelemetryData && window.lastTelemetryData.history) {
+            window.lastTelemetryData.history = window.lastTelemetryData.history.filter(h => Number(h.ticket) !== Number(ticket));
+            const histBadge = document.getElementById('history-count-badge');
+            if (histBadge) histBadge.innerText = window.lastTelemetryData.history.length;
+            if (window.lastTelemetryData.history.length === 0) {
+              const tbody = document.getElementById('trade-history-tbody');
+              if (tbody) tbody.innerHTML = '<tr><td colspan="6" class="p-4 text-center text-gray-500">No closed trades yet. Recorded trades persist in SQLite forever.</td></tr>';
+            }
+          }
+          if (data.stats && window.lastTelemetryData) {
+            window.lastTelemetryData.stats = data.stats;
+            renderTelemetry(window.lastTelemetryData);
+          }
+        } else {
+          appendLog('ERROR', `Failed to delete trade #${ticket}: ${data.detail || data.message}`);
+        }
+      } catch (err) {
+        appendLog('ERROR', `Delete trade error: ${err.message}`);
+      }
+    }
+
     async function confirmClearHistory() {
       if (!confirm("Are you sure you want to reset all trade history and recalculate the win rate from zero? This will purge all past records.")) {
         return;
@@ -1718,7 +1823,11 @@
             hPnl.className = 'font-bold text-gray-200';
           }
           document.getElementById('history-count-badge').innerText = '0';
-          document.getElementById('trade-history-tbody').innerHTML = '<tr><td colspan="5" class="p-4 text-center text-gray-500">History cleared. New trades will be tracked accurately.</td></tr>';
+          document.getElementById('trade-history-tbody').innerHTML = '<tr><td colspan="6" class="p-4 text-center text-gray-500">No closed trades yet. Recorded trades persist in SQLite forever.</td></tr>';
+          if (window.lastTelemetryData) {
+            window.lastTelemetryData.history = [];
+            window.lastTelemetryData.stats = data.stats || {};
+          }
         } else {
           appendLog('ERROR', `Failed to clear history: ${data.detail || data.message}`);
         }

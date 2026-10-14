@@ -54,9 +54,19 @@ def load_config(config_path: str = "config.yaml") -> dict:
 async def create_broker_adapter(cfg: dict) -> AbstractBrokerAdapter:
     """Instantiate broker adapter according to configuration or OS environment."""
     broker_cfg = cfg.get("broker", {})
-    active = broker_cfg.get("active_broker", "paper_sim").lower()
     trading_cfg = cfg.get("trading", {})
-    account_type = trading_cfg.get("account_type", "cent")
+    live_trading_enabled = trading_cfg.get("live_trading_enabled", False)
+    active = broker_cfg.get("active_broker", "paper_sim").lower()
+    account_type = trading_cfg.get("account_type", "micro")
+
+    # Explicit live-trading opt-in requirement:
+    if active in ["mt5_mac_socket", "mt5_windows"] and not live_trading_enabled:
+        logger.warning(
+            f"Active broker is configured as '{active}', but 'live_trading_enabled' is False. "
+            f"Enforcing safe PaperSimAdapter operation to protect real funds. "
+            f"To enable live execution, set 'live_trading_enabled: true' in config.yaml."
+        )
+        active = "paper_sim"
 
     if active == "mt5_mac_socket":
         mac_cfg = broker_cfg.get("mac_socket", {})
@@ -69,7 +79,7 @@ async def create_broker_adapter(cfg: dict) -> AbstractBrokerAdapter:
         connected = await adapter.connect()
         if connected:
             return adapter
-        logger.warning("Could not connect to MacSocketMT5Adapter. Falling back cleanly to PaperSimAdapter.")
+        logger.warning("Could not connect to MacSocketMT5Adapter. Falling back cleanly and safely to PaperSimAdapter.")
 
     elif active == "mt5_windows":
         win_cfg = broker_cfg.get("windows_mt5", {})
@@ -86,9 +96,9 @@ async def create_broker_adapter(cfg: dict) -> AbstractBrokerAdapter:
             if connected:
                 return adapter
         except Exception as e:
-            logger.warning(f"Windows MT5 connection error ({e}). Falling back to PaperSimAdapter.")
+            logger.warning(f"Windows MT5 connection error ({e}). Falling back cleanly and safely to PaperSimAdapter.")
 
-    # Default Out-of-the-box Paper Simulator
+    # Default Out-of-the-box Pure Paper Simulator
     sim_cfg = broker_cfg.get("paper_sim", {})
     adapter = PaperSimAdapter(
         initial_balance=float(sim_cfg.get("initial_balance", 10.0)),
@@ -237,14 +247,15 @@ async def lifespan(app_instance):
 
     trading_cfg = cfg.get("trading", {})
     ctx.active_symbol = trading_cfg.get("primary_symbol", "XAUUSD")
-    ctx.execution_mode = trading_cfg.get("execution_mode", "full_auto")
+    ctx.live_trading_enabled = bool(trading_cfg.get("live_trading_enabled", False))
+    ctx.manage_manual_positions = bool(trading_cfg.get("manage_manual_positions", False))
+    ctx.execution_mode = trading_cfg.get("execution_mode", "scanner")
     ctx.strategy_mode = trading_cfg.get("strategy_mode", "auto_adaptive")
+    ctx.bridge_token = str(cfg.get("broker", {}).get("bridge_token", "") or cfg.get("bridge", {}).get("token", "") or os.environ.get("APEX_BRIDGE_TOKEN", "")).strip()
 
-    # 1. Connect Broker
+    # 1. Connect Broker (Strict Paper/Live separation)
     broker = await create_broker_adapter(cfg)
     ctx.broker = broker
-    if hasattr(broker, "set_mt5_bridge_queue"):
-        broker.set_mt5_bridge_queue(ctx.mt5_pending_actions)
 
     # 2. Initialize Data Hub & SQLite Store
     data_cfg = cfg.get("data_hub", {})
@@ -265,24 +276,27 @@ async def lifespan(app_instance):
     news_cfg = cfg.get("news_reactor", {})
     news_reactor = NewsReactor(
         enabled=news_cfg.get("enabled", True),
-        pre_news_freeze_seconds=news_cfg.get("pre_news_freeze_seconds", 180),
+        pre_news_freeze_seconds=news_cfg.get("pre_news_freeze_seconds", 90),
+        post_news_freeze_seconds=news_cfg.get("post_news_freeze_seconds", 15),
         post_news_momentum_window_sec=news_cfg.get("post_news_momentum_window_sec", 300),
         post_news_cooldown_seconds=news_cfg.get("post_news_cooldown_seconds", 3),
         max_spread_multiplier=news_cfg.get("max_spread_multiplier", 2.5),
         tick_velocity_window_ms=news_cfg.get("tick_velocity_window_ms", 800),
         impulse_tick_density_mult=news_cfg.get("tick_density_multiplier", 3.0),
         tracked_currencies=news_cfg.get("currencies", ["USD", "XAU"]),
+        block_on_calendar_unavailable=news_cfg.get("block_on_calendar_unavailable", False),
     )
     await news_reactor.start()
     ctx.news_reactor = news_reactor
 
     # 4. Initialize Risk Engine
     risk_engine = GoldRiskEngine(
-        account_type=trading_cfg.get("account_type", "cent"),
+        account_type=trading_cfg.get("account_type", "micro"),
         budget_usd=float(trading_cfg.get("budget_usd", 10.0)),
-        risk_per_trade_pct=float(trading_cfg.get("risk_per_trade_pct", 10.0)),
+        risk_per_trade_pct=float(trading_cfg.get("risk_per_trade_pct", 2.0)),
         compounding_enabled=trading_cfg.get("compounding_enabled", True),
         max_daily_losses=int(trading_cfg.get("max_daily_losses", 4)),
+        risk_profile=trading_cfg.get("risk_profile", "balanced"),
     )
     ctx.risk_engine = risk_engine
 
@@ -297,6 +311,9 @@ async def lifespan(app_instance):
         max_daily_drawdown_pct=float(trading_cfg.get("max_daily_drawdown_pct", 25.0)),
         max_open_positions=int(trading_cfg.get("max_open_positions", 1)),
         history_store=history_store,
+        manage_manual_positions=ctx.manage_manual_positions,
+        post_loss_buffer_seconds=float(trading_cfg.get("post_loss_buffer_seconds", 12.0)),
+        anti_revenge_window_seconds=float(trading_cfg.get("anti_revenge_window_seconds", 45.0)),
     )
     await trade_manager.start()
     ctx.trade_manager = trade_manager

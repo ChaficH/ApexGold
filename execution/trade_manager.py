@@ -48,8 +48,8 @@ class ManagedPosition:
     tp: float
     entry_time: float
     risk_r_dist: float          # Distance in price representing 1.0R
-    initial_regime: str         # "ADAPTIVE_SCALP" or "ADAPTIVE_RUNNER"
-    current_regime: str         # May morph in real time
+    initial_regime: str = "ADAPTIVE_RUNNER"         # "ADAPTIVE_SCALP" or "ADAPTIVE_RUNNER"
+    current_regime: str = "ADAPTIVE_RUNNER"         # May morph in real time
     sub_regime: str = "WAVE_RUNNER" # "FAST_SCALP", "WAVE_RUNNER", "DEFENSIVE_SHIELD"
     be_lock_r: float = 0.60     # +0.45R for fast scalp, +0.6R standard
     stall_exit_seconds: float = 90.0 # 4.0s for fast scalp, 90.0s for runner
@@ -64,6 +64,9 @@ class ManagedPosition:
     current_price: float = 0.0
     origin: str = "BOT (AUTO)"
     is_user_manual: bool = False
+    is_freeroll_locked: bool = False
+    is_closing: bool = False
+    close_trigger_price: float = 0.0
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -78,24 +81,35 @@ class TradeManager:
     def __init__(
         self,
         broker: AbstractBrokerAdapter,
-        data_hub: DataHub,
-        news_reactor: NewsReactor,
-        risk_engine: GoldRiskEngine,
+        data_hub: Optional[DataHub] = None,
+        news_reactor: Optional[NewsReactor] = None,
+        risk_engine: Optional[GoldRiskEngine] = None,
         correlation_guard: bool = True,
         max_daily_losses: int = 4,
+        max_consecutive_losses: int = 3,
         max_daily_drawdown_pct: float = 25.0,
+        max_total_open_risk_pct: float = 10.0,
         max_open_positions: int = 1,
         history_store: Optional[Any] = None,
+        manage_manual_positions: bool = False,
+        post_loss_buffer_seconds: float = 12.0,
+        anti_revenge_window_seconds: float = 45.0,
     ):
         self.broker = broker
         self.data_hub = data_hub
-        self.news_reactor = news_reactor
-        self.risk_engine = risk_engine
+        self.news_reactor = news_reactor if news_reactor is not None else NewsReactor(enabled=False)
+        self.risk_engine = risk_engine if risk_engine is not None else GoldRiskEngine()
         self.correlation_guard = correlation_guard
         self.max_daily_losses = max_daily_losses
+        self.max_consecutive_losses = max_consecutive_losses
         self.max_daily_drawdown_pct = max_daily_drawdown_pct
+        self.max_total_open_risk_pct = max_total_open_risk_pct
         self.max_open_positions = max_open_positions
         self.history_store = history_store
+        self.manage_manual_positions = manage_manual_positions
+        self.post_loss_buffer_seconds = float(post_loss_buffer_seconds)
+        self.anti_revenge_window_seconds = float(anti_revenge_window_seconds)
+        self.magic_number: int = 15555
 
         self._managed_positions: Dict[Union[int, str], ManagedPosition] = {}
         self._pending_limit_orders: Dict[Union[int, str], Any] = {}
@@ -103,11 +117,12 @@ class TradeManager:
         self._management_task: Optional[asyncio.Task] = None
         self._running = False
         self._lock = asyncio.Lock()
+        self._order_execution_lock = asyncio.Lock()
 
         # Strict Single-Execution Lock & Smart Cooldown
         self._is_order_in_flight: bool = False
         self._last_order_time: float = 0.0
-        self._min_cooldown_seconds: float = 10.0
+        self._min_cooldown_seconds: float = 8.0
         self._post_loss_cooldown_until: float = 0.0
         self._last_loss_direction: Optional[str] = None
         self._last_loss_price: float = 0.0
@@ -115,13 +130,345 @@ class TradeManager:
 
         # Circuit breaker metrics
         self._daily_losses_count = 0
+        self._consecutive_losses = 0
         self._daily_realized_pnl = 0.0
         self._pause_until = 0.0
-        self._last_day = datetime.now(timezone.utc).day
+        self._start_of_day_balance: float = 0.0
+        self._today_date_str: str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+        # Operational State Reconciliation & Contradictory Safety Guards
+        self._contradictory_state_active: bool = False
+        self._contradictory_state_reason: str = ""
+
+    async def sync_daily_risk_state(self) -> None:
+        """
+        Reconstruct daily risk metrics from persistent trade history and broker account info.
+        Prevents restart from resetting loss counters or daily drawdown limits.
+        """
+        now_dt = datetime.now(timezone.utc)
+        self._today_date_str = now_dt.strftime("%Y-%m-%d")
+        start_of_day_dt = datetime(now_dt.year, now_dt.month, now_dt.day, tzinfo=timezone.utc)
+        start_of_day_ts = start_of_day_dt.timestamp()
+
+        if self.history_store:
+            try:
+                trades = await self.history_store.get_history(limit=200)
+                today_trades = [t for t in trades if t.get("close_time", 0.0) >= start_of_day_ts]
+                today_trades.sort(key=lambda x: x.get("close_time", 0.0))
+
+                self._daily_realized_pnl = sum(t.get("pnl", 0.0) for t in today_trades)
+                self._daily_losses_count = sum(1 for t in today_trades if t.get("pnl", 0.0) < -0.05)
+
+                cons = 0
+                for t in reversed(today_trades):
+                    p = t.get("pnl", 0.0)
+                    if p < -0.05:
+                        cons += 1
+                    elif p > 0.05:
+                        break
+                self._consecutive_losses = cons
+                logger.info(
+                    f"Reconstructed daily risk state: {len(today_trades)} trades today, "
+                    f"P&L: ${self._daily_realized_pnl:.2f}, Daily losses: {self._daily_losses_count}, "
+                    f"Consecutive losses: {self._consecutive_losses}"
+                )
+            except Exception as e:
+                logger.warning(f"Could not reconstruct risk state from history store: {e}")
+
+        try:
+            acc = await self.broker.get_account_info()
+            if acc:
+                if self._start_of_day_balance <= 0.0:
+                    self._start_of_day_balance = max(1.0, acc.balance - self._daily_realized_pnl)
+                logger.info(f"Start-of-day balance set to: ${self._start_of_day_balance:.2f} (Current: ${acc.balance:.2f})")
+        except Exception as e:
+            logger.warning(f"Could not fetch account info for risk state sync: {e}")
+
+    async def reconcile_broker_state(self) -> Dict[str, Any]:
+        """
+        Reconcile local trade manager state with broker state on startup, reconnection,
+        or recovery. Enrolls bot-owned positions and pending orders, verifies protective
+        stop losses, and detects contradictory or unmanaged risk.
+        """
+        async with self._lock:
+            try:
+                broker_positions = await self.broker.get_open_positions()
+                broker_orders = await self.broker.get_pending_orders()
+            except Exception as e:
+                logger.error(f"[RECONCILE ERROR] Failed to fetch broker state: {e}")
+                self._contradictory_state_active = True
+                self._contradictory_state_reason = f"Broker query failed during state reconciliation: {e}"
+                return {"status": "ERROR", "error": str(e), "is_contradictory": True}
+
+            broker_pos_by_ticket = {}
+            for p in broker_positions:
+                if str(p.ticket).isdigit():
+                    broker_pos_by_ticket[int(p.ticket)] = p
+
+            broker_orders_by_ticket = {}
+            for o in broker_orders:
+                if str(o.ticket).isdigit():
+                    broker_orders_by_ticket[int(o.ticket)] = o
+
+            enrolled_positions = []
+            unprotected_positions = []
+
+            for ticket, p in broker_pos_by_ticket.items():
+                is_manual = getattr(p, "is_user_manual", False)
+                magic = getattr(p, "magic", 0)
+                comment = getattr(p, "comment", "")
+                is_bot_owned = (magic == 15555) or ("ApexGold" in comment) or ("Paper" in comment)
+
+                # Skip manual positions if policy dictates not to manage them
+                if is_manual and not self.manage_manual_positions:
+                    continue
+                if not is_bot_owned and not self.manage_manual_positions:
+                    continue
+
+                # Verify protective stop loss
+                if p.sl <= 0.0:
+                    unprotected_positions.append(ticket)
+                    logger.warning(f"[RECONCILE WARNING] Active position #{ticket} has no protective stop loss!")
+
+                if ticket not in self._managed_positions:
+                    # Enroll into managed positions
+                    direction_str = p.type.value if hasattr(p.type, "value") else str(p.type)
+                    sl_dist = abs(p.open_price - p.sl) if p.sl > 0 else 2.50
+                    m = ManagedPosition(
+                        ticket=ticket,
+                        symbol=p.symbol,
+                        direction=direction_str.upper(),
+                        volume=p.volume,
+                        open_price=p.open_price,
+                        sl=p.sl,
+                        tp=p.tp,
+                        entry_time=p.open_time or time.time(),
+                        risk_r_dist=sl_dist,
+                        initial_regime="RECOVERED",
+                        current_regime="RECOVERED",
+                        sub_regime="RECOVERED",
+                        is_user_manual=is_manual,
+                        current_price=getattr(p, "current_price", p.open_price),
+                    )
+                    self._managed_positions[ticket] = m
+                    enrolled_positions.append(ticket)
+                    logger.info(f"[RECONCILE] Enrolled active position #{ticket} into live management (SL={p.sl}, TP={p.tp}).")
+
+            # Check if any local managed positions no longer exist on broker
+            disappeared_tickets = []
+            for ticket in list(self._managed_positions.keys()):
+                if ticket not in broker_pos_by_ticket:
+                    disappeared_tickets.append(ticket)
+                    pos = self._managed_positions.pop(ticket)
+                    logger.info(f"[RECONCILE] Position #{ticket} closed while offline. Reconciling closed deal...")
+                    deal = await self.broker.get_closed_deal(ticket)
+                    if deal and self.history_store:
+                        await self.history_store.record_trade(
+                            ticket=ticket,
+                            symbol=deal.symbol,
+                            direction=deal.direction,
+                            volume=deal.volume,
+                            open_price=deal.open_price,
+                            close_price=deal.close_price,
+                            open_time=deal.open_time,
+                            close_time=deal.close_time,
+                            pnl=round(deal.profit + getattr(deal, "commission", 0.0) + getattr(deal, "swap", 0.0), 2),
+                            pnl_r=0.0,
+                            regime=pos.initial_regime,
+                            sub_regime=pos.sub_regime,
+                            close_reason="Closed While Offline",
+                        )
+
+            # Reconcile pending limit orders
+            for ticket, o in broker_orders_by_ticket.items():
+                if ticket not in self._pending_limit_orders:
+                    self._pending_limit_orders[ticket] = o
+                    logger.info(f"[RECONCILE] Enrolled pending order #{ticket} into live tracking.")
+
+            # If there are unprotected positions, flag contradictory state
+            if unprotected_positions:
+                self._contradictory_state_active = True
+                self._contradictory_state_reason = f"Position(s) #{unprotected_positions} missing protective stop loss"
+                if self.history_store:
+                    await self.history_store.record_audit_event("UNPROTECTED_POSITION_ALERT", self._contradictory_state_reason)
+            else:
+                self._contradictory_state_active = False
+                self._contradictory_state_reason = ""
+
+            return {
+                "status": "OK",
+                "enrolled": enrolled_positions,
+                "disappeared": disappeared_tickets,
+                "unprotected": unprotected_positions,
+                "is_contradictory": self._contradictory_state_active,
+            }
+
+    async def _reconcile_post_order_failure(
+        self,
+        symbol: str,
+        direction: str,
+        lot_size: float,
+        target_entry: float,
+        padded_sl: float,
+        suggested_tp: float,
+        comment: str,
+        signal: ConfluenceSignal,
+    ) -> Optional[ManagedPosition]:
+        """
+        Post-order failure recovery:
+        Queries broker to verify whether an order was accepted despite dispatch errors or timeouts.
+        Verifies protective SL/TP, enforces emergency close policy if protection cannot be confirmed,
+        and logs audit trail.
+        """
+        try:
+            await asyncio.sleep(0.5)
+            open_positions = await self.broker.get_open_positions()
+            now = time.time()
+            matching_candidates: List[Position] = []
+
+            for p in open_positions:
+                ticket_int = int(p.ticket) if str(p.ticket).isdigit() else p.ticket
+                if ticket_int in self._managed_positions:
+                    continue
+                p_dir = p.type.value if hasattr(p.type, "value") else str(p.type)
+
+                # Strict multi-factor matching:
+                # 1. Symbol match
+                if p.symbol != symbol:
+                    continue
+                # 2. Direction match
+                if p_dir.upper() != direction.upper():
+                    continue
+                # 3. Exact volume match
+                if abs(p.volume - lot_size) >= 0.001:
+                    continue
+                # 4. Recent open time within 30s
+                p_open_time = getattr(p, "open_time", now) or now
+                if abs(now - p_open_time) > 30.0:
+                    continue
+                # 5. Price proximity (within 1.5% or $15 for gold)
+                threshold = max(target_entry * 0.015, 15.0)
+                if abs(p.open_price - target_entry) > threshold:
+                    continue
+                # 6. Magic number or comment match if present
+                p_magic = getattr(p, "magic", 0)
+                if p_magic not in (0, self.magic_number):
+                    continue
+                p_comment = getattr(p, "comment", "")
+                if comment and p_comment and (comment not in p_comment) and ("ApexGold" not in p_comment):
+                    continue
+
+                matching_candidates.append(p)
+
+            if len(matching_candidates) > 1:
+                # Ambiguous recovery: multiple unmanaged candidate positions matched!
+                self._contradictory_state_active = True
+                cand_tickets = [c.ticket for c in matching_candidates]
+                self._contradictory_state_reason = f"Ambiguous post-order recovery: found {len(matching_candidates)} candidate positions matching order params: {cand_tickets}"
+                self.pause_trading(minutes=1440)
+                logger.critical(f"[POST-ORDER RECOVERY AMBIGUITY] {self._contradictory_state_reason}. Blocking all new entries!")
+                if self.history_store:
+                    await self.history_store.record_audit_event(
+                        "AMBIGUOUS_RECOVERY_ALERT",
+                        self._contradictory_state_reason
+                    )
+                return None
+
+            if len(matching_candidates) == 0:
+                logger.info("[POST-ORDER RECOVERY] Confirmed no ghost position was opened by broker.")
+                return None
+
+            match_pos = matching_candidates[0]
+            ticket = int(match_pos.ticket)
+            logger.warning(f"[POST-ORDER RECOVERY] Unregistered position #{ticket} detected on broker. Verifying protective stop loss...")
+
+            # Protection verification & post-action broker query
+            sl_confirmed = (match_pos.sl > 0.0)
+            if not sl_confirmed:
+                logger.warning(f"[POST-ORDER RECOVERY] Position #{ticket} has no confirmed SL. Attempting to attach protective SL={padded_sl}...")
+                mod_ok = await self.broker.modify_position(ticket, sl=padded_sl, tp=suggested_tp)
+
+                # Query broker state again to verify actual result of modification
+                refreshed_positions = await self.broker.get_open_positions()
+                refreshed_pos = next(
+                    (p for p in refreshed_positions if (int(p.ticket) if str(p.ticket).isdigit() else p.ticket) == ticket),
+                    None
+                )
+
+                if refreshed_pos is not None and refreshed_pos.sl > 0.0:
+                    sl_confirmed = True
+                    match_pos = refreshed_pos
+                else:
+                    # EMERGENCY POLICY: Position remains unprotected on broker!
+                    logger.critical(f"[EMERGENCY POLICY] Could not verify/attach protective stop loss to position #{ticket}! Closing immediately.")
+                    close_ok = await self.broker.close_position(ticket)
+
+                    # Query broker state again to verify actual result of emergency close
+                    post_close_positions = await self.broker.get_open_positions()
+                    still_open = any(
+                        (int(p.ticket) if str(p.ticket).isdigit() else p.ticket) == ticket
+                        for p in post_close_positions
+                    )
+
+                    self._contradictory_state_active = True
+                    self.pause_trading(minutes=1440)
+
+                    if still_open:
+                        self._contradictory_state_reason = f"CRITICAL: Emergency close failed for unprotected position #{ticket}! Position is still open on broker."
+                        logger.critical(f"[EMERGENCY POLICY FAILURE] {self._contradictory_state_reason}")
+                        if self.history_store:
+                            await self.history_store.record_audit_event(
+                                "CRITICAL_CLOSE_FAILED",
+                                self._contradictory_state_reason
+                            )
+                    else:
+                        self._contradictory_state_reason = f"Emergency close executed on unprotected position #{ticket}"
+                        logger.warning(f"[EMERGENCY POLICY] {self._contradictory_state_reason}")
+                        if self.history_store:
+                            await self.history_store.record_audit_event(
+                                "EMERGENCY_CLOSE",
+                                f"Closed position #{ticket} because protective stop-loss could not be verified."
+                            )
+                    return None
+
+            # Register recovered position safely into management
+            recovered_managed = ManagedPosition(
+                ticket=ticket,
+                symbol=symbol,
+                direction=direction,
+                volume=match_pos.volume if match_pos.volume > 0 else lot_size,
+                open_price=match_pos.open_price if match_pos.open_price > 0 else target_entry,
+                sl=match_pos.sl if match_pos.sl > 0 else padded_sl,
+                tp=match_pos.tp if match_pos.tp > 0 else suggested_tp,
+                entry_time=getattr(match_pos, "open_time", now) or now,
+                risk_r_dist=abs(target_entry - padded_sl),
+                initial_regime=signal.regime,
+                current_regime=signal.regime,
+                sub_regime=signal.sub_regime,
+                be_lock_r=signal.be_lock_r,
+                stall_exit_seconds=signal.stall_exit_seconds,
+            )
+            async with self._lock:
+                self._managed_positions[ticket] = recovered_managed
+
+            if self.history_store:
+                await self.history_store.record_audit_event(
+                    "POST_ORDER_RECOVERY",
+                    f"Recovered position #{ticket} ({symbol} {direction} {match_pos.volume}) with confirmed SL={match_pos.sl}"
+                )
+
+            logger.info(f"[POST-ORDER RECOVERY] Successfully enrolled recovered position #{ticket} into Chameleon management.")
+            return recovered_managed
+
+        except Exception as e:
+            logger.critical(f"[POST-ORDER RECOVERY ERROR] Error while recovering unconfirmed order: {e}", exc_info=True)
+            return None
 
     async def start(self) -> None:
         """Start the 250ms live position management loop."""
         self._running = True
+        await self.sync_daily_risk_state()
+        await self.reconcile_broker_state()
         if self._management_task is None or self._management_task.done():
             self._management_task = asyncio.create_task(self._management_loop())
         logger.info("TradeManager 250ms Follow-the-Market loop started.")
@@ -142,28 +489,118 @@ class TradeManager:
         self._pause_until = time.time() + (minutes * 60)
         logger.info(f"Trading paused for {minutes} minutes until {datetime.fromtimestamp(self._pause_until, tz=timezone.utc)}")
 
-    def resume_trading(self) -> None:
-        """Immediately resume trading and reset circuit breaker."""
+    async def resume_trading(self) -> Tuple[bool, str]:
+        """
+        Immediately resume trading and reset circuit breaker if daily drawdown allows.
+        Does not bypass hard daily drawdown limit.
+        """
+        acc = await self.broker.get_account_info()
+        if acc and self._start_of_day_balance > 0:
+            eq_dd_pct = ((self._start_of_day_balance - acc.equity) / self._start_of_day_balance) * 100.0
+            real_dd_pct = ((-self._daily_realized_pnl) / self._start_of_day_balance) * 100.0
+            max_dd = max(eq_dd_pct, real_dd_pct)
+            if max_dd >= self.max_daily_drawdown_pct:
+                msg = f"Cannot resume: Daily drawdown ({max_dd:.1f}% >= {self.max_daily_drawdown_pct:.1f}%) still breached!"
+                logger.warning(msg)
+                return False, msg
+        rec = await self.reconcile_broker_state()
+        if rec.get("is_contradictory", False):
+            msg = f"Cannot resume: Unresolved contradictory broker state ({self._contradictory_state_reason})."
+            logger.warning(msg)
+            return False, msg
+
         self._pause_until = 0.0
         self._daily_losses_count = 0
+        self._consecutive_losses = 0
         logger.info("Trading resumed and daily loss counter reset.")
+        return True, "Trading resumed successfully"
 
     def is_paused(self) -> bool:
         """Check if circuit breaker or manual pause is active."""
         if time.time() < self._pause_until:
             return True
-        if self._daily_losses_count >= self.max_daily_losses:
+        if self.max_daily_losses > 0 and self._daily_losses_count >= self.max_daily_losses:
+            return True
+        if self.max_consecutive_losses > 0 and self._consecutive_losses >= self.max_consecutive_losses:
             return True
         return False
 
-    def _reset_daily_metrics_if_new_day(self) -> None:
+    def is_circuit_breaker_tripped(self) -> Tuple[bool, str]:
+        """Check whether any circuit breaker condition is active and return status with description."""
+        now = time.time()
+        if now < self._pause_until:
+            rem = int(self._pause_until - now)
+            return True, f"Trading paused ({rem}s remaining)"
+        if self.max_daily_losses > 0 and self._daily_losses_count >= self.max_daily_losses:
+            return True, f"Max daily losses reached ({self._daily_losses_count}/{self.max_daily_losses})"
+        if self.max_consecutive_losses > 0 and self._consecutive_losses >= self.max_consecutive_losses:
+            return True, f"Max consecutive losses reached ({self._consecutive_losses}/{self.max_consecutive_losses})"
+        eff_base = self._start_of_day_balance if self._start_of_day_balance > 0 else (getattr(self.risk_engine, "base_budget_usd", 0.0) or 100.0)
+        if eff_base > 0:
+            real_dd_usd = max(0.0, -self._daily_realized_pnl)
+            real_dd_pct = (real_dd_usd / eff_base) * 100.0
+            if real_dd_pct >= self.max_daily_drawdown_pct:
+                return True, f"Daily realized drawdown limit breached ({real_dd_pct:.1f}% >= {self.max_daily_drawdown_pct:.1f}%)"
+        if now < self._post_loss_cooldown_until:
+            rem = int(self._post_loss_cooldown_until - now)
+            return True, f"Post-loss buffer active ({rem}s remaining)"
+        return False, ""
+
+    async def can_open_manual_trade(self, symbol: str, direction: str, volume: float = 0.01) -> Tuple[bool, str]:
+        """
+        Validate whether a manual or UI trade can be safely opened against
+        circuit breakers, drawdown limits, exposure, and news freeze.
+        """
+        acc = await self.broker.get_account_info()
+        eff_balance = acc.balance if acc else 100.0
+        self._reset_daily_metrics_if_new_day(current_balance=eff_balance)
+        if self._start_of_day_balance <= 0:
+            self._start_of_day_balance = max(1.0, eff_balance - self._daily_realized_pnl)
+
+        cb_tripped, cb_reason = self.is_circuit_breaker_tripped()
+        if cb_tripped:
+            return False, f"Circuit Breaker active: {cb_reason}"
+
+        if getattr(self, "_contradictory_state_active", False):
+            return False, f"Reconciliation Alert: Unresolved contradictory broker state ({self._contradictory_state_reason}). New orders blocked."
+
+        if acc and self._start_of_day_balance > 0:
+            eq_dd_usd = max(0.0, self._start_of_day_balance - acc.equity)
+            eq_dd_pct = (eq_dd_usd / self._start_of_day_balance) * 100.0
+            real_dd_usd = max(0.0, -self._daily_realized_pnl)
+            real_dd_pct = (real_dd_usd / self._start_of_day_balance) * 100.0
+            max_dd = max(eq_dd_pct, real_dd_pct)
+            if max_dd >= self.max_daily_drawdown_pct:
+                self.pause_trading(minutes=1440)
+                return False, f"Circuit Breaker: Daily drawdown breached ({max_dd:.1f}% >= {self.max_daily_drawdown_pct:.1f}%). Orders halted."
+
+        if self._is_order_in_flight:
+            return False, "Order already in flight (waiting for broker execution)"
+
+        if self.news_reactor:
+            can_open_news, news_reason = self.news_reactor.can_open_baseline_trade()
+            if not can_open_news:
+                return False, f"News Reactor: {news_reason}"
+
+        active_positions = await self.broker.get_open_positions()
+        managed_open = [p for p in self._managed_positions.values() if not p.is_closed]
+        all_positions_count = max(len(managed_open), len(active_positions))
+        if self.max_open_positions > 0 and all_positions_count >= self.max_open_positions:
+            return False, f"Maximum open positions reached ({all_positions_count}/{self.max_open_positions})"
+
+        return True, "OK"
+
+    def _reset_daily_metrics_if_new_day(self, current_balance: Optional[float] = None) -> None:
         """Reset circuit breaker counters at 00:00 UTC."""
-        today = datetime.now(timezone.utc).day
-        if today != self._last_day:
-            logger.info("New trading day: resetting daily loss counter and drawdown.")
+        today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if today_str != self._today_date_str:
+            logger.info(f"New trading day ({today_str}): resetting daily counters.")
             self._daily_losses_count = 0
+            self._consecutive_losses = 0
             self._daily_realized_pnl = 0.0
-            self._last_day = today
+            self._today_date_str = today_str
+            if current_balance is not None and current_balance > 0:
+                self._start_of_day_balance = current_balance
 
     async def _release_in_flight_lock(self, delay_sec: float = 2.5) -> None:
         """Release in-flight lock after broker communication delay."""
@@ -175,24 +612,42 @@ class TradeManager:
         Verify circuit breakers, in-flight locks, news freeze, and USD correlation guard before placing order.
         Strictly guarantees NO multiple trades can ever open simultaneously.
         """
-        self._reset_daily_metrics_if_new_day()
+        acc = await self.broker.get_account_info()
+        eff_balance = acc.balance if acc else 100.0
+        self._reset_daily_metrics_if_new_day(current_balance=eff_balance)
+
+        if getattr(self, "_contradictory_state_active", False):
+            return False, f"Reconciliation Alert: Unresolved contradictory broker state ({self._contradictory_state_reason}). New orders blocked."
 
         if self.is_paused():
-            return False, f"Trading paused (Daily losses: {self._daily_losses_count}/{self.max_daily_losses})"
+            return False, f"Trading paused (Daily losses: {self._daily_losses_count}/{self.max_daily_losses}, Consecutive: {self._consecutive_losses}/{self.max_consecutive_losses})"
 
-        # 1. Post-Loss Tick Buffer (15 seconds, just enough for broker tick & account settle)
+        # 0. Daily Drawdown Circuit Breaker Enforcement
+        if acc and self._start_of_day_balance > 0:
+            eq_dd_usd = max(0.0, self._start_of_day_balance - acc.equity)
+            eq_dd_pct = (eq_dd_usd / self._start_of_day_balance) * 100.0
+            real_dd_usd = max(0.0, -self._daily_realized_pnl)
+            real_dd_pct = (real_dd_usd / self._start_of_day_balance) * 100.0
+            max_dd = max(eq_dd_pct, real_dd_pct)
+            if max_dd >= self.max_daily_drawdown_pct:
+                self.pause_trading(minutes=1440)
+                return False, f"Circuit Breaker: Daily drawdown breached ({max_dd:.1f}% >= {self.max_daily_drawdown_pct:.1f}%). New orders halted."
+
+        # 1. Post-Loss Tick Buffer (Broker deal and tick settlement period)
         now = time.time()
         if now < self._post_loss_cooldown_until:
             rem = int(self._post_loss_cooldown_until - now)
             return False, f"Post-Loss Buffer ({rem}s remaining) - Letting broker ticks stabilize."
 
-        # 1b. Smart Directional & Price-Level Anti-Revenge Guard:
-        # Blocks re-entering the EXACT SAME losing trade in the same direction at the same price within 60s
-        if signal and (now - self._last_loss_time < 60.0):
+        # 1b. Smart Directional & Structural Anti-Revenge Guard:
+        # Blocks blindly re-entering the EXACT SAME losing trade in the same direction at the same level.
+        # Intentionally permits high-probability opposite reversals and structural shifts immediately!
+        if signal and (now - self._last_loss_time < self.anti_revenge_window_seconds):
             if signal.direction == self._last_loss_direction:
                 is_gold = any(k in signal.symbol.upper() for k in ["XAU", "GOLD"])
                 if abs(signal.entry_price - self._last_loss_price) < (1.50 if is_gold else 0.0012):
-                    return False, f"Anti-Revenge Filter: Blocked repeating losing {signal.direction} at same level ({signal.entry_price:.2f}) without structural change."
+                    rem = int(self.anti_revenge_window_seconds - (now - self._last_loss_time))
+                    return False, f"Anti-Revenge Filter: Blocked repeating losing {signal.direction} at same level ({signal.entry_price:.2f}) without structural shift ({rem}s remaining)."
 
         # 1c. In-Flight Execution Mutex Check
         if self._is_order_in_flight:
@@ -218,8 +673,14 @@ class TradeManager:
         all_positions_count = max(len(managed_open), len(active_positions))
 
         # Check pending orders across all layers (TradeManager, PaperBroker, and MT5 Bridge)
+        import inspect
         from ui.server import ctx as server_ctx
-        broker_pending = await self.broker.get_pending_orders() if hasattr(self.broker, "get_pending_orders") else []
+        if hasattr(self.broker, "get_pending_orders"):
+            p_res = self.broker.get_pending_orders()
+            broker_pending = await p_res if inspect.isawaitable(p_res) else (p_res or [])
+        else:
+            broker_pending = []
+
         mt5_pending = getattr(server_ctx, "mt5_pending_orders", []) or []
         tm_pending = list(self._pending_limit_orders.values())
         total_pending_count = max(len(tm_pending), len(broker_pending), len(mt5_pending))
@@ -245,7 +706,11 @@ class TradeManager:
                 for st in set(stale_tickets_to_cancel):
                     await self.broker.cancel_order(st)
                     self._pending_limit_orders.pop(st, None)
-                broker_pending = await self.broker.get_pending_orders() if hasattr(self.broker, "get_pending_orders") else []
+                if hasattr(self.broker, "get_pending_orders"):
+                    p_res2 = self.broker.get_pending_orders()
+                    broker_pending = await p_res2 if inspect.isawaitable(p_res2) else (p_res2 or [])
+                else:
+                    broker_pending = []
                 mt5_pending = getattr(server_ctx, "mt5_pending_orders", []) or []
                 total_pending_count = max(len(self._pending_limit_orders), len(broker_pending), len(mt5_pending))
 
@@ -296,129 +761,209 @@ class TradeManager:
                             if float_r < 0.80:
                                 return False, f"Existing {m.symbol} trade #{m.ticket} only at {float_r:.2f}R. Must reach at least +0.80R with SL secured before adding!"
 
+        # 6. Total Open Risk Guard
+        if eff_balance > 0:
+            total_open_risk_usd = 0.0
+            for p in self._managed_positions.values():
+                if not p.is_closed:
+                    sym_info = await self.broker.get_symbol_info(p.symbol)
+                    pos_risk = self.risk_engine.calculate_monetary_risk(
+                        symbol_info=sym_info,
+                        lot=p.volume,
+                        sl_distance=p.risk_r_dist
+                    )
+                    total_open_risk_usd += pos_risk
+
+            cand_sym_info = await self.broker.get_symbol_info(signal.symbol)
+            cand_risk = self.risk_engine.calculate_monetary_risk(
+                symbol_info=cand_sym_info,
+                lot=cand_sym_info.volume_min,
+                sl_distance=signal.risk_r_dist
+            )
+            total_projected_risk_pct = ((total_open_risk_usd + cand_risk) / eff_balance) * 100.0
+            if total_projected_risk_pct > self.max_total_open_risk_pct:
+                return False, f"Total open risk limit reached ({total_projected_risk_pct:.1f}% > {self.max_total_open_risk_pct:.1f}% allowed)"
+
         return True, "Execution approved"
 
     async def execute_trade(self, signal: ConfluenceSignal) -> OrderResult:
         """
         Execute live market order with dynamically calculated lot size, padded SL, and TP.
         Enrolls position into ManagedPosition for real-time 250ms Chameleon monitoring.
+        Guaranteed thread-safe and immune to concurrent order collisions.
         """
-        can_trade, reason = await self.can_execute_signal(signal)
-        if not can_trade:
-            logger.warning(f"Trade rejected: {reason}")
-            return OrderResult(success=False, error=reason)
+        async with self._order_execution_lock:
+            can_trade, reason = await self.can_execute_signal(signal)
+            if not can_trade:
+                logger.warning(f"Trade rejected: {reason}")
+                return OrderResult(success=False, error=reason)
 
-        # Acquire execution lock immediately
-        self._is_order_in_flight = True
-        self._last_order_time = time.time()
+            # Acquire execution lock immediately
+            self._is_order_in_flight = True
+            self._last_order_time = time.time()
 
-        try:
-            account_info = await self.broker.get_account_info()
-            symbol_info = await self.broker.get_symbol_info(signal.symbol)
-            is_limit = getattr(signal, "order_type", "MARKET") in ["BUY_LIMIT", "SELL_LIMIT"]
-            if is_limit:
-                order_type = OrderType.BUY_LIMIT if signal.direction == "BUY" else OrderType.SELL_LIMIT
-                target_entry = signal.limit_price or signal.entry_price
-            else:
-                order_type = OrderType.BUY if signal.direction == "BUY" else OrderType.SELL
-                target_entry = signal.entry_price
-
-            # Volatility-Adaptive Stop Loss: Respects market ATR and structural swings
-            is_gold = any(k in signal.symbol.upper() for k in ["XAU", "GOLD"])
-            actual_sl_dist = signal.risk_r_dist
-            raw_sl = signal.suggested_sl
-
-            # Calculate exact lot size
-            lot_size, risk_details = self.risk_engine.calculate_lot_size(
-                symbol_info=symbol_info,
-                account_info=account_info,
-                sl_distance=actual_sl_dist,
-            )
-
-            if not risk_details.get("has_margin", False):
-                msg = f"Rejected: Margin requirement exceeds available balance: {risk_details.get('warning')}"
-                logger.error(msg)
-                return OrderResult(success=False, error=msg)
-
-            # Pad Stop Loss against live spread
-            padded_sl = self.risk_engine.pad_stop_loss(
-                direction=signal.direction,
-                raw_sl=raw_sl,
-                spread=symbol_info.spread,
-                point=symbol_info.point,
-                extra_buffer_points=2,
-            )
-
-            order_comment = f"ApexGold_{signal.sub_regime[:4]}"
-
-            # Dispatch order to broker
-            res = await self.broker.open_order(
-                symbol=signal.symbol,
-                order_type=order_type,
-                volume=lot_size,
-                price=target_entry,
-                sl=padded_sl,
-                tp=signal.suggested_tp,
-                comment=order_comment,
-            )
-
-            if res.success and res.ticket is not None:
+            try:
+                account_info = await self.broker.get_account_info()
+                symbol_info = await self.broker.get_symbol_info(signal.symbol)
+                is_limit = getattr(signal, "order_type", "MARKET") in ["BUY_LIMIT", "SELL_LIMIT"]
                 if is_limit:
-                    from brokers.base import LimitOrder
-                    lo = LimitOrder(
-                        ticket=int(res.ticket),
-                        symbol=signal.symbol,
-                        order_type=order_type.value,
-                        price=target_entry,
-                        volume=lot_size,
-                        sl=padded_sl,
-                        tp=signal.suggested_tp,
-                        created_time=time.time(),
-                        timeout_seconds=75.0,
-                        invalidation_price=signal.invalidation_price or 0.0,
-                        comment=order_comment,
-                    )
-                    async with self._lock:
-                        self._pending_limit_orders[lo.ticket] = lo
-                    logger.info(
-                        f"[SMART LIMIT ORDER PLACED] #{lo.ticket} {order_type.value} {lot_size} {signal.symbol} "
-                        f"@ {target_entry:.2f} | Invalidation Guard: {lo.invalidation_price:.2f} | SL: {padded_sl:.2f} | TP: {signal.suggested_tp:.2f}"
-                    )
+                    order_type = OrderType.BUY_LIMIT if signal.direction == "BUY" else OrderType.SELL_LIMIT
+                    target_entry = signal.limit_price or signal.entry_price
                 else:
-                    # Early breakeven on micro balance: lock at +0.35R (~$0.70 gain) to protect capital
-                    active_be_r = 0.35 if (is_gold and eff_bal < 50.0) else signal.be_lock_r
+                    order_type = OrderType.BUY if signal.direction == "BUY" else OrderType.SELL
+                    target_entry = signal.entry_price
 
-                    # Register position for sub-second Chameleon adaptive management
-                    managed = ManagedPosition(
-                        ticket=int(res.ticket),
+                # Volatility-Adaptive Stop Loss
+                is_gold = any(k in signal.symbol.upper() for k in ["XAU", "GOLD"])
+                raw_sl = signal.suggested_sl
+
+                # Pad Stop Loss against live spread FIRST so sizing accounts for full padded distance
+                padded_sl = self.risk_engine.pad_stop_loss(
+                    direction=signal.direction,
+                    raw_sl=raw_sl,
+                    spread=symbol_info.spread,
+                    point=symbol_info.point,
+                    extra_buffer_points=2,
+                )
+                padded_sl_dist = abs(target_entry - padded_sl)
+
+                # Calculate exact lot size with recalculated padded risk distance
+                lot_size, risk_details = self.risk_engine.calculate_lot_size(
+                    symbol_info=symbol_info,
+                    account_info=account_info,
+                    sl_distance=padded_sl_dist,
+                    confidence_tier=getattr(signal, "tier", None),
+                    score=getattr(signal, "score", None),
+                    consecutive_losses=self._consecutive_losses,
+                )
+
+                if not risk_details.get("has_margin", False) or lot_size <= 0.0:
+                    msg = f"Trade Rejected: {risk_details.get('warning', 'Margin/Risk check failed')}"
+                    logger.error(msg)
+                    return OrderResult(success=False, error=msg)
+
+                order_comment = f"ApexGold_{signal.sub_regime[:4]}"
+
+                # Dispatch order to broker
+                res = await self.broker.open_order(
+                    symbol=signal.symbol,
+                    order_type=order_type,
+                    volume=lot_size,
+                    price=target_entry,
+                    sl=padded_sl,
+                    tp=signal.suggested_tp,
+                    comment=order_comment,
+                )
+
+                if res.success and res.ticket is not None:
+                    try:
+                        if is_limit:
+                            from brokers.base import LimitOrder
+                            lo = LimitOrder(
+                                ticket=int(res.ticket),
+                                symbol=signal.symbol,
+                                order_type=order_type.value,
+                                price=target_entry,
+                                volume=lot_size,
+                                sl=padded_sl,
+                                tp=signal.suggested_tp,
+                                created_time=time.time(),
+                                timeout_seconds=75.0,
+                                invalidation_price=signal.invalidation_price or 0.0,
+                                comment=order_comment,
+                            )
+                            async with self._lock:
+                                self._pending_limit_orders[lo.ticket] = lo
+                            logger.info(
+                                f"[SMART LIMIT ORDER PLACED] #{lo.ticket} {order_type.value} {lot_size} {signal.symbol} "
+                                f"@ {target_entry:.2f} | Invalidation Guard: {lo.invalidation_price:.2f} | SL: {padded_sl:.2f} | TP: {signal.suggested_tp:.2f}"
+                            )
+                        else:
+                            eff_bal = account_info.balance if account_info else 100.0
+                            active_be_r = 0.35 if (is_gold and eff_bal < 50.0) else signal.be_lock_r
+
+                            # Register position for sub-second Chameleon adaptive management
+                            managed = ManagedPosition(
+                                ticket=int(res.ticket),
+                                symbol=signal.symbol,
+                                direction=signal.direction,
+                                volume=res.volume if res.volume > 0 else lot_size,
+                                open_price=res.price if res.price > 0 else target_entry,
+                                sl=padded_sl,
+                                tp=signal.suggested_tp,
+                                entry_time=time.time(),
+                                risk_r_dist=padded_sl_dist,
+                                initial_regime=signal.regime,
+                                current_regime=signal.regime,
+                                sub_regime=signal.sub_regime,
+                                be_lock_r=active_be_r,
+                                stall_exit_seconds=signal.stall_exit_seconds,
+                                highest_r_reached=0.0,
+                                entry_velocity=getattr(self.news_reactor, "_latest_velocity", 1.0) or 1.0,
+                            )
+                            async with self._lock:
+                                self._managed_positions[managed.ticket] = managed
+
+                            logger.info(
+                                f"[ADAPTIVE TRADE INITIATED] #{managed.ticket} {signal.direction} {lot_size} {signal.symbol} "
+                                f"@ {res.price:.2f} | Sub-Regime: {signal.sub_regime} -> {signal.regime} | Risk: {padded_sl_dist:.2f} | TP: {signal.suggested_tp:.2f}"
+                            )
+                    except Exception as reg_err:
+                        logger.critical(f"Critical: Failed to enroll position #{res.ticket} into management: {reg_err}", exc_info=True)
+                        # Emergency fallback: always ensure basic ManagedPosition is registered
+                        fallback_managed = ManagedPosition(
+                            ticket=int(res.ticket),
+                            symbol=signal.symbol,
+                            direction=signal.direction,
+                            volume=res.volume if res.volume > 0 else lot_size,
+                            open_price=res.price if res.price > 0 else target_entry,
+                            sl=padded_sl,
+                            tp=signal.suggested_tp,
+                            entry_time=time.time(),
+                            risk_r_dist=padded_sl_dist,
+                            initial_regime=signal.regime,
+                            current_regime=signal.regime,
+                            sub_regime=signal.sub_regime,
+                            be_lock_r=signal.be_lock_r,
+                            stall_exit_seconds=signal.stall_exit_seconds,
+                        )
+                        async with self._lock:
+                            self._managed_positions[fallback_managed.ticket] = fallback_managed
+
+                if not res.success or res.ticket is None:
+                    logger.warning(f"[ORDER UNCONFIRMED] Broker returned non-success ({res.error}). Checking if order was accepted anyway...")
+                    recovered = await self._reconcile_post_order_failure(
                         symbol=signal.symbol,
                         direction=signal.direction,
-                        volume=res.volume,
-                        open_price=res.price,
-                        sl=padded_sl,
-                        tp=signal.suggested_tp,
-                        entry_time=time.time(),
-                        risk_r_dist=actual_sl_dist,
-                        initial_regime=signal.regime,
-                        current_regime=signal.regime,
-                        sub_regime=signal.sub_regime,
-                        be_lock_r=active_be_r,
-                        stall_exit_seconds=signal.stall_exit_seconds,
-                        highest_r_reached=0.0,
-                        entry_velocity=self.news_reactor._latest_velocity or 1.0,
+                        lot_size=lot_size,
+                        target_entry=target_entry,
+                        padded_sl=padded_sl,
+                        suggested_tp=signal.suggested_tp,
+                        comment=order_comment,
+                        signal=signal,
                     )
-                    async with self._lock:
-                        self._managed_positions[managed.ticket] = managed
+                    if recovered:
+                        return OrderResult(success=True, ticket=recovered.ticket, price=recovered.open_price, volume=recovered.volume)
 
-                    logger.info(
-                        f"[ADAPTIVE TRADE INITIATED] #{managed.ticket} {signal.direction} {lot_size} {signal.symbol} "
-                        f"@ {res.price:.2f} | Sub-Regime: {signal.sub_regime} -> {signal.regime} | Risk: {signal.risk_r_dist:.2f} | TP: {signal.suggested_tp:.2f}"
-                    )
+                return res
 
-            return res
-
-        finally:
-            asyncio.create_task(self._release_in_flight_lock(delay_sec=2.5))
+            except Exception as exec_err:
+                logger.error(f"[EXECUTION EXCEPTION] Order dispatch raised error: {exec_err}. Initiating post-order reconciliation...")
+                recovered = await self._reconcile_post_order_failure(
+                    symbol=signal.symbol,
+                    direction=signal.direction,
+                    lot_size=lot_size,
+                    target_entry=target_entry,
+                    padded_sl=padded_sl,
+                    suggested_tp=signal.suggested_tp,
+                    comment=order_comment,
+                    signal=signal,
+                )
+                if recovered:
+                    return OrderResult(success=True, ticket=recovered.ticket, price=recovered.open_price, volume=recovered.volume)
+                raise
+            finally:
+                asyncio.create_task(self._release_in_flight_lock(delay_sec=2.5))
 
     async def _management_loop(self) -> None:
         """
@@ -450,9 +995,47 @@ class TradeManager:
                     if not lo:
                         continue
 
-                    # If order filled by broker into an active position, remove from pending
-                    if p_ticket in broker_pos_map:
+                    # If order filled by broker into an active position, enroll into managed positions!
+                    matched_pos = broker_pos_map.get(p_ticket)
+                    if not matched_pos:
+                        for bp in broker_positions:
+                            bp_t = int(bp.ticket) if str(bp.ticket).isdigit() else bp.ticket
+                            if bp_t not in self._managed_positions and bp.symbol == lo.symbol:
+                                lo_dir = "BUY" if "BUY" in str(lo.order_type).upper() else "SELL"
+                                bp_dir = bp.type.value if hasattr(bp.type, "value") else str(bp.type).upper()
+                                if lo_dir == bp_dir and abs(bp.open_price - lo.price) <= 2.0:
+                                    matched_pos = bp
+                                    break
+
+                    if matched_pos:
+                        pos_ticket = int(matched_pos.ticket) if str(matched_pos.ticket).isdigit() else matched_pos.ticket
                         async with self._lock:
+                            # Avoid duplicate registration
+                            if pos_ticket not in self._managed_positions:
+                                risk_dist = abs(matched_pos.open_price - lo.sl) if lo.sl > 0 else (abs(lo.price - lo.sl) if lo.sl > 0 else 2.50)
+                                lo_dir = "BUY" if "BUY" in str(lo.order_type).upper() else "SELL"
+                                managed = ManagedPosition(
+                                    ticket=pos_ticket,
+                                    symbol=lo.symbol,
+                                    direction=lo_dir,
+                                    volume=matched_pos.volume if matched_pos.volume > 0 else lo.volume,
+                                    open_price=matched_pos.open_price if matched_pos.open_price > 0 else lo.price,
+                                    sl=lo.sl,
+                                    tp=lo.tp,
+                                    entry_time=time.time(),
+                                    risk_r_dist=risk_dist,
+                                    initial_regime="SMART_LIMIT_FILL",
+                                    current_regime="SMART_LIMIT_FILL",
+                                    sub_regime="SMART_LIMIT",
+                                    be_lock_r=0.65,
+                                    stall_exit_seconds=min(getattr(lo, "timeout_seconds", 60.0), 60.0),
+                                    highest_r_reached=0.0,
+                                )
+                                self._managed_positions[pos_ticket] = managed
+                                logger.info(
+                                    f"[PENDING ORDER FILLED & ENROLLED] Limit #{p_ticket} executed as Managed Position #{pos_ticket} "
+                                    f"@ {matched_pos.open_price:.2f} | SL: {lo.sl:.2f} | TP: {lo.tp:.2f}"
+                                )
                             self._pending_limit_orders.pop(p_ticket, None)
                         continue
 
@@ -519,6 +1102,10 @@ class TradeManager:
                         if ticket not in self._managed_positions:
                             continue
                         pos = self._managed_positions[ticket]
+
+                    if getattr(pos, "is_user_manual", False) and not self.manage_manual_positions:
+                        # Skip automated management of user manual trades
+                        continue
 
                     # 1. Check if position was closed at broker level (SL or TP hit, or after close_position)
                     if ticket not in broker_pos_map:
@@ -603,27 +1190,79 @@ class TradeManager:
                         continue
 
                     # =============================================================
-                    # INTELLIGENT RULE 2: Extra-Calculated News Management (No Arbitrary Cutoffs)
-                    # Instead of blindly cutting off trades on news:
-                    # 1. If trade is in profit, lock Breakeven so it rides the news risk-free!
-                    # 2. Check fundamental news surprise bias (Actual vs Forecast).
-                    # 3. If bias aligns with trade, let it run!
-                    # 4. Only exit if high-confidence news strongly opposes trade AND position is in deep loss.
+                    # INTELLIGENT RULE 2: Smart Pre-News Free-Roll Engine & Protection Lock
+                    # 1. T-90s Free-Roll Lock: When news is within 90s, if floating profit >= +0.40R:
+                    #    Lock SL to (Entry + Spread + 0.20R) and expand TP to 4.0R (Free-Roll Runner)!
+                    # 2. T-60s Pre-News Scratch: When news is within 60s, if stalled (< +0.40R):
+                    #    Scratch/close to prevent broker spread blowout & slippage at release (T-0s).
+                    # 3. If in modest profit (+0.15R to +0.39R), lock Breakeven so it rides safely.
+                    # 4. If fundamental news surprise severely opposes trade and position is in deep loss, exit.
                     # =============================================================
                     cal_state = self.news_reactor.check_calendar_state() if self.news_reactor else {}
                     is_news_freeze = cal_state.get("is_news_freeze", False) or cal_state.get("is_freeze", False)
-                    if is_news_freeze:
-                        # 1. If in profit, lock to Breakeven so it rides news safely with ZERO risk
-                        if floating_r >= 0.15 and pos.ratchet_stage < 1:
-                            pos.ratchet_stage = 1
-                            is_gold = any(k in pos.symbol.upper() for k in ["XAU", "GOLD"])
-                            spread_buf = 0.25 if is_gold else 0.0002
-                            new_sl = round(pos.open_price + spread_buf if pos.direction == "BUY" else pos.open_price - spread_buf, 2 if is_gold else 5)
-                            pos.sl = new_sl
-                            await self.broker.modify_position(pos.ticket, sl=new_sl, tp=pos.tp)
-                            logger.info(f"[CALCULATED NEWS PROTECTION] #{ticket} locked SL to Breakeven ({new_sl}) to ride news safely without closing!")
+                    countdown_sec = cal_state.get("countdown_seconds")
 
-                        # 2. Study fundamental news bias
+                    is_gold = any(k in pos.symbol.upper() for k in ["XAU", "GOLD"])
+                    spread_buf = 0.25 if is_gold else 0.0002
+
+                    # Check upcoming news proximity
+                    is_near_release = is_news_freeze or (countdown_sec is not None and 0 < countdown_sec <= 90)
+
+                    if is_near_release:
+                        # Case A: T-90s Free-Roll Lock on strong winning trades (>= +0.40R)
+                        if floating_r >= 0.40 and not getattr(pos, "is_freeroll_locked", False):
+                            guaranteed_offset = 0.20 * pos.risk_r_dist
+                            if pos.direction == "BUY":
+                                new_sl = round(pos.open_price + spread_buf + guaranteed_offset, 2 if is_gold else 5)
+                                new_tp = round(pos.open_price + (4.0 * pos.risk_r_dist), 2 if is_gold else 5)
+                                is_tighter = (new_sl > pos.sl)
+                            else:
+                                new_sl = round(pos.open_price - spread_buf - guaranteed_offset, 2 if is_gold else 5)
+                                new_tp = round(pos.open_price - (4.0 * pos.risk_r_dist), 2 if is_gold else 5)
+                                is_tighter = (new_sl < pos.sl if pos.sl > 0 else True)
+
+                            if is_tighter:
+                                ok = await self.broker.modify_position(pos.ticket, sl=new_sl, tp=new_tp)
+                                if ok:
+                                    pos.sl = new_sl
+                                    pos.tp = new_tp
+                                    pos.is_freeroll_locked = True
+                                    pos.ratchet_stage = max(pos.ratchet_stage, 2)
+                                    pos.last_mod_time = time.time()
+                                    logger.info(
+                                        f"[PRE-NEWS FREE-ROLL LOCK] #{ticket} {pos.direction} locked SL to +0.20R profit floor ({new_sl}) "
+                                        f"and expanded TP to 4.0R ({new_tp}) before upcoming news!"
+                                    )
+                                else:
+                                    logger.warning(f"[PRE-NEWS FREE-ROLL FAILED] Broker rejected modify for #{ticket}")
+
+                        # Case B: T-60s Pre-News Scratch on stalled trades (< +0.40R)
+                        elif countdown_sec is not None and 0 < countdown_sec <= 60 and floating_r < 0.40:
+                            reason_scratch = f"Pre-News T-60s Scratch (Stalled {floating_r:.2f}R < +0.40R)"
+                            logger.info(f"[PRE-NEWS SCRATCH] Position #{ticket} closed at T-{countdown_sec}s: {reason_scratch}")
+                            pos.is_closing = True
+                            pos.close_reason = reason_scratch
+                            pos.close_trigger_price = current_price
+                            await self.broker.close_position(ticket)
+                            if getattr(self.broker, "_mt5_queue", None) is None:
+                                await self._on_position_closed(pos, reason=reason_scratch, current_price=current_price)
+                            continue
+
+                        # Case C: Modest profit breakeven lock (between +0.15R and +0.40R)
+                        elif floating_r >= 0.15 and pos.ratchet_stage < 1 and not getattr(pos, "is_freeroll_locked", False):
+                            new_sl = round(pos.open_price + spread_buf if pos.direction == "BUY" else pos.open_price - spread_buf, 2 if is_gold else 5)
+                            is_tighter = (new_sl > pos.sl) if pos.direction == "BUY" else (new_sl < pos.sl if pos.sl > 0 else True)
+                            if is_tighter:
+                                ok = await self.broker.modify_position(pos.ticket, sl=new_sl, tp=pos.tp)
+                                if ok:
+                                    pos.sl = new_sl
+                                    pos.ratchet_stage = 1
+                                    pos.last_mod_time = time.time()
+                                    logger.info(f"[CALCULATED NEWS PROTECTION] #{ticket} locked SL to Breakeven ({new_sl}) to ride news safely without closing!")
+                                else:
+                                    logger.warning(f"[CALCULATED NEWS PROTECTION FAILED] Broker rejected SL modify to {new_sl} for #{ticket}")
+
+                        # Case D: Fundamental news bias check
                         bias_data = self.news_reactor.analyze_news_fundamental_bias(pos.symbol) if self.news_reactor else {}
                         bias = bias_data.get("bias", "NEUTRAL")
                         conf = bias_data.get("confidence", 0)
@@ -793,14 +1432,17 @@ class TradeManager:
 
                     if new_tp != pos.tp:
                         old_tp = pos.tp
-                        pos.tp = new_tp
-                        pos.current_regime = "ADAPTIVE_RUNNER"
-                        pos.last_mod_time = time.time()
-                        await self.broker.modify_position(pos.ticket, sl=pos.sl, tp=pos.tp)
-                        logger.info(
-                            f"[DYNAMIC TP EXPANSION] #{pos.ticket} surging strongly (+{floating_r:.2f}R)! "
-                            f"Extended TP from {old_tp:.2f} to {new_tp:.2f} (+{new_target_r:.1f}R) to capture maximum profit!"
-                        )
+                        ok = await self.broker.modify_position(pos.ticket, sl=pos.sl, tp=new_tp)
+                        if ok:
+                            pos.tp = new_tp
+                            pos.current_regime = "ADAPTIVE_RUNNER"
+                            pos.last_mod_time = time.time()
+                            logger.info(
+                                f"[DYNAMIC TP EXPANSION] #{pos.ticket} surging strongly (+{floating_r:.2f}R)! "
+                                f"Extended TP from {old_tp:.2f} to {new_tp:.2f} (+{new_target_r:.1f}R) to capture maximum profit!"
+                            )
+                        else:
+                            logger.warning(f"[DYNAMIC TP EXPANSION FAILED] Broker rejected TP modify to {new_tp} for #{pos.ticket}")
 
     async def _evaluate_ratchet_floor(self, pos: ManagedPosition, floating_r: float, current_price: float) -> None:
         """
@@ -816,49 +1458,47 @@ class TradeManager:
         spread_buf = 0.25 if is_gold else 0.0002
         new_sl = None
 
+        candidate_stage = pos.ratchet_stage
+
         # Stage 1: Breakeven Lock at +0.65R (or higher depending on strategy regime)
         trigger_be = max(0.65, pos.be_lock_r)
         if pos.ratchet_stage < 1 and floating_r >= trigger_be:
-            pos.ratchet_stage = 1
+            candidate_stage = 1
             if pos.direction == "BUY":
                 new_sl = round(pos.open_price + spread_buf, 2 if is_gold else 5)
             else:
                 new_sl = round(pos.open_price - spread_buf, 2 if is_gold else 5)
-            logger.info(f"[RATCHET BE LOCK] #{pos.ticket} hit +{floating_r:.2f}R -> SL moved to Breakeven {new_sl:.2f}")
 
         # Stage 2: Lock Profit at +1.00R (Locks +0.45R)
         elif pos.ratchet_stage < 2 and floating_r >= 1.00:
-            pos.ratchet_stage = 2
+            candidate_stage = 2
             lock_dist = pos.risk_r_dist * 0.45
             if pos.direction == "BUY":
                 new_sl = round(pos.open_price + lock_dist, 2 if is_gold else 5)
             else:
                 new_sl = round(pos.open_price - lock_dist, 2 if is_gold else 5)
-            logger.info(f"[RATCHET LOCK +0.45R] #{pos.ticket} hit +{floating_r:.2f}R -> SL locked at {new_sl:.2f}")
 
         # Stage 3: Lock Profit at +1.50R (Locks +0.85R)
         elif pos.ratchet_stage < 3 and floating_r >= 1.50:
-            pos.ratchet_stage = 3
+            candidate_stage = 3
             lock_dist = pos.risk_r_dist * 0.85
             if pos.direction == "BUY":
                 new_sl = round(pos.open_price + lock_dist, 2 if is_gold else 5)
             else:
                 new_sl = round(pos.open_price - lock_dist, 2 if is_gold else 5)
-            logger.info(f"[RATCHET LOCK +0.85R] #{pos.ticket} hit +{floating_r:.2f}R -> SL locked at {new_sl:.2f}")
 
         # Stage 4: Lock Profit at +2.00R (Locks +1.35R)
         elif pos.ratchet_stage < 4 and floating_r >= 2.00:
-            pos.ratchet_stage = 4
+            candidate_stage = 4
             lock_dist = pos.risk_r_dist * 1.35
             if pos.direction == "BUY":
                 new_sl = round(pos.open_price + lock_dist, 2 if is_gold else 5)
             else:
                 new_sl = round(pos.open_price - lock_dist, 2 if is_gold else 5)
-            logger.info(f"[RATCHET LOCK +1.35R] #{pos.ticket} hit +{floating_r:.2f}R -> SL locked at {new_sl:.2f}")
 
         # Stage 5: Dynamic Structural Trailing at +2.50R+
         elif floating_r >= 2.50:
-            pos.ratchet_stage = 5
+            candidate_stage = 5
             trail_dist = pos.risk_r_dist * 0.85
             if pos.direction == "BUY":
                 candidate_sl = round(current_price - trail_dist, 2 if is_gold else 5)
@@ -866,13 +1506,26 @@ class TradeManager:
                     new_sl = candidate_sl
             else:
                 candidate_sl = round(current_price + trail_dist, 2 if is_gold else 5)
-                if candidate_sl < pos.sl:
+                if pos.sl <= 0 or candidate_sl < pos.sl:
                     new_sl = candidate_sl
 
-        if new_sl is not None and new_sl != pos.sl:
-            pos.sl = new_sl
-            pos.last_mod_time = time.time()
-            await self.broker.modify_position(pos.ticket, sl=pos.sl, tp=pos.tp)
+        if new_sl is not None:
+            # Enforce protective stop: NEVER loosen an existing stop loss!
+            is_tightening = False
+            if pos.direction == "BUY" and new_sl > pos.sl:
+                is_tightening = True
+            elif pos.direction == "SELL" and (pos.sl <= 0 or new_sl < pos.sl):
+                is_tightening = True
+
+            if is_tightening:
+                ok = await self.broker.modify_position(pos.ticket, sl=new_sl, tp=pos.tp)
+                if ok:
+                    pos.sl = new_sl
+                    pos.ratchet_stage = candidate_stage
+                    pos.last_mod_time = time.time()
+                    logger.info(f"[RATCHET SL UPDATED] #{pos.ticket} SL moved to {new_sl:.2f} (Stage {candidate_stage})")
+                else:
+                    logger.warning(f"[RATCHET SL REJECTED] Broker rejected SL modify to {new_sl:.2f} for #{pos.ticket}")
 
     async def _on_position_closed(
         self,
@@ -894,34 +1547,52 @@ class TradeManager:
         pos.close_reason = reason
         now = time.time()
 
-        close_p = current_price if (current_price and current_price > 0) else getattr(pos, "close_trigger_price", None)
-        if close_p is None:
-            tick = await self.broker.get_tick(pos.symbol)
-            if tick and tick.bid > 0:
-                close_p = tick.bid if pos.direction == "BUY" else tick.ask
-            elif "Stop Loss" in reason or "SL" in reason:
-                close_p = pos.sl if pos.sl > 0 else pos.open_price
-            elif "Take Profit" in reason or "TP" in reason:
-                close_p = pos.tp if pos.tp > 0 else pos.open_price
-            else:
-                close_p = pos.open_price
+        deal = None
+        if hasattr(self.broker, "get_closed_deal"):
+            try:
+                deal = await self.broker.get_closed_deal(pos.ticket)
+            except Exception as e:
+                logger.warning(f"Error fetching closed deal for #{pos.ticket}: {e}")
 
         is_gold = any(k in pos.symbol.upper() for k in ["XAU", "GOLD"])
         contract_size = 100.0 if is_gold else 100000.0
 
-        # If close_p ended up identical to open_price but pos.profit exists, reconstruct true exit price
-        if abs(close_p - pos.open_price) < 0.01 and abs(getattr(pos, "profit", 0.0)) > 0.05:
-            price_delta = pos.profit / (pos.volume * contract_size)
-            close_p = round(pos.open_price + price_delta if pos.direction == "BUY" else pos.open_price - price_delta, 2 if is_gold else 5)
-
-        if pos.direction == "BUY":
-            floating_dist = close_p - pos.open_price
+        if deal is not None:
+            close_p = deal.close_price
+            # Realized net P&L including broker commissions and swap
+            pnl = round(deal.profit + deal.commission + deal.swap, 2)
+            monetary_risk = max(pos.risk_r_dist * pos.volume * contract_size, 0.01)
+            pnl_r = round(pnl / monetary_risk, 2)
+            logger.info(
+                f"[BROKER EXECUTION DEAL] #{pos.ticket} executed deal confirmed: Close: {close_p:.2f} | "
+                f"Net Realized: ${pnl:+.2f} (Profit: ${deal.profit:.2f}, Comm: ${deal.commission:.2f}, Swap: ${deal.swap:.2f})"
+            )
         else:
-            floating_dist = pos.open_price - close_p
+            close_p = current_price if (current_price and current_price > 0) else getattr(pos, "close_trigger_price", None)
+            if close_p is None:
+                tick = await self.broker.get_tick(pos.symbol)
+                if tick and tick.bid > 0:
+                    close_p = tick.bid if pos.direction == "BUY" else tick.ask
+                elif "Stop Loss" in reason or "SL" in reason:
+                    close_p = pos.sl if pos.sl > 0 else pos.open_price
+                elif "Take Profit" in reason or "TP" in reason:
+                    close_p = pos.tp if pos.tp > 0 else pos.open_price
+                else:
+                    close_p = pos.open_price
 
-        pnl_r = round(floating_dist / max(pos.risk_r_dist, 0.01), 2)
-        # Mathematically exact dollar P&L
-        pnl = round(floating_dist * pos.volume * contract_size, 2)
+            # If close_p ended up identical to open_price but pos.profit exists, reconstruct true exit price
+            if abs(close_p - pos.open_price) < 0.01 and abs(getattr(pos, "profit", 0.0)) > 0.05:
+                price_delta = pos.profit / (pos.volume * contract_size)
+                close_p = round(pos.open_price + price_delta if pos.direction == "BUY" else pos.open_price - price_delta, 2 if is_gold else 5)
+
+            if pos.direction == "BUY":
+                floating_dist = close_p - pos.open_price
+            else:
+                floating_dist = pos.open_price - close_p
+
+            pnl_r = round(floating_dist / max(pos.risk_r_dist, 0.01), 2)
+            # Mathematically exact dollar P&L
+            pnl = round(floating_dist * pos.volume * contract_size, 2)
 
         # Deterministic ticket integer
         if str(pos.ticket).isdigit():
@@ -956,22 +1627,32 @@ class TradeManager:
             f"Open: {pos.open_price:.2f} -> Close: {close_p:.2f}. Balance: {acc.balance:.2f} {acc.currency}"
         )
 
+        # Daily realized P&L and circuit breaker metrics
+        self._daily_realized_pnl += pnl
         is_loss = (pnl < -0.05)
         if is_loss:
             self._daily_losses_count += 1
-            # Fast 15s post-loss buffer (NOT 300s/5m freeze!)
-            self._post_loss_cooldown_until = now + 15.0
-            self._last_order_time = now + 10.0
+            self._consecutive_losses += 1
+            # Intelligent post-loss settlement buffer
+            self._post_loss_cooldown_until = now + self.post_loss_buffer_seconds
+            self._last_order_time = now + 8.0
             self._last_loss_direction = pos.direction
             self._last_loss_price = pos.open_price
             self._last_loss_time = now
             logger.warning(
                 f"[POST-LOSS BUFFER] Trade #{pos.ticket} closed with loss (${pnl:.2f}). "
-                f"Buffer active for 15s. Smart directional revenge guard set for {pos.direction} @ {pos.open_price:.2f}."
+                f"Consecutive losses: {self._consecutive_losses}/{self.max_consecutive_losses}, "
+                f"Daily losses: {self._daily_losses_count}/{self.max_daily_losses}. Buffer active for {self.post_loss_buffer_seconds}s."
             )
-            if self._daily_losses_count >= self.max_daily_losses:
-                self.pause_trading(minutes=60)
-                logger.error("[CIRCUIT BREAKER ACTIVATED] Max daily losses hit. Auto-trading paused 1 hour.")
+            if self.max_consecutive_losses > 0 and self._consecutive_losses >= self.max_consecutive_losses:
+                self.pause_trading(minutes=15)
+                logger.error(f"[CIRCUIT BREAKER ACTIVATED] Max consecutive losses hit ({self._consecutive_losses}). Auto-trading paused 15m.")
+            elif self.max_daily_losses > 0 and self._daily_losses_count >= self.max_daily_losses:
+                self.pause_trading(minutes=30)
+                logger.error(f"[CIRCUIT BREAKER ACTIVATED] Max daily losses hit ({self._daily_losses_count}). Auto-trading paused 30m.")
+        elif pnl > 0.05:
+            self._consecutive_losses = 0
+            logger.info(f"[PROFITABLE TRADE] Trade #{pos.ticket} closed with profit (${pnl:.2f}). Consecutive loss counter reset.")
 
     def reset_cooldown(self) -> None:
         """Instantly clear post-loss cooldown and circuit breaker."""
@@ -987,6 +1668,17 @@ class TradeManager:
         count = await self.broker.close_all_positions()
         async with self._lock:
             self._managed_positions.clear()
+
+        # Query broker state again and verify actual result
+        remaining = await self.broker.get_open_positions()
+        if remaining:
+            rem_tickets = [p.ticket for p in remaining]
+            self._contradictory_state_active = True
+            self._contradictory_state_reason = f"CRITICAL: Emergency close all left {len(remaining)} position(s) open on broker: {rem_tickets}"
+            self.pause_trading(minutes=1440)
+            logger.critical(f"[EMERGENCY ACTION FAILURE] {self._contradictory_state_reason}")
+            if self.history_store:
+                await self.history_store.record_audit_event("CRITICAL_CLOSE_FAILED", self._contradictory_state_reason)
         return count
 
     async def emergency_lock_breakeven_all(self) -> int:
@@ -1017,6 +1709,11 @@ class TradeManager:
         return {
             "daily_losses": self._daily_losses_count,
             "max_daily_losses": self.max_daily_losses,
+            "consecutive_losses": self._consecutive_losses,
+            "max_consecutive_losses": self.max_consecutive_losses,
+            "daily_realized_pnl": round(self._daily_realized_pnl, 2),
+            "max_daily_drawdown_pct": self.max_daily_drawdown_pct,
+            "start_of_day_balance": round(self._start_of_day_balance, 2),
             "is_paused": self.is_paused(),
             "pause_seconds_left": max(0, int(self._pause_until - now)),
             "post_loss_cooldown_seconds_left": max(0, int(self._post_loss_cooldown_until - now)),

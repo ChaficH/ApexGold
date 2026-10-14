@@ -558,16 +558,23 @@ class TechnicalIndicators:
             return {"vwap": 0.0, "is_above": False, "is_below": False, "slope": 0.0, "valid": False}
         try:
             import ta
+            h = df["high"].ffill().bfill()
+            l = df["low"].ffill().bfill()
+            c = df["close"].ffill().bfill()
+            v = df["volume"].fillna(1.0).clip(lower=1.0)
             vwap_series = ta.volume.VolumeWeightedAveragePrice(
-                high=df["high"],
-                low=df["low"],
-                close=df["close"],
-                volume=df["volume"].fillna(1.0).clip(lower=1.0),
+                high=h,
+                low=l,
+                close=c,
+                volume=v,
                 window=min(len(df), 40)
             ).volume_weighted_average_price()
-            val = float(vwap_series.iloc[-1])
-            prev_val = float(vwap_series.iloc[-2]) if len(vwap_series) >= 2 else val
-            curr_c = float(df["close"].iloc[-1])
+            vwap_clean = vwap_series.dropna()
+            if len(vwap_clean) < 1:
+                return {"vwap": 0.0, "is_above": False, "is_below": False, "slope": 0.0, "valid": False}
+            val = float(vwap_clean.iloc[-1])
+            prev_val = float(vwap_clean.iloc[-2]) if len(vwap_clean) >= 2 else val
+            curr_c = float(c.iloc[-1])
             slope = val - prev_val
             return {
                 "vwap": round(val, 2),
@@ -589,14 +596,18 @@ class TechnicalIndicators:
             return {"kama": 0.0, "is_above": False, "is_below": False, "valid": False}
         try:
             import ta
+            c = df["close"].ffill().bfill()
             kama_series = ta.momentum.KAMAIndicator(
-                close=df["close"],
+                close=c,
                 window=window,
                 pow1=2,
                 pow2=30
             ).kama()
-            val = float(kama_series.iloc[-1])
-            curr_c = float(df["close"].iloc[-1])
+            kama_clean = kama_series.dropna()
+            if len(kama_clean) < 1:
+                return {"kama": 0.0, "is_above": False, "is_below": False, "valid": False}
+            val = float(kama_clean.iloc[-1])
+            curr_c = float(c.iloc[-1])
             return {
                 "kama": round(val, 2),
                 "is_above": (curr_c >= val),
@@ -614,11 +625,12 @@ class TechnicalIndicators:
         R^2 < 0.25 indicates high-entropy random walk (chop).
         """
         arr = cls._to_numpy(close_prices)
-        if len(arr) < window:
+        valid = arr[~np.isnan(arr)]
+        if len(valid) < window:
             return {"r_squared": 0.0, "slope": 0.0, "is_strong_trend": False, "is_random_walk": False, "valid": False}
         try:
             from scipy import stats
-            subset = arr[-window:]
+            subset = valid[-window:]
             x = np.arange(len(subset))
             res = stats.linregress(x, subset)
             r2 = float(res.rvalue ** 2) if not np.isnan(res.rvalue) else 0.0
@@ -641,10 +653,11 @@ class TechnicalIndicators:
         Identifies high-probability discount/premium pullback zones.
         """
         arr = cls._to_numpy(close_prices)
-        if len(arr) < window:
+        valid = arr[~np.isnan(arr)]
+        if len(valid) < window:
             return {"zscore": 0.0, "is_extreme_overbought": False, "is_extreme_oversold": False, "is_bull_discount": False, "is_bear_premium": False, "valid": False}
         try:
-            subset = arr[-window:]
+            subset = valid[-window:]
             mean_val = np.mean(subset)
             std_val = np.std(subset)
             if std_val < 1e-6:
@@ -670,8 +683,11 @@ class TechnicalIndicators:
             return {"is_squeeze": False, "bandwidth": 0.0, "valid": False}
         try:
             import ta
-            bb = ta.volatility.BollingerBands(close=df["close"], window=window, window_dev=2)
-            bw = bb.bollinger_wband()
+            c = df["close"].ffill().bfill()
+            bb = ta.volatility.BollingerBands(close=c, window=window, window_dev=2)
+            bw = bb.bollinger_wband().dropna()
+            if len(bw) < 1:
+                return {"is_squeeze": False, "bandwidth": 0.0, "valid": False}
             val = float(bw.iloc[-1])
             is_squeeze = (val < 0.012)
             return {
@@ -700,8 +716,13 @@ class TechnicalIndicators:
         l = cls._to_numpy(low)
         c = cls._to_numpy(close)
         n = len(c)
-        if n < period + 2:
+        if n < period + 2 or len(h) != n or len(l) != n:
             return {"direction": 0, "trend_name": "NEUTRAL", "line": 0.0, "is_bull": False, "is_bear": False, "valid": False}
+
+        # Clean NaNs
+        if np.isnan(h).any(): h = pd.Series(h).ffill().bfill().values
+        if np.isnan(l).any(): l = pd.Series(l).ffill().bfill().values
+        if np.isnan(c).any(): c = pd.Series(c).ffill().bfill().values
 
         tr = np.maximum(h - l, np.maximum(np.abs(h - np.roll(c, 1)), np.abs(l - np.roll(c, 1))))
         tr[0] = h[0] - l[0]
@@ -713,9 +734,10 @@ class TechnicalIndicators:
         hl2 = (h + l) / 2.0
         bu = hl2 + (multiplier * atr)
         bl = hl2 - (multiplier * atr)
-        fu = np.zeros(n, dtype=np.float64)
-        fl = np.zeros(n, dtype=np.float64)
+        fu = np.copy(bu)
+        fl = np.copy(bl)
         trd = np.zeros(n, dtype=int)
+        trd[period - 1] = 1 if c[period - 1] >= hl2[period - 1] else -1
 
         for i in range(period, n):
             fu[i] = bu[i] if (bu[i] < fu[i - 1] or c[i - 1] > fu[i - 1]) else fu[i - 1]
@@ -729,6 +751,8 @@ class TechnicalIndicators:
 
         d = int(trd[-1])
         line = float(fl[-1] if d == 1 else fu[-1])
+        if np.isnan(line):
+            return {"direction": 0, "trend_name": "NEUTRAL", "line": 0.0, "is_bull": False, "is_bear": False, "valid": False}
         return {
             "direction": d,
             "trend_name": "BULL" if d == 1 else ("BEAR" if d == -1 else "NEUTRAL"),
@@ -752,13 +776,19 @@ class TechnicalIndicators:
         """
         try:
             import ta
-            s = pd.Series(cls._to_numpy(close))
-            if len(s) < period + smooth_k + smooth_d + 2:
+            arr = cls._to_numpy(close)
+            valid_arr = arr[~np.isnan(arr)]
+            if len(valid_arr) < (period * 2 + smooth_k + smooth_d):
                 return {"k": 50.0, "d": 50.0, "is_overbought": False, "is_oversold": False, "bullish_cross": False, "bearish_cross": False, "valid": False}
 
+            s = pd.Series(valid_arr)
             stoch = ta.momentum.StochRSIIndicator(close=s, window=period, smooth1=smooth_k, smooth2=smooth_d)
-            k_s = stoch.stochrsi_k()
-            d_s = stoch.stochrsi_d()
+            k_s = stoch.stochrsi_k().dropna()
+            d_s = stoch.stochrsi_d().dropna()
+
+            if len(k_s) < 2 or len(d_s) < 2:
+                return {"k": 50.0, "d": 50.0, "is_overbought": False, "is_oversold": False, "bullish_cross": False, "bearish_cross": False, "valid": False}
+
             k = float(k_s.iloc[-1] * 100.0)
             d = float(d_s.iloc[-1] * 100.0)
             prev_k = float(k_s.iloc[-2] * 100.0)
@@ -949,6 +979,247 @@ class TechnicalIndicators:
                 "at_major_resistance": at_major_resistance,
                 "liquidity_sweep_bull": is_bull_sweep,
                 "liquidity_sweep_bear": is_bear_sweep,
+                "valid": True,
+            }
+        except Exception:
+            return default_res
+
+    @classmethod
+    def calculate_choppiness_index(
+        cls,
+        high: Union[pd.Series, np.ndarray, list],
+        low: Union[pd.Series, np.ndarray, list],
+        close: Union[pd.Series, np.ndarray, list],
+        period: int = 14
+    ) -> Dict[str, Any]:
+        """
+        Dreiss Choppiness Index (CI) (Freqtrade & TradingView standard).
+        Formula:
+            CI = 100 * LOG10( SUM(TrueRange, period) / (MaxHigh(period) - MinLow(period)) ) / LOG10(period)
+        Interpretation:
+            - CI > 61.8: Market is consolidating/choppy. Breakout entries are high-risk whipsaw traps.
+            - CI < 38.2: Market is trending strongly. Trend continuation trades have high edge.
+            - 38.2 <= CI <= 61.8: Transitional market.
+        """
+        h = cls._to_numpy(high)
+        l = cls._to_numpy(low)
+        c = cls._to_numpy(close)
+        n = len(c)
+        if n < period + 1 or len(h) != n or len(l) != n:
+            return {"ci": 50.0, "is_choppy": False, "is_trending": False, "valid": False}
+
+        # Clean NaNs
+        if np.isnan(h).any(): h = pd.Series(h).ffill().bfill().values
+        if np.isnan(l).any(): l = pd.Series(l).ffill().bfill().values
+        if np.isnan(c).any(): c = pd.Series(c).ffill().bfill().values
+
+        tr = np.empty(n, dtype=np.float64)
+        tr[0] = h[0] - l[0]
+        for i in range(1, n):
+            hl = h[i] - l[i]
+            hc = abs(h[i] - c[i - 1])
+            lc = abs(l[i] - c[i - 1])
+            tr[i] = max(hl, hc, lc)
+
+        sum_tr = np.sum(tr[-period:])
+        max_h = np.max(h[-period:])
+        min_l = np.min(l[-period:])
+        price_range = max_h - min_l
+
+        if price_range <= 0.0 or sum_tr <= 0.0:
+            return {"ci": 50.0, "is_choppy": True, "is_trending": False, "valid": True}
+
+        log_denom = np.log10(float(period))
+        ci_raw = 100.0 * (np.log10(sum_tr / price_range) / log_denom)
+        ci_val = float(np.clip(ci_raw, 0.0, 100.0))
+
+        return {
+            "ci": round(ci_val, 2),
+            "is_choppy": (ci_val >= 60.0),
+            "is_trending": (ci_val <= 40.0),
+            "valid": True,
+        }
+
+    @classmethod
+    def detect_market_structure(
+        cls,
+        high: Union[pd.Series, np.ndarray, list],
+        low: Union[pd.Series, np.ndarray, list],
+        close: Union[pd.Series, np.ndarray, list],
+        window: int = 3
+    ) -> Dict[str, Any]:
+        """
+        Market Structure Analysis: Higher Highs (HH), Higher Lows (HL),
+        Lower Highs (LH), Lower Lows (LL), Break of Structure (BOS), and
+        Change of Character (CHoCH).
+        """
+        swings = cls.find_swings(high, low, window=window)
+        sh = swings["highs"]
+        sl = swings["lows"]
+        c = cls._to_numpy(close)
+        curr_c = c[-1] if len(c) > 0 else 0.0
+
+        default_result = {
+            "structure": "NEUTRAL",
+            "is_bullish": False,
+            "is_bearish": False,
+            "is_choppy": True,
+            "bos_bull": False,
+            "bos_bear": False,
+            "choch_bull": False,
+            "choch_bear": False,
+            "last_swing_high": 0.0,
+            "last_swing_low": 0.0,
+            "valid": False,
+        }
+
+        if len(sh) < 2 or len(sl) < 2:
+            return default_result
+
+        h1, h0 = sh[-2]["price"], sh[-1]["price"]
+        l1, l0 = sl[-2]["price"], sl[-1]["price"]
+
+        is_hh = (h0 > h1)
+        is_hl = (l0 > l1)
+        is_lh = (h0 < h1)
+        is_ll = (l0 < l1)
+
+        structure = "NEUTRAL"
+        is_bullish = False
+        is_bearish = False
+        is_choppy = False
+
+        if is_hh and is_hl:
+            structure = "BULLISH_HH_HL"
+            is_bullish = True
+        elif is_lh and is_ll:
+            structure = "BEARISH_LH_LL"
+            is_bearish = True
+        elif is_hh and is_ll:
+            structure = "EXPANDING_VOLATILITY"
+            is_choppy = True
+        elif is_lh and is_hl:
+            structure = "CONTRACTING_CONSOLIDATION"
+            is_choppy = True
+        else:
+            structure = "SIDEWAYS"
+            is_choppy = True
+
+        # BOS: Price breaks recent swing high in bullish trend, or breaks recent swing low in bearish trend
+        bos_bull = bool(is_bullish and (curr_c > h0))
+        bos_bear = bool(is_bearish and (curr_c < l0))
+
+        # CHoCH: Price breaks structure in opposite direction (reversal warning)
+        choch_bull = bool(is_bearish and (curr_c > h0))
+        choch_bear = bool(is_bullish and (curr_c < l0))
+
+        return {
+            "structure": structure,
+            "is_bullish": is_bullish,
+            "is_bearish": is_bearish,
+            "is_choppy": is_choppy,
+            "bos_bull": bos_bull,
+            "bos_bear": bos_bear,
+            "choch_bull": choch_bull,
+            "choch_bear": choch_bear,
+            "last_swing_high": round(h0, 2),
+            "last_swing_low": round(l0, 2),
+            "prev_swing_high": round(h1, 2),
+            "prev_swing_low": round(l1, 2),
+            "valid": True,
+        }
+
+    @classmethod
+    def detect_liquidity_traps(
+        cls,
+        df_5m: Optional[pd.DataFrame],
+        current_price: float,
+        is_gold: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Institutional Liquidity Trap & False Breakout Detector.
+        Identifies:
+        - Bull Trap: Price spiked above recent swing high / resistance, but closed back
+          below with an upper rejection wick >= 50% of candle range. Prevents buying the top!
+        - Bear Trap: Price plunged below recent swing low / support, but closed back
+          above with a lower rejection wick >= 50% of candle range. Prevents selling the bottom!
+        - False Breakout: Strong breakout attempt that immediately lost momentum and slipped back.
+        """
+        default_res = {
+            "is_bull_trap": False,
+            "is_bear_trap": False,
+            "is_false_breakout": False,
+            "trap_reason": "",
+            "valid": False,
+        }
+        if df_5m is None or len(df_5m) < 8 or not all(c in df_5m.columns for c in ["high", "low", "open", "close"]):
+            return default_res
+
+        try:
+            h = df_5m["high"].values
+            l = df_5m["low"].values
+            o = df_5m["open"].values
+            c = df_5m["close"].values
+
+            # Lookback range prior to current candle
+            prior_h = np.max(h[-7:-1])
+            prior_l = np.min(l[-7:-1])
+
+            curr_h = h[-1]
+            curr_l = l[-1]
+            curr_o = o[-1]
+            curr_c = c[-1]
+
+            total_range = curr_h - curr_l
+            body_range = abs(curr_c - curr_o)
+            upper_wick = curr_h - max(curr_o, curr_c)
+            lower_wick = min(curr_o, curr_c) - curr_l
+
+            min_pierce = 0.30 if is_gold else 0.0004
+            is_bull_trap = False
+            is_bear_trap = False
+            is_false_breakout = False
+            trap_reason = ""
+
+            # Check Bull Trap: pierced prior high but closed below it with prominent upper wick
+            if curr_h >= (prior_h + min_pierce) and curr_c <= prior_h:
+                if total_range > 0 and (upper_wick / total_range) >= 0.45:
+                    is_bull_trap = True
+                    is_false_breakout = True
+                    trap_reason = f"Bull Trap / Liquidity Sweep above {prior_h:.2f} (Upper wick {upper_wick:.2f})"
+
+            # Check Bear Trap: pierced prior low but closed above it with prominent lower wick
+            if curr_l <= (prior_l - min_pierce) and curr_c >= prior_l:
+                if total_range > 0 and (lower_wick / total_range) >= 0.45:
+                    is_bear_trap = True
+                    is_false_breakout = True
+                    trap_reason = f"Bear Trap / Liquidity Sweep below {prior_l:.2f} (Lower wick {lower_wick:.2f})"
+
+            # Check Previous Bar Trap (2-bar confirmation)
+            if not is_bull_trap and not is_bear_trap and len(df_5m) >= 3:
+                prev_h = h[-2]
+                prev_l = l[-2]
+                prev_c = c[-2]
+                prior_h2 = np.max(h[-8:-2])
+                prior_l2 = np.min(l[-8:-2])
+
+                # Bull trap that formed on previous bar and confirmed by current red candle
+                if prev_h >= (prior_h2 + min_pierce) and curr_c < prev_c and curr_c < prior_h2:
+                    is_bull_trap = True
+                    is_false_breakout = True
+                    trap_reason = f"Confirmed Bull Trap: Rejection follow-through below {prior_h2:.2f}"
+
+                # Bear trap that formed on previous bar and confirmed by current green candle
+                if prev_l <= (prior_l2 - min_pierce) and curr_c > prev_c and curr_c > prior_l2:
+                    is_bear_trap = True
+                    is_false_breakout = True
+                    trap_reason = f"Confirmed Bear Trap: Rejection follow-through above {prior_l2:.2f}"
+
+            return {
+                "is_bull_trap": is_bull_trap,
+                "is_bear_trap": is_bear_trap,
+                "is_false_breakout": is_false_breakout,
+                "trap_reason": trap_reason,
                 "valid": True,
             }
         except Exception:
