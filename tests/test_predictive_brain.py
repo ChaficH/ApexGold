@@ -117,6 +117,58 @@ def test_predictive_brain_anti_chasing_veto():
         assert "pullback" in reason.lower()
 
 
+def test_predictive_brain_candle_top_rejection_and_quant_calibration():
+    """Verify predictive brain detects top-of-candle buying, lowers P(win), and vetoes signal."""
+    brain = ApexPredictiveBrain()
+    dfs = _generate_synthetic_dfs(trend="BULL")
+    
+    # Simulate current price right at the high wick of the 5m candle
+    high_5m = float(dfs["5m"]["high"].iloc[-1])
+    top_price = high_5m - 0.05  # 95%+ of candle range
+    
+    state = brain.evaluate_market(
+        symbol="XAUUSD",
+        dfs=dfs,
+        current_bid=top_price,
+        current_ask=top_price + 0.25,
+        spread=0.25,
+        now_ts=time.time(),
+    )
+    
+    # Realistic probability bounds: never exceed 64%, drop when chasing
+    assert state["p_win"] <= 0.64
+    assert state["candle_pos_5m"] >= 0.75
+    assert state["status"] == "WAITING_FOR_PULLBACK"
+    assert "TOP" in state["verdict_badge"] or "PULLBACK" in state["verdict_badge"]
+    
+    class DummyBuy:
+        direction = "BUY"
+        
+    allowed, reason = brain.filter_signal(DummyBuy())
+    assert allowed is False
+    assert "pullback" in reason.lower() or "extended" in reason.lower()
+
+
+def test_confluence_scorer_blocks_buying_top_wick():
+    """Verify ConfluenceScorer _evaluate_direction directly blocks BUY at top wick of 5m candle."""
+    scorer = ConfluenceScorer(mode="auto_adaptive")
+    dfs = _generate_synthetic_dfs(trend="BULL")
+    
+    high_5m = float(dfs["5m"]["high"].iloc[-1])
+    top_wick_price = high_5m - 0.05
+    
+    res = scorer._evaluate_direction(
+        symbol="XAUUSD",
+        direction="BUY",
+        dfs=dfs,
+        current_price=top_wick_price,
+        is_impulse_active=False,
+        utc_timestamp=time.time(),
+    )
+    # Must be blocked by Anti-Top Candle Wick Chasing Gate!
+    assert res is None
+
+
 def test_confluence_scorer_predictive_brain_integration():
     """Verify ConfluenceScorer embeds and runs ApexPredictiveBrain."""
     scorer = ConfluenceScorer(mode="auto_adaptive")

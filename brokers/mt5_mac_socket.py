@@ -495,11 +495,17 @@ class MacSocketMT5Adapter(AbstractBrokerAdapter):
         if self._use_http_queue:
             try:
                 from ui.server import ctx as s_ctx
+                cmd = {"action": "CLOSE_ALL"}
+                if symbol and symbol not in ["XAUUSD", "GOLD"]:
+                    cmd["symbol"] = symbol
                 if s_ctx.mt5_pending_actions is not None:
-                    s_ctx.mt5_pending_actions.append({"action": "CLOSE_ALL", "symbol": symbol or "XAUUSD"})
-                count = len(self._positions)
+                    s_ctx.mt5_pending_actions.append(cmd)
+                    # Also enqueue individual ORDER_CLOSE commands for all known tickets
+                    for t in list(self._positions.keys()):
+                        s_ctx.mt5_pending_actions.append({"action": "ORDER_CLOSE", "ticket": int(t)})
+                count = max(1, len(self._positions))
                 self._positions.clear()
-                logger.info(f"[ApexBridge HTTP QUEUE CLOSE ALL] Queued close all ({count} positions).")
+                logger.info(f"[ApexBridge HTTP QUEUE CLOSE ALL] Queued universal close all ({count} positions).")
                 return count
             except Exception as ca_err:
                 logger.error(f"[ApexBridge HTTP QUEUE CLOSE ALL FAILED]: {ca_err}")

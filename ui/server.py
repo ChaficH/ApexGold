@@ -421,11 +421,13 @@ async def update_settings(payload: SettingsPayload):
 @app.post("/api/actions/close_all")
 async def action_close_all():
     """1-Click Emergency Button: Close all active positions."""
-    if not await endpoint_rate_limiter.check("close_all", min_interval=1.0):
+    if not await endpoint_rate_limiter.check("close_all", min_interval=0.5):
         return {"status": "REJECTED", "message": "Emergency close all debounced. Please wait before retrying."}
     if not ctx.trade_manager:
         raise HTTPException(status_code=500, detail="TradeManager not ready")
     closed = await ctx.trade_manager.emergency_close_all()
+    if ctx.broker and hasattr(ctx.broker, "close_all_positions"):
+        await ctx.broker.close_all_positions()
     return {"status": "OK", "closed_count": closed}
 
 

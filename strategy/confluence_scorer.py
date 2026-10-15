@@ -837,13 +837,40 @@ class ConfluenceScorer:
         # F. Immediate 1m Execution Candle Gate
         # Prevent selling into active bullish expansion candles or buying into red dumping candles
         if direction == "BUY":
-            if not is_green_1m and not is_hammer_1m and not is_impulse_active:
-                logger.debug(f"[{symbol} BUY] Blocked: 1m candle is red without hammer rejection.")
+            is_lower_wick_absorbed = (c_1m[-1] - l_1m[-1]) > 0.8 * max(0.05, abs(c_1m[-1] - o_1m[-1]))
+            if not is_green_1m and not is_hammer_1m and not is_lower_wick_absorbed and not is_impulse_active:
+                logger.debug(f"[{symbol} BUY] Blocked: 1m candle is red without hammer or absorption rejection.")
                 return None
         else: # SELL
-            if not is_red_1m and not is_star_1m and not is_impulse_active:
-                logger.debug(f"[{symbol} SELL] Blocked: 1m candle is green without shooting star rejection.")
+            is_upper_wick_rejected = (h_1m[-1] - c_1m[-1]) > 0.8 * max(0.05, abs(c_1m[-1] - o_1m[-1]))
+            if not is_red_1m and not is_star_1m and not is_upper_wick_rejected and not is_impulse_active:
+                logger.debug(f"[{symbol} SELL] Blocked: 1m candle is green without shooting star or upper rejection.")
                 return None
+
+        # F2. Anti-Top/Bottom Candle Wick Chasing Gate (Strictly prevent buying high wicks or selling low wicks)
+        high_5m_curr = float(df_5m["high"].iloc[-1])
+        low_5m_curr = float(df_5m["low"].iloc[-1])
+        range_5m = max(0.40, high_5m_curr - low_5m_curr)
+        candle_pos_5m = (current_price - low_5m_curr) / range_5m
+
+        vwap_arr = TechnicalIndicators.vwap(
+            df_5m["high"].values,
+            df_5m["low"].values,
+            df_5m["close"].values,
+            df_5m["volume"].values if "volume" in df_5m else np.ones(len(df_5m))
+        )
+        vwap_curr = float(vwap_arr[-1]) if len(vwap_arr) > 0 and not np.isnan(vwap_arr[-1]) else current_price
+        dist_vwap = current_price - vwap_curr
+
+        if not is_impulse_active and not is_pre_news_aligned:
+            if direction == "BUY":
+                if candle_pos_5m > 0.75 and dist_vwap > 1.00 and not is_demand_reversal:
+                    logger.debug(f"[{symbol} BUY] Blocked: Buying top wick of 5m candle (pos: {candle_pos_5m:.2f}, +{dist_vwap:.2f} pts above VWAP). Waiting for pullback to fair value.")
+                    return None
+            else: # SELL
+                if candle_pos_5m < 0.25 and dist_vwap < -1.00 and not is_supply_reversal:
+                    logger.debug(f"[{symbol} SELL] Blocked: Selling bottom wick of 5m candle (pos: {candle_pos_5m:.2f}, {dist_vwap:.2f} pts below VWAP). Waiting for bounce to resistance.")
+                    return None
 
         # G. Institutional Liquidity Trap & False Breakout Gate
         # Strictly prevent buying the top of a bull trap or selling the bottom of a bear trap

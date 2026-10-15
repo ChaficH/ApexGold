@@ -262,7 +262,17 @@ string ExecuteCommand(const string action, const string json_line)
          ulong ticket = PositionGetTicket(i);
          if(ticket <= 0) continue;
          if(!PositionSelectByTicket(ticket)) continue;
-         if(sym_filter != "" && PositionGetString(POSITION_SYMBOL) != sym_filter) continue;
+         if(sym_filter != "")
+         {
+            string pos_sym = PositionGetString(POSITION_SYMBOL);
+            bool is_sym_match = (pos_sym == sym_filter);
+            // Flexible match for Gold variations (XAUUSD, GOLD, XAUUSDm, XAUUSDc)
+            if(!is_sym_match && (StringFind(sym_filter, "XAU") >= 0 || StringFind(sym_filter, "GOLD") >= 0))
+            {
+               if(StringFind(pos_sym, "XAU") >= 0 || StringFind(pos_sym, "GOLD") >= 0) is_sym_match = true;
+            }
+            if(!is_sym_match) continue;
+         }
          if(g_trade.PositionClose(ticket)) closed++;
       }
       return StringFormat("{\"status\":\"OK\",\"closed_count\":%d}", closed);

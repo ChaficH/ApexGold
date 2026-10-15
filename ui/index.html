@@ -1977,16 +1977,22 @@
     }
 
     async function emergencyAction(action) {
-      if (action === 'close_all') {
-        const res = await fetch('/api/actions/close_all', { method: 'POST' });
-        const d = await res.json();
-        appendLog('EXECUTION', `Close All dispatched (${d.closed_count} closed)`);
-        showToast(`Closed ${d.closed_count} positions`, 'info');
-      } else if (action === 'lock_breakeven') {
-        const res = await fetch('/api/actions/lock_breakeven', { method: 'POST' });
-        const d = await res.json();
-        appendLog('EXECUTION', `Lock Breakeven dispatched (${d.modified_count} modified)`);
-        showToast(`Locked breakeven on ${d.modified_count} positions`, 'info');
+      try {
+        if (action === 'close_all') {
+          const res = await fetch('/api/actions/close_all', { method: 'POST' });
+          const d = await res.json();
+          appendLog('EXECUTION', `Close All dispatched (${d.closed_count !== undefined ? d.closed_count : 0} closed)`);
+          showToast(`Closed ${d.closed_count !== undefined ? d.closed_count : 0} positions`, 'info');
+          setTimeout(fetchStatus, 300);
+        } else if (action === 'lock_breakeven') {
+          const res = await fetch('/api/actions/lock_breakeven', { method: 'POST' });
+          const d = await res.json();
+          appendLog('EXECUTION', `Lock Breakeven dispatched (${d.modified_count !== undefined ? d.modified_count : 0} modified)`);
+          showToast(`Locked breakeven on ${d.modified_count !== undefined ? d.modified_count : 0} positions`, 'info');
+          setTimeout(fetchStatus, 300);
+        }
+      } catch (err) {
+        showToast(`Action failed: ${err.message}`, 'error');
       }
     }
 

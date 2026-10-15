@@ -35,6 +35,7 @@ import pandas as pd
 
 from engine.indicators import TechnicalIndicators
 from strategy.ensemble_models import EnsembleQuantSuite, EnsembleTelemetry
+from strategy.v2.meta_labeler import MetaLabelerFilter
 
 logger = logging.getLogger("ApexGold.PredictiveBrain")
 
@@ -62,7 +63,6 @@ class PredictiveEvaluation:
     vwap_deviation: float
     stoch_rsi_k: float
     stoch_rsi_d: float
-    
     # State & Verdict
     status: str             # "WAITING_FOR_PULLBACK", "HUNTING_SETUP", "QUALIFIED_TRADE", "DEFENSIVE_SHIELD", "STAND_ASIDE_CHOP"
     verdict_badge: str      # e.g. "WAITING FOR PULLBACK"
@@ -74,6 +74,7 @@ class PredictiveEvaluation:
     # Narrative Chain of Thought
     narrative: str
     target_zone: Dict[str, Any]
+    candle_pos_5m: float = 0.5
     ensemble: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
@@ -94,6 +95,7 @@ class ApexPredictiveBrain:
         self.latest_evaluation: Optional[PredictiveEvaluation] = None
         self._cached_state: Dict[str, Any] = {}
         self.ensemble_suite = EnsembleQuantSuite()
+        self.meta_labeler = MetaLabelerFilter(model_path="models/metalabeler_v1.txt", probability_threshold=0.52)
 
     def on_tick(self, bid: float, ask: float, now_ts: Optional[float] = None) -> None:
         """Register live tick into the ensemble suite."""
@@ -270,43 +272,72 @@ class ApexPredictiveBrain:
         dominant_dir = "BUY" if p_bull >= p_bear else "SELL"
         dominant_prob = max(p_bull, p_bear)
 
-        # Baseline log-odds
+        # Measure Candle Relative Position (0.0 = low wick, 1.0 = high wick)
+        high_5m_curr = float(h_5m[-1])
+        low_5m_curr = float(l_5m[-1])
+        range_5m = max(0.40, high_5m_curr - low_5m_curr)
+        candle_pos_5m = float(np.clip((current_bid - low_5m_curr) / range_5m, 0.0, 1.0))
+
+        candle_pos_1m = 0.5
+        if df_1m is not None and not df_1m.empty and len(df_1m) > 0:
+            h_1m_curr = float(df_1m["high"].iloc[-1])
+            l_1m_curr = float(df_1m["low"].iloc[-1])
+            range_1m = max(0.20, h_1m_curr - l_1m_curr)
+            candle_pos_1m = float(np.clip((current_bid - l_1m_curr) / range_1m, 0.0, 1.0))
+
+        # Baseline log-odds (0.0 corresponds to 50.0% uninformative random walk)
         logit = 0.0
 
-        # Factor 1: Macro alignment (+0.60 logit if 1H + 15m strongly align)
+        # Factor 1: Macro alignment (calibrated: +0.22 pushes baseline to ~55.5%)
         if dominant_dir == "BUY" and trend_1h == "BULL" and trend_15m == "BULL":
-            logit += 0.65
+            logit += 0.22
         elif dominant_dir == "SELL" and trend_1h == "BEAR" and trend_15m == "BEAR":
-            logit += 0.65
+            logit += 0.22
         elif (dominant_dir == "BUY" and (trend_1h == "BEAR" or trend_15m == "BEAR")) or \
              (dominant_dir == "SELL" and (trend_1h == "BULL" or trend_15m == "BULL")):
-            logit -= 1.20  # Fighting macro trend severely penalizes win rate
+            logit -= 0.65  # Fighting macro trend severely penalizes win rate
 
-        # Factor 2: Efficiency ratio & R² conviction
-        logit += (efficiency_ratio - 0.40) * 0.80
-        logit += (r_squared - 0.40) * 0.60
+        # Factor 2: Efficiency ratio & R² conviction (calibrated institutional nudge)
+        logit += float(np.clip((efficiency_ratio - 0.40) * 0.30, -0.15, 0.15))
+        logit += float(np.clip((r_squared - 0.40) * 0.25, -0.12, 0.12))
 
-        # Factor 3: Anti-Chasing / Value Entry Penalty (ATR-Normalized)
+        # Factor 3: Anti-Chasing / Value Entry Penalty (ATR-Normalized & Candle Position)
         atr_5m_arr = TechnicalIndicators.atr(h_5m, l_5m, c_5m, 14)
         atr_5m = float(atr_5m_arr[-1]) if (atr_5m_arr is not None and len(atr_5m_arr) > 0 and not np.isnan(atr_5m_arr[-1])) else 2.50
-        overextended_dist = max(2.80, 1.5 * atr_5m)
+        overextended_dist = max(2.50, 1.2 * atr_5m)
 
         # Genuinely overbought / oversold at extreme exhaustion wicks
-        is_overbought = (stoch_k > 80.0 and vwap_diff > overextended_dist) or (stoch_k > 88.0 and vwap_diff > 2.0)
-        is_oversold = (stoch_k < 20.0 and vwap_diff < -overextended_dist) or (stoch_k < 12.0 and vwap_diff < -2.0)
+        is_overbought = (stoch_k > 80.0 and vwap_diff > overextended_dist) or (stoch_k > 85.0 and vwap_diff > 1.80) or (vwap_diff > 3.50)
+        is_oversold = (stoch_k < 20.0 and vwap_diff < -overextended_dist) or (stoch_k < 15.0 and vwap_diff < -1.80) or (vwap_diff < -3.50)
+
+        # Chasing the top wick of a candle (BUY) or bottom wick (SELL)
+        is_chasing_top = (candle_pos_5m > 0.72 and vwap_diff > 0.80) or (candle_pos_1m > 0.82 and vwap_diff > 1.20) or is_overbought
+        is_chasing_bottom = (candle_pos_5m < 0.28 and vwap_diff < -0.80) or (candle_pos_1m < 0.18 and vwap_diff < -1.20) or is_oversold
 
         pullback_ready = False
         if dominant_dir == "BUY":
-            if is_overbought:
-                logit -= 0.85  # Chasing at tops
-            elif (20.0 <= stoch_k <= 65.0 and -1.5 * atr_5m <= vwap_diff <= 1.2 * atr_5m) or (efficiency_ratio >= 0.50 and stoch_k <= 75.0):
-                logit += 0.45  # Buying the dip/consolidation in bull trend!
+            if is_chasing_top:
+                logit -= 0.85  # Severe penalty for buying the candle high wick / top
+            elif (candle_pos_5m <= 0.60 and -1.5 * atr_5m <= vwap_diff <= 1.0 * atr_5m and stoch_k <= 68.0):
+                # Buying the dip / pullback into value or fair value discount
+                logit += 0.25
+                pullback_ready = True
+            elif (ensemble_telemetry and ensemble_telemetry.nearest_fvg and ensemble_telemetry.nearest_fvg.get("direction") == "BULL"
+                  and abs(current_bid - ensemble_telemetry.nearest_fvg["midpoint"]) <= 1.20 and candle_pos_5m <= 0.65):
+                # Near institutional bullish FVG support
+                logit += 0.25
                 pullback_ready = True
         elif dominant_dir == "SELL":
-            if is_oversold:
-                logit -= 0.85  # Chasing at bottoms
-            elif (35.0 <= stoch_k <= 80.0 and -1.2 * atr_5m <= vwap_diff <= 1.5 * atr_5m) or (efficiency_ratio >= 0.50 and stoch_k >= 25.0):
-                logit += 0.45  # Selling the rally/consolidation in bear trend!
+            if is_chasing_bottom:
+                logit -= 0.85  # Severe penalty for selling the candle low wick / bottom
+            elif (candle_pos_5m >= 0.40 and -1.0 * atr_5m <= vwap_diff <= 1.5 * atr_5m and stoch_k >= 32.0):
+                # Selling the rally / bounce into resistance or premium
+                logit += 0.25
+                pullback_ready = True
+            elif (ensemble_telemetry and ensemble_telemetry.nearest_fvg and ensemble_telemetry.nearest_fvg.get("direction") == "BEAR"
+                  and abs(current_bid - ensemble_telemetry.nearest_fvg["midpoint"]) <= 1.20 and candle_pos_5m >= 0.35):
+                # Near institutional bearish FVG resistance
+                logit += 0.25
                 pullback_ready = True
 
         # Factor 4: Quantitative Ensemble Suite (OFI Delta + Institutional FVG + Parkinson Volatility)
@@ -314,18 +345,45 @@ class ApexPredictiveBrain:
             is_bias_bull = "BULL" in ensemble_telemetry.ensemble_bias
             is_bias_bear = "BEAR" in ensemble_telemetry.ensemble_bias
             if dominant_dir == "BUY" and is_bias_bull:
-                logit += 0.35 * (ensemble_telemetry.ensemble_score / 100.0)
+                logit += 0.15 * (ensemble_telemetry.ensemble_score / 100.0)
             elif dominant_dir == "BUY" and is_bias_bear:
-                logit -= 0.50  # Opposing order flow/liquidity structure
+                logit -= 0.35  # Opposing order flow/liquidity structure
             elif dominant_dir == "SELL" and is_bias_bear:
-                logit += 0.35 * (ensemble_telemetry.ensemble_score / 100.0)
+                logit += 0.15 * (ensemble_telemetry.ensemble_score / 100.0)
             elif dominant_dir == "SELL" and is_bias_bull:
-                logit -= 0.50  # Opposing order flow/liquidity structure
+                logit -= 0.35  # Opposing order flow/liquidity structure
 
-        p_win = round(self._sigmoid(logit), 3)
+        raw_p_win = self._sigmoid(logit)
 
-        # Target reward-to-risk (adaptive based on trend strength and ensemble volatility expansion, aiming for high profits)
-        base_rr = 4.2 if efficiency_ratio >= 0.50 else 3.2
+        # Factor 5: Meta-Labeler ML Filter Blending (Secondary Causal ML model)
+        if hasattr(self, "meta_labeler") and self.meta_labeler and self.meta_labeler.is_loaded:
+            feat_dict = {
+                "score": float(ensemble_telemetry.ensemble_score if ensemble_telemetry else 50.0),
+                "h1_macro": 1.0 if trend_1h == "BULL" else (-1.0 if trend_1h == "BEAR" else 0.0),
+                "m15_wave": 1.0 if trend_15m == "BULL" else (-1.0 if trend_15m == "BEAR" else 0.0),
+                "m5_setup": 1.0 if trend_5m == "BULL" else (-1.0 if trend_5m == "BEAR" else 0.0),
+                "m1_trigger": 1.0 if pullback_ready else 0.0,
+                "smc_institutional": 1.0 if (ensemble_telemetry and ensemble_telemetry.nearest_fvg) else 0.0,
+                "quant_alpha": float(ensemble_telemetry.delta_ratio_60s if ensemble_telemetry else 0.0),
+                "adx_15m": 25.0,
+                "choppiness_index": float(chop_val),
+                "atr_percentile": float(np.clip(atr_5m / 3.0, 0.1, 1.0)),
+                "h1_ema_slope": float(h1_slope),
+                "hour": float(dt_utc.hour),
+                "session_code": 1.0 if (8 <= dt_utc.hour <= 17) else 0.0,
+                "is_zone_reversal": 0.0,
+                "regime_code": 1.0 if efficiency_ratio >= 0.50 else 0.0,
+            }
+            ml_p_win = self.meta_labeler.predict_p_win(feat_dict)
+            calibrated_p = (0.50 * raw_p_win) + (0.50 * ml_p_win)
+        else:
+            calibrated_p = raw_p_win
+
+        # Calibrated institutional bounds: max 64.0% win prob, min 32.0%
+        p_win = round(float(np.clip(calibrated_p, 0.32, 0.64)), 3)
+
+        # Target reward-to-risk (aiming for high profits: 3.2 - 4.2 RR)
+        base_rr = 3.6 if efficiency_ratio >= 0.50 else 3.0
         target_rr = base_rr + (ensemble_telemetry.rr_expansion_boost if ensemble_telemetry else 0.0)
         spread_cost_r = (spread / 1.50) * 0.08  # Normalized spread impact
         
@@ -350,21 +408,25 @@ class ApexPredictiveBrain:
         value_pass = True
         value_detail = ""
         if dominant_dir == "BUY":
-            if is_overbought:
+            if is_chasing_top:
                 value_pass = False
-                value_detail = f"5m StochRSI is {stoch_k:.1f} (Overbought) & +{vwap_diff:.2f} above VWAP. Chasing prohibited; waiting for pullback."
+                value_detail = f"TOP-OF-CANDLE CHASE BLOCKED: 5m candle pos is {candle_pos_5m*100:.0f}% (upper wick) & +{vwap_diff:.2f} above VWAP. Chasing tops prohibited; waiting for pullback."
             elif pullback_ready:
-                value_detail = f"PULLBACK VERIFIED: 5m StochRSI is {stoch_k:.1f} near VWAP fair value ({vwap_val:.2f})."
+                value_pass = True
+                value_detail = f"PULLBACK VERIFIED: 5m candle pos is {candle_pos_5m*100:.0f}% near VWAP fair value ({vwap_val:.2f}, diff: {vwap_diff:+.2f})."
             else:
-                value_detail = f"VWAP diff: {vwap_diff:+.2f} pts | 5m StochRSI: {stoch_k:.1f}."
+                value_pass = False
+                value_detail = f"WAITING FOR PULLBACK: 5m candle pos: {candle_pos_5m*100:.0f}% | VWAP diff: {vwap_diff:+.2f} pts | StochRSI: {stoch_k:.1f}."
         else:
-            if is_oversold:
+            if is_chasing_bottom:
                 value_pass = False
-                value_detail = f"5m StochRSI is {stoch_k:.1f} (Oversold) & {vwap_diff:.2f} below VWAP. Chasing prohibited; waiting for pullback."
+                value_detail = f"BOTTOM-OF-CANDLE CHASE BLOCKED: 5m candle pos is {candle_pos_5m*100:.0f}% (lower wick) & {vwap_diff:.2f} below VWAP. Selling bottoms prohibited; waiting for bounce."
             elif pullback_ready:
-                value_detail = f"PULLBACK VERIFIED: 5m StochRSI is {stoch_k:.1f} near VWAP fair value ({vwap_val:.2f})."
+                value_pass = True
+                value_detail = f"BOUNCE VERIFIED: 5m candle pos is {candle_pos_5m*100:.0f}% near VWAP fair value ({vwap_val:.2f}, diff: {vwap_diff:+.2f})."
             else:
-                value_detail = f"VWAP diff: {vwap_diff:+.2f} pts | 5m StochRSI: {stoch_k:.1f}."
+                value_pass = False
+                value_detail = f"WAITING FOR BOUNCE: 5m candle pos: {candle_pos_5m*100:.0f}% | VWAP diff: {vwap_diff:+.2f} pts | StochRSI: {stoch_k:.1f}."
 
         gates.append({
             "name": "Value-Entry / Pullback Check",
@@ -406,12 +468,12 @@ class ApexPredictiveBrain:
             "passed": not is_news_freeze,
         })
 
-        # Gate 5: Mathematical Edge Gate (EV >= +0.25R)
-        ev_pass = (expected_value_r >= 0.25 and p_win >= 0.58)
+        # Gate 5: Mathematical Edge Gate (EV >= +0.20R)
+        ev_pass = (expected_value_r >= 0.20 and p_win >= 0.55)
         gates.append({
-            "name": "Mathematical Edge (EV >= +0.25R)",
+            "name": "Mathematical Edge (EV >= +0.20R)",
             "status": "PASS" if ev_pass else "WAITING",
-            "detail": f"Win Prob: {p_win * 100:.1f}% | Expected Value: {expected_value_r:+.2f}R (Min: +0.25R)",
+            "detail": f"Quant ML P(Win): {p_win * 100:.1f}% | Expected Value: {expected_value_r:+.2f}R (Min: +0.20R)",
             "passed": ev_pass,
         })
 
@@ -511,6 +573,9 @@ class ApexPredictiveBrain:
             target_zone=target_zone,
             chop_val=chop_val,
             ensemble_info=ensemble_telemetry,
+            candle_pos_5m=candle_pos_5m,
+            is_chasing_top=is_chasing_top,
+            is_chasing_bottom=is_chasing_bottom,
         )
 
         eval_record = PredictiveEvaluation(
@@ -532,6 +597,7 @@ class ApexPredictiveBrain:
             vwap_deviation=round(vwap_diff, 2),
             stoch_rsi_k=round(stoch_k, 1),
             stoch_rsi_d=round(stoch_d, 1),
+            candle_pos_5m=round(candle_pos_5m, 2),
             status=status,
             verdict_badge=verdict_badge,
             is_frozen=False,
@@ -585,13 +651,17 @@ class ApexPredictiveBrain:
         target_zone: Dict[str, Any],
         chop_val: float,
         ensemble_info: Optional[EnsembleTelemetry] = None,
+        candle_pos_5m: float = 0.5,
+        is_chasing_top: bool = False,
+        is_chasing_bottom: bool = False,
     ) -> str:
         """Construct a precise, institutional narrative explaining the bot's live thoughts."""
+        candle_pct = int(round(candle_pos_5m * 100))
         lines = [
             f"⚡ [CYCLE #{cycle_idx} @ {time_str}] ACTIVE EVALUATION HEARTBEAT — BOT IS RUNNING NORMALLY",
             f"• Macro Structure: 1H {trend_1h} | 15m {trend_15m} | Kaufman Efficiency: {efficiency_ratio:.2f} | R²: {r_squared:.2f}",
-            f"• Valuation: Spot {current_bid:.2f} vs 5m VWAP {vwap_val:.2f} ({vwap_diff:+.2f} pts) | 5m StochRSI: {stoch_k:.1f}",
-            f"• Edge Metrics: P(Win) = {p_win * 100:.1f}% | Expected Value = {expected_value_r:+.2f}R",
+            f"• Valuation: Spot {current_bid:.2f} vs 5m VWAP {vwap_val:.2f} ({vwap_diff:+.2f} pts) | 5m Candle Pos: {candle_pct}% | 5m StochRSI: {stoch_k:.1f}",
+            f"• Edge Metrics: P(Win) = {p_win * 100:.1f}% (Quant Calibrated) | Expected Value = {expected_value_r:+.2f}R",
         ]
 
         if ensemble_info:
@@ -604,8 +674,9 @@ class ApexPredictiveBrain:
             )
 
         if status == "WAITING_FOR_PULLBACK":
+            chase_note = "AT TOP OF CANDLE (HIGH WICK)" if dominant_dir == "BUY" and is_chasing_top else ("AT BOTTOM OF CANDLE (LOW WICK)" if dominant_dir == "SELL" and is_chasing_bottom else "OVEREXTENDED")
             lines.append(
-                f"🧠 VERDICT: Market is {trend_1h} but currently OVEREXTENDED. Entering a {dominant_dir} at the high/low carries negative statistical expectancy (EV: {expected_value_r:+.2f}R). "
+                f"🧠 VERDICT: Market is {trend_1h} but currently {chase_note} (candle pos: {candle_pct}%, VWAP diff: {vwap_diff:+.2f} pts). Entering a {dominant_dir} at the high/low carries negative statistical expectancy (EV: {expected_value_r:+.2f}R). "
                 f"BOT IS DELIBERATELY STANDING ASIDE: Patiently waiting for price to retrace into the high-probability discount zone [{target_zone['optimal_entry_min']:.2f} - {target_zone['optimal_entry_max']:.2f}] or StochRSI to normalize before firing."
             )
         elif status == "STAND_ASIDE_CHOP":
@@ -624,7 +695,7 @@ class ApexPredictiveBrain:
             )
         elif status == "QUALIFIED_TRADE":
             lines.append(
-                f"🚀 VERDICT: HIGH-CONVICTION SETUP QUALIFIED! All predictive gates passed (EV: {expected_value_r:+.2f}R >= +0.25R, P_win: {p_win*100:.1f}%). "
+                f"🚀 VERDICT: HIGH-CONVICTION SETUP QUALIFIED! All predictive gates passed (EV: {expected_value_r:+.2f}R >= +0.20R, P_win: {p_win*100:.1f}%). "
                 f"Prepared to dispatch {dominant_dir} towards target {target_zone['target_objective']:.2f}."
             )
         else:
@@ -664,6 +735,7 @@ class ApexPredictiveBrain:
             "vwap_deviation": 0.0,
             "stoch_rsi_k": 50.0,
             "stoch_rsi_d": 50.0,
+            "candle_pos_5m": 0.50,
             "status": "INITIALIZING",
             "verdict_badge": "WARMING UP ENGINE",
             "is_frozen": False,
@@ -698,6 +770,10 @@ class ApexPredictiveBrain:
         """
         if not self.latest_evaluation:
             return True, "Predictive model standby (approved by default)"
+
+        # Pre-news trajectory setups are catalyzed by imminent fundamental calendar events
+        if getattr(signal, "is_pre_news_trajectory", False):
+            return True, "Predictive Model Approved: Pre-news trajectory catalyst setup"
 
         ev = self.latest_evaluation.expected_value_r
         p_win = self.latest_evaluation.p_win
