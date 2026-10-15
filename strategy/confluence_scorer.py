@@ -881,15 +881,22 @@ class ConfluenceScorer:
         vwap_curr = float(vwap_arr[-1]) if len(vwap_arr) > 0 and not np.isnan(vwap_arr[-1]) else current_price
         dist_vwap = current_price - vwap_curr
 
-        if not is_impulse_active and not is_pre_news_aligned:
+        if not is_pre_news_aligned:
             if direction == "BUY":
-                if candle_pos_5m > 0.75 and dist_vwap > 1.00 and not is_demand_reversal:
-                    logger.debug(f"[{symbol} BUY] Blocked: Buying top wick of 5m candle (pos: {candle_pos_5m:.2f}, +{dist_vwap:.2f} pts above VWAP). Waiting for pullback to fair value.")
+                if candle_pos_5m > 0.55 and not is_demand_reversal:
+                    logger.debug(f"[{symbol} BUY] Blocked: Buying top half of 5m candle (pos: {candle_pos_5m:.2f}). Waiting for pullback to lower half.")
+                    return None
+                if dist_vwap > 1.25 and not is_demand_reversal:
+                    logger.debug(f"[{symbol} BUY] Blocked: Extended +{dist_vwap:.2f} pts above VWAP. Waiting for mean reversion.")
                     return None
             else: # SELL
-                if candle_pos_5m < 0.25 and dist_vwap < -1.00 and not is_supply_reversal:
-                    logger.debug(f"[{symbol} SELL] Blocked: Selling bottom wick of 5m candle (pos: {candle_pos_5m:.2f}, {dist_vwap:.2f} pts below VWAP). Waiting for bounce to resistance.")
+                if candle_pos_5m < 0.45 and not is_supply_reversal:
+                    logger.debug(f"[{symbol} SELL] Blocked: Selling bottom half of 5m candle (pos: {candle_pos_5m:.2f}). Waiting for rally to upper half.")
                     return None
+                if dist_vwap < -1.25 and not is_supply_reversal:
+                    logger.debug(f"[{symbol} SELL] Blocked: Extended {dist_vwap:.2f} pts below VWAP. Waiting for mean reversion.")
+                    return None
+
 
         # G. Institutional Liquidity Trap & False Breakout Gate
         # Strictly prevent buying the top of a bull trap or selling the bottom of a bear trap
@@ -900,6 +907,17 @@ class ConfluenceScorer:
             if direction == "SELL" and traps.get("is_bear_trap"):
                 logger.debug(f"[{symbol} SELL] Blocked: Active Bear Trap / Liquidity Sweep bottom ({traps.get('trap_reason')}).")
                 return None
+
+        # Reference ATR for dynamic volatility calculations
+        atr_15m_ref = 2.50 if is_gold else 0.0015
+        if df_15m is not None and len(df_15m) >= 15:
+            atr_vals = TechnicalIndicators.atr(df_15m["high"].values, df_15m["low"].values, df_15m["close"].values, 14)
+            if len(atr_vals) > 0 and not np.isnan(atr_vals[-1]) and atr_vals[-1] > 0:
+                atr_15m_ref = float(atr_vals[-1])
+        elif df_5m is not None and len(df_5m) >= 15:
+            atr_vals = TechnicalIndicators.atr(df_5m["high"].values, df_5m["low"].values, df_5m["close"].values, 14)
+            if len(atr_vals) > 0 and not np.isnan(atr_vals[-1]) and atr_vals[-1] > 0:
+                atr_15m_ref = float(atr_vals[-1])
 
         breakdown = {
             "h1_macro": 0,
@@ -1440,8 +1458,19 @@ class ConfluenceScorer:
 
         # Check against active threshold
         active_thresh = self.get_active_threshold()
+
+        # Asian Session Protection (21:00 to 06:30 UTC):
+        # Gold volume during Asian session is ~70% lower and prone to false breakout stop sweeps.
+        # Restrict Asian entries: Require confirmed Zone Reversal OR higher threshold (>= 75 score).
+        dt_entry = datetime.fromtimestamp(utc_timestamp or time.time(), tz=timezone.utc)
+        hour_utc = dt_entry.hour + (dt_entry.minute / 60.0)
+        is_asian = (hour_utc >= 21.0 or hour_utc < 6.5)
+        if is_asian and not is_zone_reversal and not is_pre_news_active:
+            active_thresh = max(active_thresh, 75 if self.mode in ["balanced", "conservative"] else 68)
+
         if total_score < active_thresh:
             return None # Does not cross active threshold
+
 
         # -------------------------------------------------------------
         # 5. Adaptive Regime Classification (SCALP vs RUNNER)

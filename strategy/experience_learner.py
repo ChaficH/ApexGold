@@ -43,6 +43,8 @@ EXPERIENCE_FEATURE_KEYS = [
     "is_zone_reversal",    # 1.0 if supply/demand zone or liquidity trap, 0.0 otherwise
     "trend_align_1h",      # +1.0 if aligned with 1H, -1.0 if counter, 0.0 if neutral
     "trend_align_15m",     # +1.0 if aligned with 15m, -1.0 if counter, 0.0 if neutral
+    "news_sentiment_delta", # +1.0 if macro news bias agrees, -1.0 if opposes, 0.0 neutral
+    "historical_pattern_wr", # Historical win rate of identical setup from pattern matcher (0.0 to 1.0)
     "direction_val",       # +1.0 for BUY, -1.0 for SELL
 ]
 
@@ -58,8 +60,11 @@ DEFAULT_PRIOR_WEIGHTS: Dict[str, float] = {
     "is_zone_reversal": 0.35,     # Reward confirmed institutional supply/demand zones
     "trend_align_1h": 0.30,       # Reward macro alignment
     "trend_align_15m": 0.30,      # Reward session wave alignment
+    "news_sentiment_delta": 0.25, # Reward macroeconomic catalyst wind alignment
+    "historical_pattern_wr": 0.30,# Reward setups backed by proven historical win rate
     "direction_val": 0.00,        # Symmetrical bias (no blind long or short prejudice)
 }
+
 
 FEATURE_METADATA: Dict[str, Dict[str, str]] = {
     "score_norm": {
@@ -112,12 +117,23 @@ FEATURE_METADATA: Dict[str, Dict[str, str]] = {
         "category": "Multi-Timeframe Structure",
         "description": "Rewards entries synchronized with the 15-minute intermediate trend wave.",
     },
+    "news_sentiment_delta": {
+        "name": "Macro News & Catalyst Wind",
+        "category": "Fundamental & Macro Intelligence",
+        "description": "Macro surprise delta (CPI, NFP, PPI) and breaking financial headlines sentiment aligned with trade direction.",
+    },
+    "historical_pattern_wr": {
+        "name": "Historical Pattern Win Rate",
+        "category": "Historical Pattern Edge",
+        "description": "Empirical forward-tested win rate of identical multi-timeframe pattern setups in the historical database.",
+    },
     "direction_val": {
         "name": "Directional Neutrality & Symmetry",
         "category": "Directional Balance",
         "description": "Ensures completely unbiased symmetry between BUY and SELL trade generation.",
     },
 }
+
 
 
 @dataclass
@@ -265,6 +281,23 @@ class AdaptiveExperienceLearner:
         align_1h = 1.0 if t_1h == target_trend else (-1.0 if t_1h == opp_trend else 0.0)
         align_15m = 1.0 if t_15m == target_trend else (-1.0 if t_15m == opp_trend else 0.0)
 
+        # 9. Macro News Sentiment Delta
+        raw_news_bias = str(context.get("news_bias_direction", "NEUTRAL")).upper()
+        target_news = "BUY" if dir_sign > 0 else "SELL"
+        opp_news = "SELL" if dir_sign > 0 else "BUY"
+        news_conf = float(context.get("news_confidence", 0.50))
+        if raw_news_bias == target_news:
+            news_delta = 1.0 * min(1.0, news_conf / 0.75)
+        elif raw_news_bias == opp_news:
+            news_delta = -1.0 * min(1.0, news_conf / 0.75)
+        else:
+            news_delta = 0.0
+        news_delta = max(-1.0, min(1.0, news_delta))
+
+        # 10. Historical Pattern Win Rate (Normalized 0.0 to 1.0)
+        raw_hist_wr = float(context.get("historical_pattern_wr", 50.0))
+        hist_wr_norm = max(0.0, min(1.0, raw_hist_wr / 100.0))
+
         return {
             "score_norm": round(score_norm, 3),
             "candle_pos_5m": round(cpos_chase, 3),
@@ -276,8 +309,11 @@ class AdaptiveExperienceLearner:
             "is_zone_reversal": is_zone,
             "trend_align_1h": align_1h,
             "trend_align_15m": align_15m,
+            "news_sentiment_delta": round(news_delta, 3),
+            "historical_pattern_wr": round(hist_wr_norm, 3),
             "direction_val": dir_sign,
         }
+
 
     def _cosine_similarity(self, vec_a: Dict[str, float], vec_b: Dict[str, float]) -> float:
         """Compute cosine similarity between two normalized feature vectors."""
@@ -645,8 +681,43 @@ class AdaptiveExperienceLearner:
 
     def load_state(self) -> bool:
         """Load previously learned weights and memories from disk."""
-        if not self.persistence_path or not os.path.exists(self.persistence_path):
+        if not self.persistence_path:
             return False
+
+        calibrated_path = "models/calibrated_experience_learner.json"
+        loaded_calibrated = False
+
+        # 1. Only seed with calibrated foundation when using the default production learner path
+        if self.persistence_path == "models/online_experience_learner.json" and os.path.exists(calibrated_path):
+            try:
+                with open(calibrated_path, "r") as f:
+                    cal_payload = json.load(f)
+                cal_weights = cal_payload.get("weights", {})
+                for k in EXPERIENCE_FEATURE_KEYS:
+                    if k in cal_weights:
+                        self.weights[k] = float(cal_weights[k])
+                self.bias = float(cal_payload.get("bias", self.bias))
+                self.total_trades_analyzed = int(cal_payload.get("total_trades_analyzed", 0))
+                self.wins_learned = int(cal_payload.get("wins_learned", 0))
+                self.mistakes_learned = int(cal_payload.get("mistakes_learned", 0))
+                for m in cal_payload.get("mistake_memory", []):
+                    self.mistake_memory.append(m)
+                for s in cal_payload.get("success_memory", []):
+                    self.success_memory.append(s)
+                for l in cal_payload.get("recent_lessons", []):
+                    self.recent_lessons.append(str(l))
+                loaded_calibrated = True
+                logger.info(
+                    f"[EXPERIENCE LEARNER] Seeded from calibrated historical foundation ({calibrated_path}): "
+                    f"{self.total_trades_analyzed} trades ({self.wins_learned} wins, {self.mistakes_learned} mistakes)."
+                )
+            except Exception as e:
+                logger.warning(f"Failed loading calibrated foundation {calibrated_path}: {e}")
+
+        # 2. Overlay live session trade experience if persistence path exists
+        if not os.path.exists(self.persistence_path):
+            return loaded_calibrated
+
         try:
             with open(self.persistence_path, "r") as f:
                 payload = json.load(f)
@@ -657,13 +728,20 @@ class AdaptiveExperienceLearner:
                     self.weights[k] = float(saved_weights[k])
 
             self.bias = float(payload.get("bias", self.bias))
-            self.total_trades_analyzed = int(payload.get("total_trades_analyzed", 0))
-            self.wins_learned = int(payload.get("wins_learned", 0))
-            self.mistakes_learned = int(payload.get("mistakes_learned", 0))
+            live_trades = int(payload.get("total_trades_analyzed", 0))
+            if not loaded_calibrated:
+                self.total_trades_analyzed = live_trades
+                self.wins_learned = int(payload.get("wins_learned", 0))
+                self.mistakes_learned = int(payload.get("mistakes_learned", 0))
+            elif live_trades > 0:
+                self.total_trades_analyzed += live_trades
+                self.wins_learned += int(payload.get("wins_learned", 0))
+                self.mistakes_learned += int(payload.get("mistakes_learned", 0))
+
             self.last_update_time = float(payload.get("last_update_time", 0.0))
 
-            for l in payload.get("recent_lessons", []):
-                self.recent_lessons.append(str(l))
+            for l in reversed(payload.get("recent_lessons", [])):
+                self.recent_lessons.appendleft(str(l))
             for m in payload.get("mistake_memory", []):
                 self.mistake_memory.append(m)
             for s in payload.get("success_memory", []):
@@ -676,4 +754,6 @@ class AdaptiveExperienceLearner:
             return True
         except Exception as e:
             logger.warning(f"Failed to load online experience learner from {self.persistence_path}: {e}")
-            return False
+            return loaded_calibrated
+
+

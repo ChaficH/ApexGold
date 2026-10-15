@@ -33,6 +33,7 @@ from typing import Any, Deque, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
+from engine.historical_matcher import HistoricalMatcher, SetupVector
 from engine.indicators import TechnicalIndicators
 from strategy.ensemble_models import EnsembleQuantSuite, EnsembleTelemetry
 from strategy.experience_learner import AdaptiveExperienceLearner
@@ -78,6 +79,8 @@ class PredictiveEvaluation:
     candle_pos_5m: float = 0.5
     ensemble: Optional[Dict[str, Any]] = None
     experience: Optional[Dict[str, Any]] = None
+    news_catalyst: Optional[Dict[str, Any]] = None
+    historical_match: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -99,6 +102,8 @@ class ApexPredictiveBrain:
         self.ensemble_suite = EnsembleQuantSuite()
         self.meta_labeler = MetaLabelerFilter(model_path="models/metalabeler_v1.txt", probability_threshold=0.52)
         self.experience_learner = AdaptiveExperienceLearner()
+        self.historical_matcher = HistoricalMatcher(target_rr=2.0)
+
 
     def learn_from_trade(
         self,
@@ -290,6 +295,20 @@ class ApexPredictiveBrain:
         elif h1_slope < -0.02:
             bear_points += 1.5
 
+        # Macro News & Fundamental Surprise Delta Integration
+        news_bias_data: Dict[str, Any] = {}
+        if news_reactor and hasattr(news_reactor, "analyze_news_fundamental_bias"):
+            try:
+                news_bias_data = news_reactor.analyze_news_fundamental_bias(symbol)
+                news_dir = news_bias_data.get("direction", "NEUTRAL")
+                news_conf = float(news_bias_data.get("confidence", 0.50))
+                if news_dir == "BUY":
+                    bull_points += 2.2 * min(1.0, news_conf / 0.75)
+                elif news_dir == "SELL":
+                    bear_points += 2.2 * min(1.0, news_conf / 0.75)
+            except Exception as e:
+                logger.debug(f"News fundamental study error: {e}")
+
         # Noise / Choppiness factors
         if chop_val > 58.0 or efficiency_ratio < 0.25 or r_squared < 0.25:
             chop_points += 3.5
@@ -298,6 +317,7 @@ class ApexPredictiveBrain:
         p_bull = round(bull_points / total_pts, 3)
         p_bear = round(bear_points / total_pts, 3)
         p_chop = round(chop_points / total_pts, 3)
+
 
         # ----------------------------------------------------------------------
         # 6. Regime Classification
@@ -396,10 +416,35 @@ class ApexPredictiveBrain:
                 logit -= 0.35  # Opposing order flow/liquidity structure
             elif dominant_dir == "SELL" and is_bias_bear:
                 logit += 0.15 * (ensemble_telemetry.ensemble_score / 100.0)
-            elif dominant_dir == "SELL" and is_bias_bull:
-                logit -= 0.35  # Opposing order flow/liquidity structure
+        # Factor 4b: Historical Pattern Similarity & Statistical Edge Matcher
+        hist_edge_result = None
+        if hasattr(self, "historical_matcher") and self.historical_matcher and df_5m is not None and len(df_5m) >= 60:
+            try:
+                setup_vec = SetupVector(
+                    direction=dominant_dir,
+                    h1_trend="BULLISH" if trend_1h == "BULL" else ("BEARISH" if trend_1h == "BEAR" else "NEUTRAL"),
+                    m15_adx_tier="STRONG" if efficiency_ratio >= 0.50 else ("MODERATE" if efficiency_ratio >= 0.30 else "CHOP"),
+                    m5_rsi_zone="OVERSOLD" if stoch_k < 35.0 else ("VALUE_BULL" if stoch_k <= 55.0 else ("VALUE_BEAR" if stoch_k <= 70.0 else "OVERBOUGHT")),
+                    m1_trigger_type="MOMENTUM" if efficiency_ratio >= 0.40 else "ENGULFING",
+                    session=HistoricalMatcher.identify_session(now),
+                )
+                hist_edge_result = self.historical_matcher.compute_edge(setup_vec, df_5m, target_rr=2.0)
+                if hist_edge_result and hist_edge_result.sample_count >= 5:
+                    hist_delta = (hist_edge_result.win_rate_pct / 100.0) - 0.50
+                    logit += float(np.clip(hist_delta * 0.30, -0.20, 0.20))
+            except Exception as e:
+                logger.debug(f"HistoricalMatcher calculation error: {e}")
 
-        # Factor 4b: Online Continual Experience Learner (Adaptive Mistake Reflex & Pattern Synergy)
+        # Factor 4c: Macro News Fundamental Wind Modulation
+        if news_bias_data:
+            nb_dir = news_bias_data.get("direction", "NEUTRAL")
+            nb_conf = float(news_bias_data.get("confidence", 0.50))
+            if nb_dir == dominant_dir:
+                logit += 0.16 * min(1.0, nb_conf / 0.75)
+            elif nb_dir != "NEUTRAL":
+                logit -= 0.32 * min(1.0, nb_conf / 0.75)
+
+        # Factor 4d: Online Continual Experience Learner (Adaptive Mistake Reflex & Pattern Synergy)
         exp_eval = None
         exp_telemetry = None
         if hasattr(self, "experience_learner") and self.experience_learner:
@@ -411,6 +456,9 @@ class ApexPredictiveBrain:
                 "r_squared": r_squared,
                 "order_flow_delta": float(ensemble_telemetry.delta_ratio_60s if ensemble_telemetry else 0.0),
                 "is_zone_reversal": 0.0,
+                "news_bias_direction": news_bias_data.get("direction", "NEUTRAL"),
+                "news_confidence": float(news_bias_data.get("confidence", 0.50)),
+                "historical_pattern_wr": float(hist_edge_result.win_rate_pct if hist_edge_result else 50.0),
             }
             exp_eval = self.experience_learner.evaluate_candidate(
                 symbol=symbol,
@@ -423,6 +471,7 @@ class ApexPredictiveBrain:
             exp_telemetry = self.experience_learner.get_telemetry()
 
         raw_p_win = self._sigmoid(logit)
+
 
         # Factor 5: Meta-Labeler ML Filter Blending (Secondary Causal ML model)
         if hasattr(self, "meta_labeler") and self.meta_labeler and self.meta_labeler.is_loaded:
@@ -516,7 +565,7 @@ class ApexPredictiveBrain:
             "passed": vol_pass,
         })
 
-        # Gate 4: Economic News Shield
+        # Gate 4: Macro News & Fundamental Wind Gate
         is_news_freeze = False
         news_detail = "Economic calendar clear. No high-impact events imminent."
         if news_reactor:
@@ -527,11 +576,13 @@ class ApexPredictiveBrain:
                 news_detail = f"News Freeze Active: {ev.get('title', 'High-Impact USD News')}."
             else:
                 cd = cal_state.get("countdown_seconds")
-                if cd is not None and cd <= 1200:
+                if news_bias_data and news_bias_data.get("summary"):
+                    news_detail = f"Macro Bias: {news_bias_data.get('direction')} ({news_bias_data.get('confidence', 0.5)*100:.0f}% Conf) | {news_bias_data.get('summary')}"
+                elif cd is not None and cd <= 1200:
                     news_detail = f"Upcoming High-Impact News in {cd // 60}m. Defensive shield primed."
 
         gates.append({
-            "name": "Economic News Shield",
+            "name": "Macro News & Fundamental Wind",
             "status": "BLOCKED" if is_news_freeze else "PASS",
             "detail": news_detail,
             "passed": not is_news_freeze,
@@ -588,6 +639,27 @@ class ApexPredictiveBrain:
             "detail": exp_detail,
             "passed": exp_pass,
         })
+
+        # Gate 8: Historical Pattern Similarity Edge
+        hist_pass = True
+        hist_detail = "Historical pattern matcher: Insufficient bars for pattern match."
+        if hist_edge_result:
+            if hist_edge_result.sample_count >= 5:
+                hist_pass = (hist_edge_result.win_rate_pct >= 40.0)
+                hist_detail = (
+                    f"Pattern Match: {hist_edge_result.win_rate_pct:.1f}% WR across "
+                    f"{hist_edge_result.sample_count} similar historical setups (Exp: {hist_edge_result.expectancy_r:+.2f}R, Grade: {hist_edge_result.confidence_grade})"
+                )
+            else:
+                hist_detail = f"Pattern Match: Sample count warming up ({hist_edge_result.sample_count}/30)."
+
+        gates.append({
+            "name": "Historical Pattern Edge",
+            "status": "PASS" if hist_pass else "WAITING",
+            "detail": hist_detail,
+            "passed": hist_pass,
+        })
+
 
         # ----------------------------------------------------------------------
         # 9. Verdict, State & Narrative Chain-of-Thought Generation
@@ -673,6 +745,8 @@ class ApexPredictiveBrain:
             active_positions=positions,
             exp_info=exp_telemetry,
             exp_eval=exp_eval,
+            news_bias_data=news_bias_data,
+            hist_edge_result=hist_edge_result,
         )
 
         eval_record = PredictiveEvaluation(
@@ -703,7 +777,10 @@ class ApexPredictiveBrain:
             target_zone=target_zone,
             ensemble=ensemble_telemetry.to_dict() if ensemble_telemetry else None,
             experience=exp_telemetry,
+            news_catalyst=news_bias_data if news_bias_data else None,
+            historical_match=hist_edge_result.to_dict() if hist_edge_result else None,
         )
+
 
         self.latest_evaluation = eval_record
 
@@ -755,6 +832,8 @@ class ApexPredictiveBrain:
         active_positions: Optional[List[Any]] = None,
         exp_info: Optional[Dict[str, Any]] = None,
         exp_eval: Optional[Any] = None,
+        news_bias_data: Optional[Dict[str, Any]] = None,
+        hist_edge_result: Optional[Any] = None,
     ) -> str:
         """Construct a precise, institutional narrative explaining the bot's live thoughts."""
         candle_pct = int(round(candle_pos_5m * 100))
@@ -764,6 +843,13 @@ class ApexPredictiveBrain:
             f"• Valuation: Spot {current_bid:.2f} vs 5m VWAP {vwap_val:.2f} ({vwap_diff:+.2f} pts) | 5m Candle Pos: {candle_pct}% | 5m StochRSI: {stoch_k:.1f}",
             f"• Edge Metrics: P(Win) = {p_win * 100:.1f}% (Quant Calibrated) | Expected Value = {expected_value_r:+.2f}R",
         ]
+
+        if news_bias_data and news_bias_data.get("summary"):
+            lines.append(f"• Macro News Catalyst: {news_bias_data.get('direction')} ({news_bias_data.get('confidence', 0.5)*100:.0f}% Conf) — {news_bias_data.get('summary')}")
+
+        if hist_edge_result and hist_edge_result.sample_count >= 5:
+            lines.append(f"• Historical Pattern Edge: {hist_edge_result.win_rate_pct:.1f}% Win Rate across {hist_edge_result.sample_count} matching historical setups (Exp: {hist_edge_result.expectancy_r:+.2f}R, Grade: {hist_edge_result.confidence_grade})")
+
 
         if exp_info:
             trades_analyzed = exp_info.get("trades_analyzed", 0)
