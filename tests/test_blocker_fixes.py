@@ -537,3 +537,89 @@ async def test_candle_provenance_persists_in_sqlite_across_restart():
     finally:
         if os.path.exists(db_path):
             os.remove(db_path)
+
+
+def test_scalp_mode_configuration():
+    """Verify that 'scalp' and 'scalping' transmission modes map to hyper scalping with threshold 52 and dial 92%."""
+    from strategy.confluence_scorer import ConfluenceScorer
+    scorer = ConfluenceScorer(threshold_balanced=68)
+
+    # 1. Switch to scalp
+    scorer.set_mode("scalp")
+    assert scorer.mode == "hyper"
+    assert scorer.get_active_threshold() == 52
+    assert scorer.get_active_aggressiveness_pct() == 92.0
+
+    # 2. Switch to scalping
+    scorer.set_mode("scalping")
+    assert scorer.mode == "hyper"
+    assert scorer.get_active_threshold() == 52
+    assert scorer.get_active_aggressiveness_pct() == 92.0
+
+
+def test_slider_manual_mode_adaptation():
+    """Verify that continuous dial adjustments apply manual mode and dynamic thresholds."""
+    from strategy.confluence_scorer import ConfluenceScorer
+    scorer = ConfluenceScorer(threshold_balanced=68)
+
+    # 1. Dial 85%
+    scorer.set_mode("manual", pct=85.0)
+    assert scorer.mode == "manual"
+    assert scorer.aggressiveness_pct == 85.0
+    thresh_85 = scorer.get_active_threshold()
+    assert 52 <= thresh_85 <= 60
+
+    # 2. Dial 40%
+    scorer.set_mode("manual", pct=40.0)
+    assert scorer.mode == "manual"
+    assert scorer.aggressiveness_pct == 40.0
+    thresh_40 = scorer.get_active_threshold()
+    assert 70 <= thresh_40 <= 76
+
+
+@pytest.mark.anyio
+async def test_micro_account_drawdown_protection_and_force_resume():
+    """Verify micro-account ($9.18 balance) with positive net daily PnL (+$3.09) doesn't get locked, and force-resume authoritatively unblocks."""
+    from unittest.mock import MagicMock, AsyncMock
+    crashed_account = AccountInfo(
+        balance=9.18,
+        equity=9.18,
+        margin=0.0,
+        free_margin=9.18,
+        currency="USD",
+        leverage=1000,
+    )
+    mock_broker = MagicMock()
+    mock_broker.get_account_info = AsyncMock(return_value=crashed_account)
+    mock_broker.get_open_positions = AsyncMock(return_value=[])
+    mock_broker.get_pending_orders = AsyncMock(return_value=[])
+
+    mock_news = MagicMock()
+    mock_news.can_open_baseline_trade.return_value = (True, "OK")
+
+    tm = TradeManager(
+        broker=mock_broker,
+        data_hub=MagicMock(),
+        news_reactor=mock_news,
+        risk_engine=MagicMock(),
+        max_daily_drawdown_pct=25.0,
+    )
+    # Scenario: Account started at $8.29, made +$5.28 profit, took two small invalidation losses (-$4.33).
+    # Net daily realized PnL is +$3.09 (account is profitable!).
+    tm._start_of_day_balance = 8.29
+    tm._daily_realized_pnl = 3.09
+
+    can_open, reason = await tm.can_open_manual_trade("XAUUSD", "BUY", 0.01)
+    assert can_open is True
+    assert reason == "OK"
+
+    # Simulate pause and verify operator force resume
+    tm._pause_until = time.time() + 3600
+    assert tm.is_paused() is True
+
+    resumed, msg = await tm.resume_trading(force=True)
+    assert resumed is True
+    assert "Trading resumed successfully" in msg
+    assert tm.is_paused() is False
+    assert tm._start_of_day_balance == 9.18
+

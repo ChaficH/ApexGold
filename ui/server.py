@@ -372,7 +372,13 @@ async def update_settings(payload: SettingsPayload):
         ctx.auto_limits_enabled = bool(payload.auto_limits_enabled)
 
     if payload.strategy_mode or payload.aggressiveness_pct is not None:
-        target_mode = payload.strategy_mode.lower() if payload.strategy_mode else (ctx.scorer.mode if ctx.scorer else ctx.strategy_mode)
+        if payload.strategy_mode:
+            target_mode = payload.strategy_mode.lower()
+        elif payload.aggressiveness_pct is not None:
+            target_mode = "manual"
+        else:
+            target_mode = ctx.scorer.mode if ctx.scorer else ctx.strategy_mode
+
         ctx.strategy_mode = target_mode
         if payload.aggressiveness_pct is not None:
             ctx.aggressiveness_pct = float(payload.aggressiveness_pct)
@@ -438,7 +444,7 @@ async def action_resume():
     """Resume automated trade executions."""
     if not ctx.trade_manager:
         raise HTTPException(status_code=500, detail="TradeManager not ready")
-    ok, msg = await ctx.trade_manager.resume_trading()
+    ok, msg = await ctx.trade_manager.resume_trading(force=True)
     return {"status": "OK" if ok else "BLOCKED", "message": msg}
 
 
@@ -447,7 +453,8 @@ async def action_reset_cooldown():
     """Instantly clear post-loss cooldown and circuit breaker."""
     if ctx.trade_manager:
         ctx.trade_manager.reset_cooldown()
-    return {"status": "OK", "message": "Anti-revenge cooldown cleared."}
+        await ctx.trade_manager.resume_trading(force=True)
+    return {"status": "OK", "message": "Anti-revenge cooldown and circuit breaker cleared."}
 
 
 @app.post("/api/actions/toggle_pre_news_trajectory")
@@ -862,9 +869,8 @@ async def mt5_bridge_tick(payload: Dict[str, Any], request: Request = None):
             if ctx.risk_engine:
                 ctx.risk_engine.base_budget_usd = balance
             if ctx.trade_manager:
-                if ctx.trade_manager._start_of_day_balance <= 1.0 or ctx.trade_manager._start_of_day_balance < balance:
-                    ctx.trade_manager._start_of_day_balance = balance
-                    ctx.trade_manager.reset_cooldown()
+                if ctx.trade_manager._start_of_day_balance <= 1.0:
+                    ctx.trade_manager._start_of_day_balance = max(1.0, balance - ctx.trade_manager._daily_realized_pnl)
         if equity > 0 and hasattr(ctx.broker, "equity"):
             ctx.broker.equity = equity
         if hasattr(ctx.broker, "_override_free_margin") and free_margin > 0:

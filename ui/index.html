@@ -274,18 +274,18 @@
       </button>
 
       <!-- 4 Compact Preset Gears -->
-      <div class="hidden xl:flex items-center space-x-0.5 bg-[#11131A] p-0.5 rounded-sm border border-[#1E2028] text-[10px] font-mono shrink-0">
-        <button id="btn-gear-cautious" onclick="setTransmissionMode('cautious')" title="Sniper (35% | Min Score: 76)" class="px-2 py-0.5 rounded-sm text-zinc-500 hover:text-zinc-300 transition duration-150 ease-out">
+      <div class="flex items-center space-x-0.5 bg-[#11131A] p-0.5 rounded-sm border border-[#1E2028] text-[10px] font-mono shrink-0">
+        <button id="btn-gear-cautious" onclick="setTransmissionMode('cautious')" title="Sniper (35% | Min Score: 76)" class="px-1.5 md:px-2 py-0.5 rounded-sm text-zinc-500 hover:text-zinc-300 transition duration-150 ease-out">
           35%
         </button>
-        <button id="btn-gear-standard" onclick="setTransmissionMode('standard')" title="Standard (55% | Min Score: 68)" class="px-2 py-0.5 rounded-sm text-zinc-500 hover:text-zinc-300 transition duration-150 ease-out">
+        <button id="btn-gear-standard" onclick="setTransmissionMode('standard')" title="Standard (55% | Min Score: 68)" class="px-1.5 md:px-2 py-0.5 rounded-sm text-zinc-500 hover:text-zinc-300 transition duration-150 ease-out">
           55%
         </button>
-        <button id="btn-gear-aggressive" onclick="setTransmissionMode('aggressive')" title="Aggressive (75% | Min Score: 60)" class="px-2 py-0.5 rounded-sm text-zinc-500 hover:text-zinc-300 transition duration-150 ease-out">
+        <button id="btn-gear-aggressive" onclick="setTransmissionMode('aggressive')" title="Aggressive (75% | Min Score: 60)" class="px-1.5 md:px-2 py-0.5 rounded-sm text-zinc-500 hover:text-zinc-300 transition duration-150 ease-out">
           75%
         </button>
-        <button id="btn-gear-hyper" onclick="setTransmissionMode('hyper')" title="Hyper Scalp (92% | Min Score: 52)" class="px-2 py-0.5 rounded-sm text-zinc-500 hover:text-zinc-300 transition duration-150 ease-out">
-          92%
+        <button id="btn-gear-hyper" onclick="setTransmissionMode('scalp')" title="Fast Scalp (92% | Min Score: 52)" class="px-1.5 md:px-2 py-0.5 rounded-sm text-zinc-500 hover:text-zinc-300 transition duration-150 ease-out font-semibold">
+          SCALP 92%
         </button>
       </div>
 
@@ -1057,10 +1057,11 @@
       ['cautious', 'standard', 'aggressive', 'hyper'].forEach(g => {
         const btn = document.getElementById(`btn-gear-${g}`);
         if (btn) {
-          if (currentMode === g) {
-            btn.className = 'px-2 py-0.5 rounded-sm bg-[#D4AF37]/15 text-[#D4AF37] border border-[#D4AF37]/30 font-semibold font-mono text-[10px] transition duration-150 ease-out';
+          const isMatch = (currentMode === g) || (g === 'hyper' && (currentMode === 'scalp' || currentMode === 'scalping'));
+          if (isMatch) {
+            btn.className = 'px-1.5 md:px-2 py-0.5 rounded-sm bg-[#D4AF37]/15 text-[#D4AF37] border border-[#D4AF37]/30 font-semibold font-mono text-[10px] transition duration-150 ease-out';
           } else {
-            btn.className = 'px-2 py-0.5 rounded-sm text-zinc-500 hover:text-zinc-300 font-mono text-[10px] transition duration-150 ease-out';
+            btn.className = 'px-1.5 md:px-2 py-0.5 rounded-sm text-zinc-500 hover:text-zinc-300 font-mono text-[10px] transition duration-150 ease-out';
           }
         }
       });
@@ -1074,29 +1075,39 @@
         document.getElementById('label-scroller-threshold').innerText = data.threshold || calcThresholdFromPct(dialPct);
       }
 
-      // 6. Market Brain Sub-Regime & Anti-Revenge Cooldown Display
+      // 6. Market Brain Sub-Regime & Circuit Breaker / Cooldown Display
       if (data.auto_brain) {
         const brain = data.auto_brain;
         const subBadge = document.getElementById('badge-sub-regime');
         const reasonSpan = document.getElementById('pill-auto-brain-reason');
+        const isCb = data.circuit_breaker_tripped;
+        const cbReason = data.circuit_breaker_reason || 'Trading paused';
         const cdSec = (data.daily_stats && data.daily_stats.post_loss_cooldown_seconds_left) || 0;
 
-        if (cdSec > 0) {
-          subBadge.innerText = `PAUSE ${cdSec}s (SKIP)`;
-          subBadge.className = 'px-2 py-0.5 rounded-sm text-[10px] font-mono uppercase tracking-wider bg-[#D4AF37]/15 text-[#D4AF37] border border-[#D4AF37]/40 shrink-0 whitespace-nowrap cursor-pointer hover:bg-[#D4AF37]/25 transition duration-150 ease-out';
+        if (isCb || cdSec > 0) {
+          const badgeText = isCb ? 'CIRCUIT BREAKER: RESUME' : `PAUSE ${cdSec}s (SKIP)`;
+          subBadge.innerText = badgeText;
+          subBadge.className = 'px-2 py-0.5 rounded-sm text-[10px] font-mono uppercase tracking-wider bg-[#D4AF37]/15 text-[#D4AF37] border border-[#D4AF37]/40 shrink-0 whitespace-nowrap cursor-pointer hover:bg-[#D4AF37]/25 transition duration-150 ease-out font-semibold';
           subBadge.onclick = async () => {
             try {
-              await fetch('/api/actions/reset_cooldown', { method: 'POST' });
-              showToast('Anti-Revenge Cooldown Reset', 'success');
+              const res = await fetch('/api/actions/resume', { method: 'POST' });
+              const resData = await res.json();
+              if (resData.status === 'OK') {
+                showToast('Circuit Breaker Cleared & Resumed', 'success');
+              } else {
+                await fetch('/api/actions/reset_cooldown', { method: 'POST' });
+                showToast(resData.message || 'Cooldown Reset', 'info');
+              }
+              await fetchStatus();
             } catch (e) { console.error(e); }
           };
           if (reasonSpan) {
-            reasonSpan.innerText = `BUFFER ACTIVE (${cdSec}s) — Volatility cooldown. Click badge to skip.`;
-            reasonSpan.title = 'Click badge to bypass cooldown buffer.';
+            reasonSpan.innerText = isCb ? `HALTED: ${cbReason} — Click badge to Resume.` : `BUFFER ACTIVE (${cdSec}s) — Volatility cooldown. Click badge to skip.`;
+            reasonSpan.title = 'Click badge to bypass cooldown buffer and resume trading.';
           }
         } else {
           subBadge.onclick = null;
-          if (brain.sub_regime === 'FAST_SCALP') {
+          if (brain.sub_regime === 'FAST_SCALP' || currentMode === 'hyper' || currentMode === 'scalp') {
             subBadge.innerText = 'FAST SCALP';
             subBadge.className = 'px-2 py-0.5 rounded-sm text-[10px] font-mono uppercase tracking-wider bg-emerald-500/10 text-emerald-400 border border-emerald-500/25 shrink-0 whitespace-nowrap';
           } else if (brain.sub_regime === 'DEFENSIVE_SHIELD') {
@@ -1586,11 +1597,16 @@
 
     async function setTransmissionMode(mode) {
       let pct = null;
+      let targetMode = mode;
       if (mode === 'cautious') pct = 35.0;
       else if (mode === 'standard') pct = 55.0;
       else if (mode === 'aggressive') pct = 75.0;
-      else if (mode === 'hyper') pct = 92.0;
+      else if (mode === 'hyper' || mode === 'scalp' || mode === 'scalping') {
+        targetMode = 'scalp';
+        pct = 92.0;
+      }
 
+      currentMode = targetMode;
       sliderDragLockUntil = Date.now() + 1500;
       if (pct !== null) {
         document.getElementById('slider-aggressiveness').value = pct;
@@ -1601,9 +1617,10 @@
       await fetch('/api/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ strategy_mode: mode, aggressiveness_pct: pct })
+        body: JSON.stringify({ strategy_mode: targetMode, aggressiveness_pct: pct })
       });
-      appendLog('TRANSMISSION', `Switched mode to ${mode.toUpperCase()}`);
+      appendLog('TRANSMISSION', `Switched mode to ${targetMode.toUpperCase()}`);
+      await fetchStatus();
     }
 
     // Render Economic News and Local Timezone

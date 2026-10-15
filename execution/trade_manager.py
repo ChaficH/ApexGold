@@ -489,22 +489,31 @@ class TradeManager:
         self._pause_until = time.time() + (minutes * 60)
         logger.info(f"Trading paused for {minutes} minutes until {datetime.fromtimestamp(self._pause_until, tz=timezone.utc)}")
 
-    async def resume_trading(self) -> Tuple[bool, str]:
+    async def resume_trading(self, force: bool = False) -> Tuple[bool, str]:
         """
         Immediately resume trading and reset circuit breaker if daily drawdown allows.
-        Does not bypass hard daily drawdown limit.
+        When force=True (manual operator override from UI/API), clears pause and updates baseline.
         """
         acc = await self.broker.get_account_info()
-        if acc and self._start_of_day_balance > 0:
+        eff_base = self._start_of_day_balance if self._start_of_day_balance > 0 else (acc.balance if acc else 100.0)
+        is_micro = eff_base <= 35.0
+        allowed_dd_pct = 50.0 if is_micro else self.max_daily_drawdown_pct
+
+        if not force and acc and self._start_of_day_balance > 0:
             eq_dd_pct = ((self._start_of_day_balance - acc.equity) / self._start_of_day_balance) * 100.0
             real_dd_pct = ((-self._daily_realized_pnl) / self._start_of_day_balance) * 100.0
-            max_dd = max(eq_dd_pct, real_dd_pct)
-            if max_dd >= self.max_daily_drawdown_pct:
-                msg = f"Cannot resume: Daily drawdown ({max_dd:.1f}% >= {self.max_daily_drawdown_pct:.1f}%) still breached!"
+            if self._daily_realized_pnl >= 0 and acc.equity >= (self._start_of_day_balance * 0.90):
+                max_dd = 0.0
+            else:
+                max_dd = max(eq_dd_pct, real_dd_pct)
+
+            if max_dd >= allowed_dd_pct:
+                msg = f"Cannot resume: Daily drawdown ({max_dd:.1f}% >= {allowed_dd_pct:.1f}%) still breached!"
                 logger.warning(msg)
                 return False, msg
+
         rec = await self.reconcile_broker_state()
-        if rec.get("is_contradictory", False):
+        if not force and rec.get("is_contradictory", False):
             msg = f"Cannot resume: Unresolved contradictory broker state ({self._contradictory_state_reason})."
             logger.warning(msg)
             return False, msg
@@ -512,7 +521,18 @@ class TradeManager:
         self._pause_until = 0.0
         self._daily_losses_count = 0
         self._consecutive_losses = 0
-        logger.info("Trading resumed and daily loss counter reset.")
+        self._post_loss_cooldown_until = 0.0
+        self._last_order_time = 0.0
+        self._last_loss_time = 0.0
+        self._contradictory_state_active = False
+        self._contradictory_state_reason = ""
+
+        if force and acc and getattr(acc, "balance", 0.0) > 0:
+            self._start_of_day_balance = acc.balance
+            self._daily_realized_pnl = 0.0
+            logger.info(f"Operator force-resumed trading: baseline balance reset to ${self._start_of_day_balance:.2f}.")
+        else:
+            logger.info("Trading resumed and daily loss counter reset.")
         return True, "Trading resumed successfully"
 
     def is_paused(self) -> bool:
@@ -536,11 +556,13 @@ class TradeManager:
         if self.max_consecutive_losses > 0 and self._consecutive_losses >= self.max_consecutive_losses:
             return True, f"Max consecutive losses reached ({self._consecutive_losses}/{self.max_consecutive_losses})"
         eff_base = self._start_of_day_balance if self._start_of_day_balance > 0 else (getattr(self.risk_engine, "base_budget_usd", 0.0) or 100.0)
-        if eff_base > 0:
+        is_micro = eff_base <= 35.0
+        allowed_dd_pct = 50.0 if is_micro else self.max_daily_drawdown_pct
+        if eff_base > 0 and self._daily_realized_pnl < 0:
             real_dd_usd = max(0.0, -self._daily_realized_pnl)
             real_dd_pct = (real_dd_usd / eff_base) * 100.0
-            if real_dd_pct >= self.max_daily_drawdown_pct:
-                return True, f"Daily realized drawdown limit breached ({real_dd_pct:.1f}% >= {self.max_daily_drawdown_pct:.1f}%)"
+            if real_dd_pct >= allowed_dd_pct:
+                return True, f"Daily realized drawdown limit breached ({real_dd_pct:.1f}% >= {allowed_dd_pct:.1f}%)"
         if now < self._post_loss_cooldown_until:
             rem = int(self._post_loss_cooldown_until - now)
             return True, f"Post-loss buffer active ({rem}s remaining)"
@@ -565,23 +587,37 @@ class TradeManager:
             return False, f"Reconciliation Alert: Unresolved contradictory broker state ({self._contradictory_state_reason}). New orders blocked."
 
         if acc and getattr(acc, "equity", 0.0) > 0 and self._start_of_day_balance > 1.0:
+            is_micro = eff_balance <= 35.0
+            allowed_dd_pct = 50.0 if is_micro else self.max_daily_drawdown_pct
+            
             eq_dd_usd = max(0.0, self._start_of_day_balance - acc.equity)
             eq_dd_pct = (eq_dd_usd / self._start_of_day_balance) * 100.0
             real_dd_usd = max(0.0, -self._daily_realized_pnl)
             real_dd_pct = (real_dd_usd / self._start_of_day_balance) * 100.0
-            max_dd = max(eq_dd_pct, real_dd_pct)
-            if max_dd >= self.max_daily_drawdown_pct:
+            
+            # Net daily drawdown only applies if net equity or realized balance is actually below start of day
+            if self._daily_realized_pnl >= 0 and acc.equity >= (self._start_of_day_balance * 0.90):
+                max_dd = 0.0
+            else:
+                max_dd = max(eq_dd_pct, real_dd_pct)
+
+            if max_dd >= allowed_dd_pct:
                 now_dt = datetime.now(timezone.utc)
                 tomorrow_dt = (now_dt + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
                 sec_to_midnight = max(60, int((tomorrow_dt - now_dt).total_seconds()))
                 self._pause_until = time.time() + sec_to_midnight
-                return False, f"Circuit Breaker: Daily drawdown breached ({max_dd:.1f}% >= {self.max_daily_drawdown_pct:.1f}%). Orders halted until 00:00 UTC."
+                return False, f"Circuit Breaker: Daily drawdown breached ({max_dd:.1f}% >= {allowed_dd_pct:.1f}%). Orders halted until 00:00 UTC."
 
         if self._is_order_in_flight:
             return False, "Order already in flight (waiting for broker execution)"
 
         if self.news_reactor:
-            can_open_news, news_reason = self.news_reactor.can_open_baseline_trade()
+            can_open_news = True
+            news_reason = ""
+            if hasattr(self.news_reactor, "can_open_baseline_trade"):
+                res = self.news_reactor.can_open_baseline_trade()
+                if isinstance(res, tuple) and len(res) == 2:
+                    can_open_news, news_reason = res
             if not can_open_news:
                 return False, f"News Reactor: {news_reason}"
 
@@ -635,17 +671,26 @@ class TradeManager:
 
         # 0. Daily Drawdown Circuit Breaker Enforcement
         if acc and getattr(acc, "equity", 0.0) > 0 and self._start_of_day_balance > 1.0:
+            is_micro = eff_balance <= 35.0
+            allowed_dd_pct = 50.0 if is_micro else self.max_daily_drawdown_pct
+
             eq_dd_usd = max(0.0, self._start_of_day_balance - acc.equity)
             eq_dd_pct = (eq_dd_usd / self._start_of_day_balance) * 100.0
             real_dd_usd = max(0.0, -self._daily_realized_pnl)
             real_dd_pct = (real_dd_usd / self._start_of_day_balance) * 100.0
-            max_dd = max(eq_dd_pct, real_dd_pct)
-            if max_dd >= self.max_daily_drawdown_pct:
+
+            # Net daily drawdown only applies if net equity or realized balance is actually below start of day
+            if self._daily_realized_pnl >= 0 and acc.equity >= (self._start_of_day_balance * 0.90):
+                max_dd = 0.0
+            else:
+                max_dd = max(eq_dd_pct, real_dd_pct)
+
+            if max_dd >= allowed_dd_pct:
                 now_dt = datetime.now(timezone.utc)
                 tomorrow_dt = (now_dt + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
                 sec_to_midnight = max(60, int((tomorrow_dt - now_dt).total_seconds()))
                 self._pause_until = time.time() + sec_to_midnight
-                return False, f"Circuit Breaker: Daily drawdown breached ({max_dd:.1f}% >= {self.max_daily_drawdown_pct:.1f}%). New orders halted until 00:00 UTC."
+                return False, f"Circuit Breaker: Daily drawdown breached ({max_dd:.1f}% >= {allowed_dd_pct:.1f}%). New orders halted until 00:00 UTC."
 
         # 1. Post-Loss Tick Buffer (Broker deal and tick settlement period)
         now = time.time()
@@ -1685,11 +1730,15 @@ class TradeManager:
             logger.info(f"[PROFITABLE TRADE] Trade #{pos.ticket} closed with profit (${pnl:.2f}). Consecutive loss counter reset.")
 
     def reset_cooldown(self) -> None:
-        """Instantly clear post-loss cooldown and circuit breaker."""
+        """Instantly clear post-loss cooldown, loss counters, and circuit breaker."""
         self._post_loss_cooldown_until = 0.0
         self._pause_until = 0.0
         self._last_order_time = 0.0
         self._last_loss_time = 0.0
+        self._daily_losses_count = 0
+        self._consecutive_losses = 0
+        self._contradictory_state_active = False
+        self._contradictory_state_reason = ""
         logger.info("[COOLDOWN RESET] Cooldown and circuit breaker manually reset.")
 
     async def emergency_close_all(self) -> int:

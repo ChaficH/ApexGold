@@ -192,7 +192,7 @@ class ConfluenceScorer:
             self.mode = "aggressive"
             self.aggressiveness_pct = 75.0
             self.auto_brain_state["is_auto"] = False
-        elif m in ["hyper", "most_aggressive", "tier_4"]:
+        elif m in ["hyper", "most_aggressive", "tier_4", "scalp", "scalping", "fast_scalp"]:
             self.mode = "hyper"
             self.aggressiveness_pct = 92.0
             self.auto_brain_state["is_auto"] = False
@@ -220,7 +220,7 @@ class ConfluenceScorer:
             return 68
         elif self.mode == "aggressive":
             return 60
-        elif self.mode == "hyper":
+        elif self.mode in ["hyper", "scalp", "scalping", "fast_scalp"]:
             return 52
         elif self.mode == "manual":
             return pct_to_threshold(self.aggressiveness_pct)
@@ -236,7 +236,7 @@ class ConfluenceScorer:
             return 55.0
         elif self.mode == "aggressive":
             return 75.0
-        elif self.mode == "hyper":
+        elif self.mode in ["hyper", "scalp", "scalping", "fast_scalp"]:
             return 92.0
         return self.aggressiveness_pct
 
@@ -1350,17 +1350,28 @@ class ConfluenceScorer:
             target_rr = float(self.auto_brain_state.get("target_rr", 2.6))
             be_lock_r = float(self.auto_brain_state.get("be_lock_r", 0.65))
             stall_exit_seconds = float(self.auto_brain_state.get("stall_exit_seconds", 90.0))
-        elif self.mode in ["hyper", "aggressive"]:
+        elif self.mode in ["hyper", "aggressive", "scalp", "scalping", "fast_scalp"]:
             sub_regime = "FAST_SCALP"
-            target_rr = 2.0 if self.mode == "hyper" else 2.2
-            be_lock_r = 0.65
-            stall_exit_seconds = 60.0
+            target_rr = 1.8 if self.mode in ["hyper", "scalp", "scalping", "fast_scalp"] else 2.2
+            be_lock_r = 0.50 if self.mode in ["hyper", "scalp", "scalping", "fast_scalp"] else 0.65
+            stall_exit_seconds = 45.0 if self.mode in ["hyper", "scalp", "scalping", "fast_scalp"] else 60.0
         elif self.mode == "cautious":
             sub_regime = "WAVE_RUNNER"
             target_rr = 2.8
             be_lock_r = 0.65
             stall_exit_seconds = 120.0
-        else: # Standard / Manual
+        elif self.mode == "manual":
+            if self.aggressiveness_pct >= 70.0:
+                sub_regime = "FAST_SCALP"
+                target_rr = 1.8 if self.aggressiveness_pct >= 85.0 else 2.0
+                be_lock_r = 0.50 if self.aggressiveness_pct >= 85.0 else 0.60
+                stall_exit_seconds = 45.0 if self.aggressiveness_pct >= 85.0 else 60.0
+            else:
+                sub_regime = "WAVE_RUNNER"
+                target_rr = 2.5
+                be_lock_r = 0.65
+                stall_exit_seconds = 90.0
+        else: # Standard
             sub_regime = "WAVE_RUNNER" if total_score >= 68 else "FAST_SCALP"
             target_rr = 2.4
             be_lock_r = 0.65
