@@ -123,3 +123,4 @@ The root cause of legacy unprofitability was the **Premature Breakeven Ratchet**
    ```bash
    PYTHONPATH=. pytest tests/ -q
    ```
+

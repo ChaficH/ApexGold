@@ -73,3 +73,4 @@ def test_strategy_v2_fallback_when_disabled():
 
     res = strat.evaluate("XAUUSD", dfs, current_tick_bid=bid, current_tick_ask=ask, utc_timestamp=float(dfs["5m"]["time"].iloc[-1]))
     assert isinstance(res, tuple)
+

@@ -1174,7 +1174,7 @@ async def action_test_trade(direction: str = "BUY", volume: float = 0.01):
             budget = ctx.risk_engine.calculate_risk_budget(acc)
             monetary_risk = ctx.risk_engine.calculate_monetary_risk(sym_info, volume, abs(cur_p - sl))
             is_small_acc = (acc.balance <= 35.0) or (getattr(ctx.risk_engine, "account_type", "") in ["micro", "cent"])
-            max_allowed = max(budget, (acc.balance * 0.60) if is_small_acc else budget)
+            max_allowed = max(budget, (acc.balance * 0.70) if is_small_acc else budget)
             if monetary_risk > max_allowed:
                 return {
                     "status": "REJECTED",

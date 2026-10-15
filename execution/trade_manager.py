@@ -15,7 +15,7 @@ Monitors open positions every 250ms to enforce:
 
 import asyncio
 from dataclasses import dataclass, asdict
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import logging
 import time
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -571,8 +571,11 @@ class TradeManager:
             real_dd_pct = (real_dd_usd / self._start_of_day_balance) * 100.0
             max_dd = max(eq_dd_pct, real_dd_pct)
             if max_dd >= self.max_daily_drawdown_pct:
-                self.pause_trading(minutes=1440)
-                return False, f"Circuit Breaker: Daily drawdown breached ({max_dd:.1f}% >= {self.max_daily_drawdown_pct:.1f}%). Orders halted."
+                now_dt = datetime.now(timezone.utc)
+                tomorrow_dt = (now_dt + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+                sec_to_midnight = max(60, int((tomorrow_dt - now_dt).total_seconds()))
+                self._pause_until = time.time() + sec_to_midnight
+                return False, f"Circuit Breaker: Daily drawdown breached ({max_dd:.1f}% >= {self.max_daily_drawdown_pct:.1f}%). Orders halted until 00:00 UTC."
 
         if self._is_order_in_flight:
             return False, "Order already in flight (waiting for broker execution)"
@@ -598,6 +601,9 @@ class TradeManager:
             self._daily_losses_count = 0
             self._consecutive_losses = 0
             self._daily_realized_pnl = 0.0
+            self._pause_until = 0.0
+            self._contradictory_state_active = False
+            self._contradictory_state_reason = ""
             self._today_date_str = today_str
             if current_balance is not None and current_balance > 0:
                 self._start_of_day_balance = current_balance
@@ -620,6 +626,10 @@ class TradeManager:
             return False, f"Reconciliation Alert: Unresolved contradictory broker state ({self._contradictory_state_reason}). New orders blocked."
 
         if self.is_paused():
+            now = time.time()
+            if now < self._pause_until:
+                rem_s = int(self._pause_until - now)
+                return False, f"Trading paused (Cooldown: {rem_s}s remaining. Use Resume button to unblock)"
             daily_str = f"Daily losses: {self._daily_losses_count}/{self.max_daily_losses}" if self.max_daily_losses > 0 else "Daily losses: Unlimited"
             return False, f"Trading paused ({daily_str}, Consecutive: {self._consecutive_losses}/{self.max_consecutive_losses})"
 
@@ -631,8 +641,11 @@ class TradeManager:
             real_dd_pct = (real_dd_usd / self._start_of_day_balance) * 100.0
             max_dd = max(eq_dd_pct, real_dd_pct)
             if max_dd >= self.max_daily_drawdown_pct:
-                self.pause_trading(minutes=1440)
-                return False, f"Circuit Breaker: Daily drawdown breached ({max_dd:.1f}% >= {self.max_daily_drawdown_pct:.1f}%). New orders halted."
+                now_dt = datetime.now(timezone.utc)
+                tomorrow_dt = (now_dt + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+                sec_to_midnight = max(60, int((tomorrow_dt - now_dt).total_seconds()))
+                self._pause_until = time.time() + sec_to_midnight
+                return False, f"Circuit Breaker: Daily drawdown breached ({max_dd:.1f}% >= {self.max_daily_drawdown_pct:.1f}%). New orders halted until 00:00 UTC."
 
         # 1. Post-Loss Tick Buffer (Broker deal and tick settlement period)
         now = time.time()
@@ -716,6 +729,7 @@ class TradeManager:
                 total_pending_count = max(len(self._pending_limit_orders), len(broker_pending), len(mt5_pending))
 
         total_exposure = all_positions_count + total_pending_count
+        is_limit = getattr(signal, "order_type", "MARKET") in ["BUY_LIMIT", "SELL_LIMIT"]
 
         # Exposure limit: respect configured max_open_positions (up to 2 for micro accounts)
         if eff_balance < 150.0:
@@ -739,7 +753,6 @@ class TradeManager:
                 return False, f"Maximum exposure reached ({total_exposure}/{allowed_max}) including {total_pending_count} pending order(s) for balance ${eff_balance:.2f}"
 
         # Stacking limit orders is strictly forbidden:
-        is_limit = getattr(signal, "order_type", "MARKET") in ["BUY_LIMIT", "SELL_LIMIT"]
         if is_limit and total_pending_count > 0:
             return False, f"Pending limit order already active for {signal.symbol}. Stacking duplicate limit orders is forbidden."
 
@@ -793,9 +806,9 @@ class TradeManager:
             )
             total_projected_risk_pct = ((total_open_risk_usd + cand_risk) / eff_balance) * 100.0
             if eff_balance <= 35.0 and total_open_risk_usd == 0.0:
-                allowed_max_risk = max(self.max_total_open_risk_pct, 60.0)
+                allowed_max_risk = max(self.max_total_open_risk_pct, 70.0)
             elif eff_balance <= 35.0:
-                allowed_max_risk = max(self.max_total_open_risk_pct, 30.0)
+                allowed_max_risk = max(self.max_total_open_risk_pct, 35.0)
             else:
                 allowed_max_risk = self.max_total_open_risk_pct
             if total_projected_risk_pct > allowed_max_risk:

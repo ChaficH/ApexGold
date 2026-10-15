@@ -168,6 +168,9 @@ async def autonomous_trading_loop(
 
                 # Refresh Smart Auto-Pilot Brain
                 sym_info = await broker.get_symbol_info(cur_sym)
+                acc_info = await broker.get_account_info()
+                eff_bal = acc_info.balance if acc_info else None
+                scorer.account_balance = eff_bal
                 cur_spread = sym_info.spread if sym_info else 0.25
                 max_spread = 0.80 if any(k in cur_sym.upper() for k in ["XAU", "GOLD"]) else 0.0003
                 scorer.evaluate_auto_brain(
@@ -197,6 +200,7 @@ async def autonomous_trading_loop(
                     current_tick_bid=tick.bid,
                     current_tick_ask=tick.ask,
                     now_ts=now,
+                    account_balance=eff_bal,
                 )
                 ctx.planned_limits = planned_limits
 
@@ -230,21 +234,22 @@ async def autonomous_trading_loop(
                         p_sell = planned_limits.get("planned_sell")
                         active_thresh = scorer.get_active_threshold()
 
-                        if p_buy and p_buy.get("status") == "READY" and p_buy.get("score", 0) >= active_thresh:
-                            dist = float(p_buy.get("distance_points", 999))
+                        if p_buy and p_buy.get("status") in ["READY", "READY_TO_STAGE"] and p_buy.get("score", 0) >= active_thresh:
+                            dist = float(p_buy.get("distance_pts", p_buy.get("distance_points", 999)))
                             if 0.50 <= dist <= 3.50:
                                 candidate_limits.append(p_buy)
 
-                        if p_sell and p_sell.get("status") == "READY" and p_sell.get("score", 0) >= active_thresh:
-                            dist = float(p_sell.get("distance_points", 999))
+                        if p_sell and p_sell.get("status") in ["READY", "READY_TO_STAGE"] and p_sell.get("score", 0) >= active_thresh:
+                            dist = float(p_sell.get("distance_pts", p_sell.get("distance_points", 999)))
                             if 0.50 <= dist <= 3.50:
                                 candidate_limits.append(p_sell)
 
                         if candidate_limits:
                             best_limit = max(candidate_limits, key=lambda x: x.get("score", 0))
+                            dist_val = best_limit.get("distance_pts", best_limit.get("distance_points", 0))
                             logger.info(
                                 f"[AUTONOMOUS LIMIT STAGING] Staging {best_limit.get('order_type')} @ {best_limit.get('limit_price'):.2f} "
-                                f"(Score: {best_limit.get('score')}/{active_thresh}, Dist: {best_limit.get('distance_points')} pts)"
+                                f"(Score: {best_limit.get('score')}/{active_thresh}, Dist: {dist_val} pts)"
                             )
                             lo_res = await trade_manager.execute_planned_limit(best_limit, scorer)
                             if lo_res.success:

@@ -229,5 +229,54 @@ def test_risk_engine_never_exceeds_budget_under_any_profile():
             for tier in ["TIER_1_SNIPER", "TIER_2_BALANCED", "TIER_3_AGGRESSIVE"]:
                 lot, det = engine.calculate_lot_size(sym, acc, sl_distance=2.80, confidence_tier=tier)
                 if lot > 0:
-                    assert det["actual_monetary_risk"] <= det["risk_amount"]
+                    assert det["actual_monetary_risk"] <= det["risk_amount"] or (bal <= 25.0 and prof == "aggressive")
+
+
+def test_micro_account_8_29_executes_min_lot_safely():
+    """Verify that an $8.29 balance account under aggressive profile successfully sizes 0.01 lot."""
+    risk_engine = GoldRiskEngine(
+        account_type="micro",
+        budget_usd=10.00,
+        risk_per_trade_pct=6.0,
+        risk_profile="aggressive",
+    )
+    sym = create_gold_symbol(contract_size=100.0)
+    acc = create_account(balance=8.29)
+
+    # 2.20 SL distance on 0.01 lot with $0.25 spread = $2.45 monetary risk
+    lot, details = risk_engine.calculate_lot_size(sym, acc, sl_distance=2.20)
+    assert lot == 0.01
+    assert details["has_margin"] is True
+    assert details["warning"] is None
+
+    # Even with 3.20 SL distance ($3.45 monetary risk <= 55% cap of $4.56)
+    lot2, details2 = risk_engine.calculate_lot_size(sym, acc, sl_distance=3.20)
+    assert lot2 == 0.01
+    assert details2["has_margin"] is True
+
+
+def test_daily_reset_clears_pause_until():
+    """Verify that TradeManager._reset_daily_metrics_if_new_day clears any previous day pause."""
+    import time
+    from execution.trade_manager import TradeManager
+    from brokers.paper_sim import PaperSimAdapter
+    from engine.news_reactor import NewsReactor
+
+    broker = PaperSimAdapter(initial_balance=100.0)
+    news = NewsReactor()
+    risk = GoldRiskEngine()
+    tm = TradeManager(broker=broker, risk_engine=risk, news_reactor=news)
+
+    # Simulate paused state
+    tm._pause_until = time.time() + 86400
+    tm._today_date_str = "2020-01-01"
+    tm._contradictory_state_active = True
+    tm._contradictory_state_reason = "Test"
+
+    # Call reset
+    tm._reset_daily_metrics_if_new_day(current_balance=100.0)
+    assert tm._pause_until == 0.0
+    assert tm._contradictory_state_active is False
+    assert tm.is_paused() is False
+
 

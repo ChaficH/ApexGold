@@ -1339,8 +1339,9 @@ class ConfluenceScorer:
                 recent_high = max(h_1m[-5:])
                 raw_sl_dist = (recent_high + (0.40 if is_gold else 0.0004)) - current_price
 
-        min_sl = 2.20 if is_gold else 0.0015
-        max_sl = 3.20 if is_gold else 0.0035
+        is_small_acc = getattr(self, "account_balance", None) is not None and self.account_balance <= 35.0
+        min_sl = 1.80 if (is_gold and is_small_acc) else (2.20 if is_gold else 0.0015)
+        max_sl = 2.60 if (is_gold and is_small_acc) else (3.20 if is_gold else 0.0035)
         risk_r_dist = float(np.clip(raw_sl_dist, min_sl, max_sl))
 
         # Sub-regime and trade parameters
@@ -1446,6 +1447,7 @@ class ConfluenceScorer:
         current_tick_bid: float,
         current_tick_ask: float,
         now_ts: Optional[float] = None,
+        account_balance: Optional[float] = None,
     ) -> Dict[str, Any]:
         """
         Institutional Planned Limits Engine.
@@ -1501,8 +1503,10 @@ class ConfluenceScorer:
         # SL placed below Demand floor or 1.1x ATR
         dem_floor = float(zones.get("demand_floor", buy_limit_price - atr_val)) if zones.get("valid") else (buy_limit_price - atr_val)
         raw_buy_sl = min(buy_limit_price - (atr_val * 1.1), dem_floor - (0.50 if is_gold else 0.0005))
+        acc_bal = account_balance if account_balance is not None else getattr(self, "account_balance", None)
+        is_small_acc = (acc_bal is not None and acc_bal <= 35.0)
         min_sl_dist = 1.80 if is_gold else 0.0015
-        max_sl_dist = 4.50 if is_gold else 0.0040
+        max_sl_dist = 2.60 if (is_gold and is_small_acc) else (3.50 if is_gold else 0.0040)
         buy_sl = round(max(buy_limit_price - max_sl_dist, min(buy_limit_price - min_sl_dist, raw_buy_sl)), 2 if is_gold else 5)
         buy_risk = round(buy_limit_price - buy_sl, 2 if is_gold else 5)
 

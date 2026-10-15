@@ -330,7 +330,11 @@ class GoldRiskEngine:
         min_lot_risk = round(v_min * cost_per_lot, 2)
 
         # Strict risk check: If minimum volume risk exceeds permitted risk budget, reject the trade
-        if min_lot_risk > round(risk_amount, 2):
+        # For small micro accounts (effective_budget <= 25.0) under aggressive profile, allow up to 55% risk cap for the single minimum lot (0.01)
+        is_small_micro = (effective_budget <= 25.0) and (self.risk_profile == "aggressive")
+        allowed_risk_cap = max(round(risk_amount, 2), round(effective_budget * 0.55, 2)) if is_small_micro else round(risk_amount, 2)
+
+        if min_lot_risk > allowed_risk_cap:
             warning_msg = (
                 f"Minimum lot ({v_min}) monetary risk (${min_lot_risk:.2f}) exceeds allowed "
                 f"risk budget (${risk_amount:.2f}, {self.risk_per_trade_pct}% of ${effective_budget:.2f}). "
@@ -353,27 +357,31 @@ class GoldRiskEngine:
         lot = math.floor(raw_lot / v_step) * v_step
         lot = round(lot, 4)
 
-        # Enforce that rounding or floating point arithmetic NEVER allows monetary risk > risk_amount
-        while lot >= v_min and round(lot * cost_per_lot, 2) > round(risk_amount, 2):
+        # Enforce that rounding or floating point arithmetic NEVER allows monetary risk > risk_amount (or allowed_risk_cap for small micro)
+        effective_cap = allowed_risk_cap if is_small_micro else round(risk_amount, 2)
+        while lot >= v_min and round(lot * cost_per_lot, 2) > effective_cap:
             lot = round(lot - v_step, 4)
 
         if lot < v_min:
-            warning_msg = (
-                f"Calculated lot size below minimum broker volume ({v_min}) after strict risk budgeting. "
-                f"Trade rejected."
-            )
-            logger.warning(warning_msg)
-            return 0.0, {
-                "lot_size": 0.0,
-                "risk_amount": round(risk_amount, 2),
-                "min_lot_risk": min_lot_risk,
-                "effective_budget": round(effective_budget, 2),
-                "sl_distance": round(actual_sl_dist, 2 if is_gold else 5),
-                "margin_required": 0.0,
-                "free_margin": round(account_info.free_margin, 2),
-                "has_margin": False,
-                "warning": warning_msg,
-            }
+            if is_small_micro and min_lot_risk <= allowed_risk_cap:
+                lot = v_min
+            else:
+                warning_msg = (
+                    f"Calculated lot size below minimum broker volume ({v_min}) after strict risk budgeting. "
+                    f"Trade rejected."
+                )
+                logger.warning(warning_msg)
+                return 0.0, {
+                    "lot_size": 0.0,
+                    "risk_amount": round(risk_amount, 2),
+                    "min_lot_risk": min_lot_risk,
+                    "effective_budget": round(effective_budget, 2),
+                    "sl_distance": round(actual_sl_dist, 2 if is_gold else 5),
+                    "margin_required": 0.0,
+                    "free_margin": round(account_info.free_margin, 2),
+                    "has_margin": False,
+                    "warning": warning_msg,
+                }
 
         lot = min(v_max, lot)
         # Enforce profile max_lot_cap if specified
@@ -382,24 +390,27 @@ class GoldRiskEngine:
         lot = round(lot, 2)
 
         # Final rounding re-verification
-        while lot >= v_min and round(lot * cost_per_lot, 2) > round(risk_amount, 2):
+        while lot >= v_min and round(lot * cost_per_lot, 2) > effective_cap:
             lot = round(lot - v_step, 2)
 
         if lot < v_min:
-            return 0.0, {
-                "lot_size": 0.0,
-                "risk_amount": round(risk_amount, 2),
-                "min_lot_risk": min_lot_risk,
-                "effective_budget": round(effective_budget, 2),
-                "sl_distance": round(actual_sl_dist, 2 if is_gold else 5),
-                "margin_required": 0.0,
-                "free_margin": round(account_info.free_margin, 2),
-                "has_margin": False,
-                "warning": "Rounding exceeded risk budget; trade rejected.",
-                "risk_profile": self.risk_profile,
-                "confidence_mult": conf_mult,
-                "streak_mult": streak_mult,
-            }
+            if is_small_micro and min_lot_risk <= allowed_risk_cap:
+                lot = v_min
+            else:
+                return 0.0, {
+                    "lot_size": 0.0,
+                    "risk_amount": round(risk_amount, 2),
+                    "min_lot_risk": min_lot_risk,
+                    "effective_budget": round(effective_budget, 2),
+                    "sl_distance": round(actual_sl_dist, 2 if is_gold else 5),
+                    "margin_required": 0.0,
+                    "free_margin": round(account_info.free_margin, 2),
+                    "has_margin": False,
+                    "warning": "Rounding exceeded risk budget; trade rejected.",
+                    "risk_profile": self.risk_profile,
+                    "confidence_mult": conf_mult,
+                    "streak_mult": streak_mult,
+                }
 
         # Margin Requirement Check (using verified broker ask price)
         current_price = symbol_info.ask
