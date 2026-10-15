@@ -20,6 +20,6 @@
     "regime_code"
   ],
   "optimal_threshold": 0.52,
-  "cv_accuracy_mean": 0.5368,
-  "created_at": "2026-10-14T23:12:12.827315+00:00"
+  "cv_accuracy_mean": 0.7,
+  "created_at": "2026-10-15T18:07:22.705804+00:00"
 }

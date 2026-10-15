@@ -706,19 +706,42 @@
                   Evaluating pullback parameters. Price must reach value zone without overextension.
                 </p>
               </div>
-              <div class="bg-[#07080C] p-2 rounded border border-[#1C202E] space-y-1">
-                <span class="text-zinc-500 text-[9px] uppercase tracking-wider font-semibold block">Target Execution Zone & Invalidation</span>
-                <div class="flex justify-between text-[10px]">
-                  <span class="text-zinc-500">Direction:</span>
-                  <span id="learn-target-dir" class="font-bold text-emerald-400">BUY</span>
+              <div class="bg-[#07080C] p-2 rounded border border-[#1C202E] space-y-1.5">
+                <div class="flex items-center justify-between">
+                  <span class="text-zinc-500 text-[9px] uppercase tracking-wider font-semibold">Institutional Execution Zone & Trigger</span>
+                  <span id="learn-target-readiness" class="px-1.5 py-0.2 rounded text-[8px] bg-zinc-800 text-zinc-400 font-bold border border-zinc-700">SCANNING</span>
                 </div>
-                <div class="flex justify-between text-[10px]">
-                  <span class="text-zinc-500">Optimal Range:</span>
-                  <span id="learn-target-range" class="text-zinc-100 font-bold tabular-nums">-- - --</span>
+                <div class="flex items-baseline justify-between text-[10px]">
+                  <span class="text-zinc-500">Direction & Setup:</span>
+                  <div class="text-right">
+                    <span id="learn-target-dir" class="font-bold text-emerald-400">BUY</span>
+                    <span id="learn-target-zone-name" class="text-zinc-400 text-[9px] font-sans block">--</span>
+                  </div>
+                </div>
+                <div class="flex items-baseline justify-between text-[10px]">
+                  <span class="text-zinc-500">WHERE to Enter:</span>
+                  <div class="text-right">
+                    <span id="learn-target-range" class="text-zinc-100 font-bold tabular-nums">-- - --</span>
+                    <span id="learn-target-distance" class="text-amber-400 text-[9px] block font-sans">--</span>
+                  </div>
+                </div>
+                <div class="bg-[#0D1018] p-1.5 rounded border border-[#1C202E]/80 text-[10px] space-y-0.5">
+                  <span class="text-zinc-400 font-bold text-[9px] uppercase tracking-wider block">⚡ WHEN TO ENTER (Trigger Criteria)</span>
+                  <p id="learn-target-trigger" class="text-zinc-300 text-[9px] font-sans leading-relaxed">
+                    Awaiting micro pullback into zone followed by wick rejection & order flow delta shift.
+                  </p>
                 </div>
                 <div class="flex justify-between text-[10px]">
                   <span class="text-zinc-500">Structural Invalidation:</span>
                   <span id="learn-target-inval" class="text-rose-400 font-bold tabular-nums">--</span>
+                </div>
+                <div class="flex justify-between text-[10px]">
+                  <span class="text-zinc-500">Profit Target (Objective):</span>
+                  <span id="learn-target-objective" class="text-emerald-400 font-bold tabular-nums">--</span>
+                </div>
+                <div class="flex justify-between text-[10px] pt-1 border-t border-[#1C202E]/60">
+                  <span class="text-zinc-500">Opposing Zone:</span>
+                  <span id="learn-opposing-zone" class="text-zinc-400 text-[9px] font-sans text-right max-w-[180px] truncate">Scanning opposing liquidity</span>
                 </div>
               </div>
             </div>
@@ -2948,6 +2971,50 @@
       const invalEl = document.getElementById('learn-target-inval');
       if (invalEl) {
         invalEl.innerText = tz.invalidation_level ? `${tz.invalidation_level.toFixed(2)}` : 'Structural Low/High';
+      }
+
+      const zoneNameEl = document.getElementById('learn-target-zone-name');
+      if (zoneNameEl) {
+        zoneNameEl.innerText = tz.zone_name ? `(${tz.zone_name})` : '';
+      }
+
+      const distEl = document.getElementById('learn-target-distance');
+      if (distEl) {
+        distEl.innerText = tz.distance_note || '';
+        distEl.className = (tz.distance_to_zone_pts === 0) ? 'text-emerald-400 font-bold text-[9px] block font-sans' : 'text-amber-400 text-[9px] block font-sans';
+      }
+
+      const trigEl = document.getElementById('learn-target-trigger');
+      if (trigEl) {
+        trigEl.innerText = tz.trigger_condition || 'Evaluating order flow and retracement parameters.';
+      }
+
+      const readyEl = document.getElementById('learn-target-readiness');
+      if (readyEl) {
+        const tStatus = tz.trigger_status || 'WAITING';
+        readyEl.innerText = tStatus;
+        if (tStatus === 'IN_ZONE_READY') {
+          readyEl.className = 'px-1.5 py-0.2 rounded text-[8px] bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/40';
+        } else if (tStatus === 'APPROACHING_PULLBACK') {
+          readyEl.className = 'px-1.5 py-0.2 rounded text-[8px] bg-amber-500/20 text-amber-300 font-bold border border-amber-500/40';
+        } else {
+          readyEl.className = 'px-1.5 py-0.2 rounded text-[8px] bg-zinc-800 text-zinc-400 border border-zinc-700 font-bold';
+        }
+      }
+
+      const objTargetEl = document.getElementById('learn-target-objective');
+      if (objTargetEl) {
+        objTargetEl.innerText = (tz.target_objective && tz.target_objective > 0) ? `${tz.target_objective.toFixed(2)} (+${(tz.target_points || 0).toFixed(2)} pts, ${tz.target_rr || 3.5}R)` : '--';
+      }
+
+      const oppEl = document.getElementById('learn-opposing-zone');
+      if (oppEl) {
+        const opp = tz.opposing_zone || {};
+        if (opp.range_min && opp.range_max) {
+          oppEl.innerText = `${opp.direction || 'SELL'} [${opp.range_min.toFixed(2)} - ${opp.range_max.toFixed(2)}] — ${opp.zone_name || 'Supply Shelf'}`;
+        } else {
+          oppEl.innerText = 'Scanning opposing liquidity pools';
+        }
       }
 
       // 3. Adaptive Weight Shift Matrix Table
