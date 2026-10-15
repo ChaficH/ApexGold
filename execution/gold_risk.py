@@ -135,8 +135,11 @@ class GoldRiskEngine:
         """
         Calculates active trading budget safely.
         Budget can NEVER exceed the actual available balance.
+        Falls back to base_budget_usd if broker balance is zero or uninitialized during startup.
         """
         safe_bal = max(0.0, current_balance)
+        if safe_bal <= 0.0:
+            return self.base_budget_usd
         if not self.compounding_enabled:
             return min(self.base_budget_usd, safe_bal)
         return safe_bal
