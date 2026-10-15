@@ -26,12 +26,12 @@
           },
           colors: {
             carbon: {
-              950: '#090A0F',
-              900: '#11131A',
-              850: '#151821',
-              800: '#1E2028',
-              700: '#2A2D37',
-              600: '#3D414D'
+              950: '#07080C',
+              900: '#0E1017',
+              850: '#141722',
+              800: '#1C202E',
+              700: '#272C3E',
+              600: '#3A4158'
             },
             champagne: {
               DEFAULT: '#D4AF37',
@@ -41,9 +41,11 @@
             },
             terminal: {
               emerald: '#10B981',
-              rose: '#F43F5E',
+              rose: '#EF4444',
               sky: '#38BDF8',
-              amber: '#F59E0B'
+              amber: '#F59E0B',
+              cyan: '#06B6D4',
+              violet: '#8B5CF6'
             }
           }
         }
@@ -57,7 +59,7 @@
     }
 
     body {
-      background-color: #090A0F;
+      background-color: #07080C;
       color: #E4E4E7;
       font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       -webkit-font-smoothing: antialiased;
@@ -69,32 +71,32 @@
       font-variant-numeric: tabular-nums;
     }
 
-    /* Subtle 6px pulsing dot for live connections without cheesy glow */
+    /* Subtle pulsing dot for live connections */
     .pulse-dot {
       animation: pulseDot 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
     }
     @keyframes pulseDot {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.35; }
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.35; transform: scale(0.9); }
     }
 
-    /* Skeleton shimmer for loading states */
-    @keyframes skeletonShimmer {
-      0% { background-position: -200% 0; }
-      100% { background-position: 200% 0; }
+    /* Glow pulse for active badges */
+    .glow-emerald {
+      box-shadow: 0 0 10px rgba(16, 185, 129, 0.25);
     }
-    .skeleton-shimmer {
-      background: linear-gradient(90deg, rgba(255, 255, 255, 0.02) 25%, rgba(255, 255, 255, 0.05) 50%, rgba(255, 255, 255, 0.02) 75%);
-      background-size: 200% 100%;
-      animation: skeletonShimmer 1.8s infinite;
+    .glow-rose {
+      box-shadow: 0 0 10px rgba(239, 68, 68, 0.25);
+    }
+    .glow-gold {
+      box-shadow: 0 0 10px rgba(212, 175, 55, 0.25);
     }
 
-    /* Sharp technical range slider track and thumb */
+    /* Technical range slider track and thumb */
     input[type=range] {
       -webkit-appearance: none;
       appearance: none;
-      background: #1E2028;
-      border: 1px solid #2A2D37;
+      background: #1C202E;
+      border: 1px solid #272C3E;
       border-radius: 2px;
       height: 4px;
       outline: none;
@@ -106,72 +108,73 @@
       width: 12px;
       border-radius: 2px;
       background: #D4AF37;
-      border: 1px solid #090A0F;
+      border: 1px solid #07080C;
       cursor: pointer;
       transition: background 150ms ease-out, transform 150ms ease-out;
     }
     input[type=range]::-webkit-slider-thumb:hover {
       background: #E5C158;
-      transform: scale(1.1);
+      transform: scale(1.15);
     }
 
     /* Minimalist technical scrollbar */
     ::-webkit-scrollbar { width: 4px; height: 4px; }
-    ::-webkit-scrollbar-track { background: #090A0F; }
-    ::-webkit-scrollbar-thumb { background: #1E2028; border-radius: 2px; }
-    ::-webkit-scrollbar-thumb:hover { background: #2A2D37; }
+    ::-webkit-scrollbar-track { background: #07080C; }
+    ::-webkit-scrollbar-thumb { background: #1C202E; border-radius: 2px; }
+    ::-webkit-scrollbar-thumb:hover { background: #272C3E; }
 
-    /* Hairline borders utility */
-    .hairline-border {
-      border: 1px solid #1E2028;
+    /* Modal transition backdrop */
+    .modal-backdrop {
+      background-color: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(6px);
     }
   </style>
 </head>
-<body class="h-screen flex flex-col overflow-hidden select-none bg-[#090A0F] text-zinc-200">
+<body class="h-screen flex flex-col overflow-hidden select-none bg-[#07080C] text-zinc-200">
 
   <!-- ROW 1: BESPOKE INSTITUTIONAL HEADER BAR -->
-  <header class="bg-[#11131A] border-b border-[#1E2028] px-3 py-1.5 flex items-center justify-between shrink-0 text-xs">
+  <header class="bg-[#0E1017]/95 border-b border-[#1C202E] px-3.5 py-1.5 flex items-center justify-between shrink-0 text-xs shadow-sm z-30">
     <!-- Left: Brand, Live Broker Telemetry & Account Stats -->
-    <div class="flex items-center space-x-3">
+    <div class="flex items-center space-x-3.5">
       <div class="flex items-center space-x-2">
-        <div class="w-6 h-6 rounded-sm bg-[#151821] border border-[#1E2028] flex items-center justify-center font-mono font-bold text-[#D4AF37] text-xs">
+        <div class="w-6 h-6 rounded bg-gradient-to-br from-[#1C202E] to-[#0E1017] border border-[#272C3E] flex items-center justify-center font-mono font-bold text-[#D4AF37] text-xs shadow-inner">
           AG
         </div>
         <div>
           <div class="flex items-center space-x-1.5">
-            <span class="font-semibold text-xs tracking-tight text-zinc-100">ApexGold</span>
-            <span class="px-1.5 py-0.2 text-[9px] uppercase font-mono font-semibold rounded-sm bg-[#D4AF37]/10 text-[#D4AF37] border border-[#D4AF37]/25">
-              TERMINAL
+            <span class="font-bold text-xs tracking-tight text-zinc-100 font-sans">ApexGold</span>
+            <span class="px-1.5 py-0.2 text-[8px] uppercase font-mono font-bold rounded bg-[#D4AF37]/15 text-[#D4AF37] border border-[#D4AF37]/30 tracking-wider">
+              QUANT TERMINAL
             </span>
           </div>
           <div class="flex items-center space-x-1 text-[11px] leading-none pt-0.5">
             <span id="broker-status-dot" class="w-1.5 h-1.5 rounded-full bg-emerald-400 pulse-dot"></span>
-            <span id="broker-status-text" class="font-mono text-[10px] text-emerald-400 font-medium">MT5 CONNECTING...</span>
+            <span id="broker-status-text" class="font-mono text-[10px] text-emerald-400 font-semibold tracking-tight">MT5 CONNECTING...</span>
           </div>
         </div>
       </div>
 
       <!-- Real-Time Account Telemetry Direct from MT5 -->
-      <div class="hidden md:flex items-center space-x-4 ml-3 pl-3 border-l border-[#1E2028] font-mono text-[11px]">
+      <div class="hidden md:flex items-center space-x-3.5 ml-2 pl-3 border-l border-[#1C202E] font-mono text-[11px]">
         <div>
           <span class="text-zinc-500 block text-[9px] uppercase tracking-wider font-sans font-medium">Balance</span>
-          <span id="header-balance" class="font-semibold text-zinc-100 tabular-nums">$0.00</span>
+          <span id="header-balance" class="font-bold text-zinc-100 tabular-nums text-xs">$0.00</span>
         </div>
         <div>
           <span class="text-zinc-500 block text-[9px] uppercase tracking-wider font-sans font-medium">Equity</span>
-          <span id="header-equity" class="font-semibold text-zinc-100 tabular-nums">$0.00</span>
+          <span id="header-equity" class="font-bold text-zinc-100 tabular-nums text-xs">$0.00</span>
         </div>
         <div>
           <span class="text-zinc-500 block text-[9px] uppercase tracking-wider font-sans font-medium">Free Margin</span>
-          <span id="header-margin" class="font-semibold text-emerald-400 tabular-nums">$0.00</span>
+          <span id="header-margin" class="font-semibold text-emerald-400 tabular-nums text-xs">$0.00</span>
         </div>
         <div>
           <span class="text-zinc-500 block text-[9px] uppercase tracking-wider font-sans font-medium">Account</span>
-          <span id="header-account-type" class="font-medium text-sky-400">MICRO (1:500)</span>
+          <span id="header-account-type" class="font-medium text-sky-400 text-[10px]">MICRO (1:500)</span>
         </div>
         <div>
           <span class="text-zinc-500 block text-[9px] uppercase tracking-wider font-sans font-medium">Symbol</span>
-          <span id="header-symbol" class="font-semibold text-[#D4AF37]">XAUUSD.m</span>
+          <span id="header-symbol" class="font-bold text-[#D4AF37]">XAUUSD.m</span>
         </div>
         <div>
           <span class="text-zinc-500 block text-[9px] uppercase tracking-wider font-sans font-medium">Spread</span>
@@ -179,11 +182,11 @@
         </div>
         <div>
           <span class="text-zinc-500 block text-[9px] uppercase tracking-wider font-sans font-medium">Win Rate</span>
-          <span id="header-winrate" class="font-semibold text-emerald-400 tabular-nums">--%</span>
+          <span id="header-winrate" class="font-bold text-emerald-400 tabular-nums">--%</span>
         </div>
         <div>
           <span class="text-zinc-500 block text-[9px] uppercase tracking-wider font-sans font-medium">Net P&L</span>
-          <span id="header-net-pnl" class="font-semibold text-emerald-400 tabular-nums">$0.00</span>
+          <span id="header-net-pnl" class="font-bold text-emerald-400 tabular-nums">$0.00</span>
         </div>
       </div>
     </div>
@@ -191,32 +194,43 @@
     <!-- Right: Session Clock & Execution Mode & Instant Orders -->
     <div class="flex items-center space-x-2.5">
       <!-- Session Clock Badge -->
-      <div class="hidden xl:flex items-center space-x-1.5 bg-[#090A0F] px-2.5 py-1 rounded-sm border border-[#1E2028] font-mono text-[10px]">
+      <div class="hidden xl:flex items-center space-x-1.5 bg-[#07080C] px-2.5 py-1 rounded border border-[#1C202E] font-mono text-[10px]">
         <span id="badge-local-clock" class="text-zinc-200 font-semibold tabular-nums">12:00:00 PM</span>
         <span id="badge-tz-name" class="text-zinc-500">(UTC+3)</span>
         <span class="text-zinc-700">|</span>
-        <span id="badge-session-title" class="text-zinc-300 font-medium uppercase tracking-wider">LONDON</span>
+        <span id="badge-session-title" class="text-zinc-300 font-semibold uppercase tracking-wider">LONDON</span>
       </div>
 
       <!-- Execution Mode Segmented Control -->
-      <div class="flex bg-[#090A0F] p-0.5 rounded-sm border border-[#1E2028] text-[10px] font-mono font-medium">
-        <button id="btn-mode-auto" onclick="setExecutionMode('full_auto')" class="px-2 py-0.5 rounded-sm bg-[#D4AF37]/15 text-[#D4AF37] border border-[#D4AF37]/30 font-semibold tracking-wider transition duration-150 ease-out">AUTO</button>
-        <button id="btn-mode-confirm" onclick="setExecutionMode('confirm')" class="px-2 py-0.5 rounded-sm text-zinc-500 hover:text-zinc-300 tracking-wider transition duration-150 ease-out">ALERT</button>
-        <button id="btn-mode-scanner" onclick="setExecutionMode('scanner')" class="px-2 py-0.5 rounded-sm text-zinc-500 hover:text-zinc-300 tracking-wider transition duration-150 ease-out">SCAN</button>
+      <div class="flex bg-[#07080C] p-0.5 rounded border border-[#1C202E] text-[10px] font-mono font-medium">
+        <button id="btn-mode-auto" onclick="setExecutionMode('full_auto')" class="px-2 py-0.5 rounded bg-[#D4AF37]/15 text-[#D4AF37] border border-[#D4AF37]/30 font-semibold tracking-wider transition duration-150 ease-out">AUTO</button>
+        <button id="btn-mode-confirm" onclick="setExecutionMode('confirm')" class="px-2 py-0.5 rounded text-zinc-500 hover:text-zinc-300 tracking-wider transition duration-150 ease-out">ALERT</button>
+        <button id="btn-mode-scanner" onclick="setExecutionMode('scanner')" class="px-2 py-0.5 rounded text-zinc-500 hover:text-zinc-300 tracking-wider transition duration-150 ease-out">SCAN</button>
       </div>
 
-      <!-- Direct 1-Click Execution CTAs -->
-      <div class="flex items-center space-x-1 pl-2 border-l border-[#1E2028]">
-        <button onclick="dispatchDirectTestTrade('BUY')" title="Instant Market BUY 0.01 lot on MT5" class="px-2.5 py-1 rounded-sm bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-mono font-semibold text-[11px] tracking-wider transition duration-150 ease-out">
-          BUY 0.01
+      <!-- Direct 1-Click Execution CTAs with Dynamic Lot Selector -->
+      <div class="flex items-center space-x-1.5 pl-2 border-l border-[#1C202E]">
+        <!-- Dynamic Volume Selector -->
+        <div class="hidden sm:flex items-center space-x-1 bg-[#07080C] px-1.5 py-0.5 rounded border border-[#1C202E]">
+          <span class="text-zinc-500 text-[9px] uppercase font-sans font-medium">Lot:</span>
+          <input id="direct-trade-volume" type="number" step="0.01" min="0.01" max="10.0" value="0.01" onchange="syncSelectedLot(this.value)" class="w-12 bg-[#0E1017] border border-[#272C3E] text-center text-zinc-100 font-mono text-[11px] font-bold rounded py-0.5 focus:border-[#D4AF37] focus:outline-none tabular-nums" />
+          <div class="flex space-x-0.5 font-mono text-[9px]">
+            <button onclick="setDirectVolume(0.01)" class="px-1 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition">.01</button>
+            <button onclick="setDirectVolume(0.02)" class="px-1 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition">.02</button>
+            <button onclick="setDirectVolume(0.05)" class="px-1 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition">.05</button>
+          </div>
+        </div>
+
+        <button id="btn-direct-buy" onclick="dispatchDirectTestTrade('BUY')" title="Instant Market BUY on MT5" class="px-3 py-1 rounded bg-emerald-600/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 font-mono font-bold text-[11px] tracking-wider transition duration-150 ease-out shadow-sm hover:shadow-emerald-950/40 active:scale-95">
+          ▲ BUY <span class="lot-display-val">0.01</span>
         </button>
-        <button onclick="dispatchDirectTestTrade('SELL')" title="Instant Market SELL 0.01 lot on MT5" class="px-2.5 py-1 rounded-sm bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 font-mono font-semibold text-[11px] tracking-wider transition duration-150 ease-out">
-          SELL 0.01
+        <button id="btn-direct-sell" onclick="dispatchDirectTestTrade('SELL')" title="Instant Market SELL on MT5" class="px-3 py-1 rounded bg-rose-600/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 font-mono font-bold text-[11px] tracking-wider transition duration-150 ease-out shadow-sm hover:shadow-rose-950/40 active:scale-95">
+          ▼ SELL <span class="lot-display-val">0.01</span>
         </button>
-        <button onclick="emergencyAction('close_all')" title="Close All Positions on MT5" class="px-2 py-1 rounded-sm bg-zinc-900 hover:bg-rose-950/40 text-zinc-400 hover:text-rose-400 border border-[#1E2028] hover:border-rose-900/40 font-mono font-medium text-[10px] uppercase tracking-wider transition duration-150 ease-out">
+        <button onclick="openCloseAllModal()" title="Emergency Close All Positions on MT5" class="px-2.5 py-1 rounded bg-rose-950/30 hover:bg-rose-900/50 text-rose-400 border border-rose-800/40 hover:border-rose-500/50 font-mono font-semibold text-[10px] uppercase tracking-wider transition duration-150 ease-out active:scale-95">
           CLOSE ALL
         </button>
-        <button onclick="emergencyAction('lock_breakeven')" title="Lock Breakeven on All Winning Positions" class="px-2 py-1 rounded-sm bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 border border-[#1E2028] font-mono font-medium text-[10px] uppercase tracking-wider transition duration-150 ease-out">
+        <button onclick="emergencyAction('lock_breakeven')" title="Lock Breakeven on All Winning Positions" class="px-2 py-1 rounded bg-[#07080C] hover:bg-zinc-800 text-zinc-300 hover:text-zinc-100 border border-[#1C202E] font-mono font-medium text-[10px] uppercase tracking-wider transition duration-150 ease-out">
           LOCK BE
         </button>
       </div>
@@ -224,89 +238,89 @@
   </header>
 
   <!-- CONDITIONAL WARNING: MT5 ALGO TRADING DISABLED -->
-  <div id="mt5-algo-warning" class="hidden bg-rose-950/40 border-b border-rose-500/30 px-3 py-1.5 flex items-center justify-between text-xs text-rose-200 shrink-0 font-mono">
+  <div id="mt5-algo-warning" class="hidden bg-rose-950/60 border-b border-rose-500/40 px-3.5 py-1.5 flex items-center justify-between text-xs text-rose-200 shrink-0 font-mono">
     <div class="flex items-center space-x-2">
       <span class="w-1.5 h-1.5 rounded-full bg-rose-500 pulse-dot"></span>
-      <span class="font-semibold text-rose-300 uppercase tracking-wider">ACTION REQUIRED:</span>
-      <span class="text-zinc-300 font-sans">MetaTrader 5 Algo Trading is turned off. Automated and 1-click orders are blocked by terminal.</span>
+      <span class="font-bold text-rose-300 uppercase tracking-wider">ACTION REQUIRED:</span>
+      <span class="text-zinc-200 font-sans">MetaTrader 5 Algo Trading is turned off. Automated and 1-click orders are blocked by MT5.</span>
     </div>
-    <span class="bg-rose-900/60 border border-rose-500/40 px-2 py-0.5 rounded-sm text-[10px] font-mono text-rose-200 font-semibold">
-      In MT5: Toggle "Algo Trading" in toolbar to Green
+    <span class="bg-rose-900/80 border border-rose-500/60 px-2.5 py-0.5 rounded text-[10px] font-mono text-rose-100 font-bold">
+      In MT5: Toggle "Algo Trading" button in toolbar to Green
     </span>
   </div>
 
   <!-- CONDITIONAL ALERT: LIVE ECONOMIC EVENT HAPPENING NOW -->
-  <div id="banner-happening-now" class="hidden px-3 py-1.5 border-b border-rose-500/30 flex items-center justify-between text-xs shrink-0 bg-rose-950/30 font-mono">
+  <div id="banner-happening-now" class="hidden px-3.5 py-1.5 border-b border-rose-500/40 flex items-center justify-between text-xs shrink-0 bg-rose-950/40 font-mono">
     <div class="flex items-center space-x-2">
       <span class="w-1.5 h-1.5 rounded-full bg-rose-500 pulse-dot"></span>
-      <span class="text-rose-400 uppercase tracking-wider font-semibold">ECONOMIC EVENT IN PROGRESS:</span>
-      <span id="live-event-name" class="text-zinc-100 font-sans">US CPI Release</span>
-      <span id="live-event-impact" class="px-1.5 py-0.2 rounded-sm text-[9px] uppercase font-mono bg-rose-500/15 text-rose-400 border border-rose-500/30">HIGH IMPACT</span>
+      <span class="text-rose-400 uppercase tracking-wider font-bold">ECONOMIC EVENT IN PROGRESS:</span>
+      <span id="live-event-name" class="text-zinc-100 font-sans font-semibold">US CPI Release</span>
+      <span id="live-event-impact" class="px-1.5 py-0.2 rounded text-[9px] uppercase font-mono bg-rose-500/20 text-rose-300 border border-rose-500/40 font-bold">HIGH IMPACT</span>
     </div>
-    <span id="live-engine-mode" class="px-2 py-0.5 rounded-sm font-semibold uppercase text-[10px] bg-rose-900/50 text-rose-200 border border-rose-700/50">
+    <span id="live-engine-mode" class="px-2.5 py-0.5 rounded font-bold uppercase text-[10px] bg-rose-900/60 text-rose-200 border border-rose-700/60">
       PRE-NEWS SHIELD (NEW ENTRIES LOCKED)
     </span>
   </div>
 
   <!-- CONDITIONAL ALERT: SMART PRE-NEWS TRAJECTORY WINDOW -->
-  <div id="banner-pre-news-trajectory" class="hidden px-3 py-1.5 border-b border-[#1E2028] flex items-center justify-between text-xs shrink-0 bg-[#11131A] font-mono">
+  <div id="banner-pre-news-trajectory" class="hidden px-3.5 py-1.5 border-b border-[#1C202E] flex items-center justify-between text-xs shrink-0 bg-[#0E1017] font-mono">
     <div class="flex items-center space-x-2">
       <span class="w-1.5 h-1.5 rounded-full bg-[#D4AF37] pulse-dot"></span>
       <span class="text-zinc-400 uppercase tracking-wider font-semibold">PRE-NEWS TRAJECTORY:</span>
-      <span id="traj-bias-badge" class="px-1.5 py-0.5 rounded-sm text-[10px] font-mono font-semibold uppercase bg-emerald-500/10 text-emerald-400 border border-emerald-500/25">BULLISH GOLD (82%)</span>
-      <span id="traj-event-name" class="text-zinc-400 font-sans text-[11px]">Upcoming USD Release</span>
+      <span id="traj-bias-badge" class="px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">BULLISH GOLD (82%)</span>
+      <span id="traj-event-name" class="text-zinc-300 font-sans text-[11px]">Upcoming USD Release</span>
     </div>
     <div class="flex items-center space-x-2">
-      <button id="btn-toggle-pre-news" onclick="togglePreNewsTrajectory()" title="Toggle smart pre-news trajectory" class="px-2 py-0.5 rounded-sm text-[10px] font-mono font-semibold uppercase transition duration-150 ease-out bg-[#151821] text-zinc-300 border border-[#1E2028] hover:border-zinc-700">
+      <button id="btn-toggle-pre-news" onclick="togglePreNewsTrajectory()" title="Toggle smart pre-news trajectory" class="px-2.5 py-0.5 rounded text-[10px] font-mono font-bold uppercase transition duration-150 ease-out bg-[#141722] text-zinc-300 border border-[#272C3E] hover:border-zinc-500">
         PRE-NEWS: ON
       </button>
     </div>
   </div>
 
   <!-- ROW 2: TRANSMISSION, ADAPTIVE INTELLIGENCE & TELEMETRY STRIP -->
-  <section class="bg-[#090A0F] border-b border-[#1E2028] px-3 py-1.5 flex items-center justify-between text-xs shrink-0 gap-2.5 overflow-x-auto">
+  <section class="bg-[#07080C] border-b border-[#1C202E] px-3.5 py-1.5 flex items-center justify-between text-xs shrink-0 gap-2.5 overflow-x-auto z-20">
     <!-- Left: Auto-Adaptive Toggle & Gears -->
     <div class="flex items-center space-x-2 shrink-0">
       <!-- Auto-Adaptive Master Button -->
-      <button id="btn-mode-auto-adaptive" onclick="setTransmissionMode('auto_adaptive')" class="px-2.5 py-1 rounded-sm text-[11px] font-mono font-medium tracking-wider transition duration-150 ease-out flex items-center space-x-1.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 whitespace-nowrap">
+      <button id="btn-mode-auto-adaptive" onclick="setTransmissionMode('auto_adaptive')" class="px-2.5 py-1 rounded text-[11px] font-mono font-semibold tracking-wider transition duration-150 ease-out flex items-center space-x-1.5 bg-emerald-500/15 text-emerald-400 border border-emerald-500/35 whitespace-nowrap shadow-sm">
         <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 pulse-dot"></span>
         <span>AUTO-ADAPTIVE</span>
       </button>
 
       <!-- 4 Compact Preset Gears -->
-      <div class="flex items-center space-x-0.5 bg-[#11131A] p-0.5 rounded-sm border border-[#1E2028] text-[10px] font-mono shrink-0">
-        <button id="btn-gear-cautious" onclick="setTransmissionMode('cautious')" title="Sniper (35% | Min Score: 76)" class="px-1.5 md:px-2 py-0.5 rounded-sm text-zinc-500 hover:text-zinc-300 transition duration-150 ease-out">
+      <div class="flex items-center space-x-0.5 bg-[#0E1017] p-0.5 rounded border border-[#1C202E] text-[10px] font-mono shrink-0">
+        <button id="btn-gear-cautious" onclick="setTransmissionMode('cautious')" title="Sniper (35% | Min Score: 76)" class="px-2 py-0.5 rounded text-zinc-500 hover:text-zinc-200 transition duration-150 ease-out">
           35%
         </button>
-        <button id="btn-gear-standard" onclick="setTransmissionMode('standard')" title="Standard (55% | Min Score: 68)" class="px-1.5 md:px-2 py-0.5 rounded-sm text-zinc-500 hover:text-zinc-300 transition duration-150 ease-out">
+        <button id="btn-gear-standard" onclick="setTransmissionMode('standard')" title="Standard (55% | Min Score: 68)" class="px-2 py-0.5 rounded text-zinc-500 hover:text-zinc-200 transition duration-150 ease-out">
           55%
         </button>
-        <button id="btn-gear-aggressive" onclick="setTransmissionMode('aggressive')" title="Aggressive (75% | Min Score: 60)" class="px-1.5 md:px-2 py-0.5 rounded-sm text-zinc-500 hover:text-zinc-300 transition duration-150 ease-out">
+        <button id="btn-gear-aggressive" onclick="setTransmissionMode('aggressive')" title="Aggressive (75% | Min Score: 60)" class="px-2 py-0.5 rounded text-zinc-500 hover:text-zinc-200 transition duration-150 ease-out">
           75%
         </button>
-        <button id="btn-gear-hyper" onclick="setTransmissionMode('scalp')" title="Fast Scalp (92% | Min Score: 52)" class="px-1.5 md:px-2 py-0.5 rounded-sm text-zinc-500 hover:text-zinc-300 transition duration-150 ease-out font-semibold">
+        <button id="btn-gear-hyper" onclick="setTransmissionMode('scalp')" title="Fast Scalp (92% | Min Score: 52)" class="px-2 py-0.5 rounded text-zinc-500 hover:text-zinc-200 transition duration-150 ease-out font-bold">
           SCALP 92%
         </button>
       </div>
 
       <!-- Slender Technical Slider -->
-      <div class="hidden sm:flex items-center space-x-1.5 bg-[#11131A] px-2 py-0.5 rounded-sm border border-[#1E2028] shrink-0">
+      <div class="hidden sm:flex items-center space-x-1.5 bg-[#0E1017] px-2 py-0.5 rounded border border-[#1C202E] shrink-0">
         <input id="slider-aggressiveness" type="range" min="1" max="100" value="74" oninput="onSliderInput(this.value)" onchange="onSliderChange(this.value)" class="w-16 md:w-20 cursor-pointer">
-        <span id="label-scroller-pct" class="font-mono font-semibold text-[#D4AF37] text-[11px] tabular-nums w-8 text-right">74%</span>
+        <span id="label-scroller-pct" class="font-mono font-bold text-[#D4AF37] text-[11px] tabular-nums w-8 text-right">74%</span>
         <span class="text-zinc-700">|</span>
         <span class="text-zinc-500 text-[10px] uppercase font-sans">Min:</span>
-        <span id="label-scroller-threshold" class="font-semibold text-emerald-400 font-mono text-[11px] tabular-nums">62</span>
-        <span id="badge-scroller-status" class="px-1.5 py-0.5 rounded-sm text-[9px] font-mono uppercase tracking-wider bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">AUTO</span>
+        <span id="label-scroller-threshold" class="font-bold text-emerald-400 font-mono text-[11px] tabular-nums">62</span>
+        <span id="badge-scroller-status" class="px-1.5 py-0.5 rounded text-[9px] font-mono uppercase tracking-wider bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-semibold">AUTO</span>
       </div>
     </div>
 
     <!-- Center: Live Market Brain Reason (Flexible, Never-Clipped) -->
-    <div class="flex items-center space-x-2 flex-1 min-w-0 mx-1 md:mx-2.5">
-      <span id="badge-sub-regime" class="px-2 py-0.5 rounded-sm text-[10px] font-mono uppercase tracking-wider bg-[#D4AF37]/10 text-[#D4AF37] border border-[#D4AF37]/25 shrink-0 whitespace-nowrap">
+    <div class="flex items-center space-x-2 flex-1 min-w-0 mx-1 md:mx-3">
+      <span id="badge-sub-regime" class="px-2.5 py-0.5 rounded text-[10px] font-mono uppercase tracking-wider bg-[#D4AF37]/15 text-[#D4AF37] border border-[#D4AF37]/30 shrink-0 whitespace-nowrap font-bold">
         FAST SCALP
       </span>
-      <div class="min-w-0 flex-1 flex items-center bg-[#11131A] border border-[#1E2028] px-2.5 py-0.5 rounded-sm">
-        <span id="pill-auto-brain-reason" class="text-zinc-400 font-mono text-[11px] truncate block w-full cursor-pointer hover:text-zinc-200 transition duration-150 ease-out" title="Live Market Brain Intelligence">
+      <div class="min-w-0 flex-1 flex items-center bg-[#0E1017] border border-[#1C202E] px-2.5 py-0.5 rounded">
+        <span id="pill-auto-brain-reason" class="text-zinc-300 font-mono text-[11px] truncate block w-full cursor-pointer hover:text-zinc-100 transition duration-150 ease-out" title="Live Market Brain Intelligence">
           Analyzing order flow dynamics &amp; liquidity levels...
         </span>
       </div>
@@ -315,18 +329,18 @@
     <!-- Right: Next Major News Countdown & Confluence Score -->
     <div class="flex items-center space-x-2 shrink-0">
       <!-- Next News Countdown -->
-      <div class="flex items-center space-x-1.5 font-mono text-[11px] bg-[#11131A] px-2.5 py-0.5 rounded-sm border border-[#1E2028]">
-        <span class="text-zinc-500 text-[10px] uppercase font-sans">News:</span>
-        <span id="hero-major-title" class="text-zinc-300 font-sans font-medium truncate max-w-[100px] md:max-w-[130px]">USD News</span>
-        <span id="hero-major-countdown" class="font-semibold text-[#D4AF37] tabular-nums">--:--:--</span>
+      <div class="flex items-center space-x-1.5 font-mono text-[11px] bg-[#0E1017] px-2.5 py-0.5 rounded border border-[#1C202E]">
+        <span class="text-zinc-500 text-[10px] uppercase font-sans font-medium">News:</span>
+        <span id="hero-major-title" class="text-zinc-200 font-sans font-medium truncate max-w-[100px] md:max-w-[140px]">USD News</span>
+        <span id="hero-major-countdown" class="font-bold text-[#D4AF37] tabular-nums">--:--:--</span>
       </div>
 
       <!-- Live Confluence Score -->
-      <div class="flex items-center space-x-1 font-mono text-[11px] bg-[#11131A] px-2.5 py-0.5 rounded-sm border border-[#1E2028]">
-        <span class="text-zinc-500 text-[10px] uppercase font-sans">Score:</span>
-        <span id="score-number" class="text-sm font-semibold text-emerald-400 tabular-nums">--</span>
+      <div class="flex items-center space-x-1 font-mono text-[11px] bg-[#0E1017] px-2.5 py-0.5 rounded border border-[#1C202E]">
+        <span class="text-zinc-500 text-[10px] uppercase font-sans font-medium">Score:</span>
+        <span id="score-number" class="text-sm font-bold text-emerald-400 tabular-nums">--</span>
         <span class="text-zinc-600 text-[10px]">/100</span>
-        <span id="score-tier" class="px-1.5 py-0.5 rounded-sm text-[9px] font-mono uppercase tracking-wider bg-zinc-900 border border-[#1E2028] text-zinc-500">WAITING</span>
+        <span id="score-tier" class="px-1.5 py-0.5 rounded text-[9px] font-mono uppercase tracking-wider bg-zinc-900 border border-[#1C202E] text-zinc-400 font-semibold">WAITING</span>
       </div>
     </div>
   </section>
@@ -335,174 +349,191 @@
   <main class="flex-1 min-h-0 min-w-0 flex overflow-hidden">
     
     <!-- LEFT: FULL-HEIGHT CHART VIEWPORT -->
-    <div class="flex-1 min-h-0 min-w-0 flex flex-col border-r border-[#1E2028] bg-[#090A0F] relative overflow-hidden">
+    <div class="flex-1 min-h-0 min-w-0 flex flex-col border-r border-[#1C202E] bg-[#07080C] relative overflow-hidden">
       <!-- Chart Controls Header -->
-      <div class="px-3 py-1.5 border-b border-[#1E2028] bg-[#11131A] flex items-center justify-between text-xs shrink-0 z-10">
-        <!-- Timeframes & Symbol -->
-        <div class="flex items-center space-x-1">
-          <div class="flex bg-[#090A0F] p-0.5 rounded-sm border border-[#1E2028] font-mono text-[11px]">
-            <button onclick="switchTimeframe('1m')" id="tf-1m" class="px-2 py-0.5 rounded-sm text-zinc-500 hover:text-zinc-300 transition duration-150 ease-out">1m</button>
-            <button onclick="switchTimeframe('5m')" id="tf-5m" class="px-2 py-0.5 rounded-sm text-zinc-500 hover:text-zinc-300 transition duration-150 ease-out">5m</button>
-            <button onclick="switchTimeframe('15m')" id="tf-15m" class="px-2 py-0.5 rounded-sm text-zinc-500 hover:text-zinc-300 transition duration-150 ease-out">15m</button>
-            <button onclick="switchTimeframe('1H')" id="tf-1H" class="px-2 py-0.5 rounded-sm bg-zinc-800 text-zinc-100 border border-zinc-700/60 font-semibold transition duration-150 ease-out">1H</button>
+      <div class="px-3.5 py-1.5 border-b border-[#1C202E] bg-[#0E1017] flex items-center justify-between text-xs shrink-0 z-10 shadow-sm">
+        <!-- Timeframes, Indicators & Tools -->
+        <div class="flex items-center space-x-2">
+          <!-- Timeframe Selector -->
+          <div class="flex bg-[#07080C] p-0.5 rounded border border-[#1C202E] font-mono text-[11px]">
+            <button onclick="switchTimeframe('1m')" id="tf-1m" class="px-2 py-0.5 rounded text-zinc-500 hover:text-zinc-200 transition duration-150 ease-out">1m</button>
+            <button onclick="switchTimeframe('5m')" id="tf-5m" class="px-2 py-0.5 rounded text-zinc-500 hover:text-zinc-200 transition duration-150 ease-out">5m</button>
+            <button onclick="switchTimeframe('15m')" id="tf-15m" class="px-2 py-0.5 rounded text-zinc-500 hover:text-zinc-200 transition duration-150 ease-out">15m</button>
+            <button onclick="switchTimeframe('1H')" id="tf-1H" class="px-2 py-0.5 rounded bg-zinc-800 text-zinc-100 border border-zinc-700/60 font-bold transition duration-150 ease-out">1H</button>
           </div>
-          <span class="text-zinc-700 pl-1">|</span>
-          <span id="chart-symbol-badge" class="font-mono text-[#D4AF37] font-semibold pl-1 text-xs">XAUUSD.m</span>
-          <span id="chart-mt5-sync-pill" class="ml-1.5 px-1.5 py-0.2 rounded-sm text-[9px] font-mono font-medium bg-[#151821] text-zinc-400 border border-[#1E2028]">
+
+          <span class="text-zinc-700">|</span>
+          <span id="chart-symbol-badge" class="font-mono text-[#D4AF37] font-bold text-xs">XAUUSD.m</span>
+          <span id="chart-mt5-sync-pill" class="px-1.5 py-0.2 rounded text-[9px] font-mono font-medium bg-[#141722] text-zinc-400 border border-[#1C202E]">
             MT5: 1H
           </span>
-          <button onclick="fitChartContent()" title="Reset Zoom / Fit All Candles" class="ml-1.5 px-2 py-0.5 rounded-sm bg-[#151821] hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 border border-[#1E2028] text-[10px] font-mono uppercase tracking-wider transition duration-150 ease-out">
-            FIT
-          </button>
+
+          <span class="text-zinc-700">|</span>
+          <!-- Indicator Toggles Toolbar -->
+          <div class="flex items-center space-x-1 font-mono text-[10px]">
+            <button id="btn-toggle-vwap" onclick="toggleIndicator('vwap')" title="Toggle Live Session VWAP" class="px-2 py-0.5 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/35 font-semibold transition hover:bg-cyan-500/25">VWAP</button>
+            <button id="btn-toggle-ema" onclick="toggleIndicator('ema')" title="Toggle 20/50 Exponential Moving Averages" class="px-2 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/35 font-semibold transition hover:bg-amber-500/25">EMA</button>
+            <button id="btn-toggle-vol" onclick="toggleIndicator('vol')" title="Toggle Volume Histogram" class="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/35 font-semibold transition hover:bg-emerald-500/25">VOL</button>
+            <button id="btn-toggle-zones" onclick="toggleIndicator('zones')" title="Toggle Target Execution & Invalidation Zones" class="px-2 py-0.5 rounded bg-purple-500/15 text-purple-300 border border-purple-500/35 font-semibold transition hover:bg-purple-500/25">ZONES</button>
+            <button onclick="fitChartContent()" title="Reset Zoom / Fit All Candles" class="px-2 py-0.5 rounded bg-[#141722] hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 border border-[#1C202E] font-mono uppercase tracking-wider transition">FIT</button>
+          </div>
         </div>
 
         <!-- 4-TF Bias Alignment Indicators -->
-        <div class="hidden sm:flex items-center space-x-1 font-mono text-[10px]">
-          <span class="text-zinc-500 font-sans uppercase text-[9px] mr-1 tracking-wider">4-TF:</span>
-          <span id="pill-1h" class="px-1.5 py-0.5 rounded-sm bg-emerald-500/10 text-emerald-400 border border-emerald-500/25 font-mono tabular-nums font-medium">1H: ▲</span>
-          <span id="pill-15m" class="px-1.5 py-0.5 rounded-sm bg-emerald-500/10 text-emerald-400 border border-emerald-500/25 font-mono tabular-nums font-medium">15m: ▲</span>
-          <span id="pill-5m" class="px-1.5 py-0.5 rounded-sm bg-rose-500/10 text-rose-400 border border-rose-500/25 font-mono tabular-nums font-medium">5m: ▼</span>
-          <span id="pill-1m" class="px-1.5 py-0.5 rounded-sm bg-emerald-500/10 text-emerald-400 border border-emerald-500/25 font-mono tabular-nums font-medium">1m: ▲</span>
+        <div class="hidden lg:flex items-center space-x-1.5 font-mono text-[10px]">
+          <span class="text-zinc-500 font-sans uppercase text-[9px] mr-0.5 tracking-wider font-medium">4-TF:</span>
+          <span id="pill-1h" class="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-mono tabular-nums font-semibold">1H: ▲</span>
+          <span id="pill-15m" class="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-mono tabular-nums font-semibold">15m: ▲</span>
+          <span id="pill-5m" class="px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-400 border border-rose-500/30 font-mono tabular-nums font-semibold">5m: ▼</span>
+          <span id="pill-1m" class="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-mono tabular-nums font-semibold">1m: ▲</span>
         </div>
 
         <!-- Live Quote Bid/Ask -->
         <div class="flex items-center space-x-3 text-xs font-mono tabular-nums">
           <div class="flex items-center space-x-1">
             <span class="text-zinc-500 text-[10px]">BID</span>
-            <span id="chart-bid" class="text-zinc-100 font-semibold">--.--</span>
+            <span id="chart-bid" class="text-zinc-100 font-bold">--.--</span>
           </div>
           <div class="flex items-center space-x-1">
             <span class="text-zinc-500 text-[10px]">ASK</span>
-            <span id="chart-ask" class="text-zinc-100 font-semibold">--.--</span>
+            <span id="chart-ask" class="text-zinc-100 font-bold">--.--</span>
           </div>
         </div>
       </div>
 
-      <!-- TradingView Chart Container with Absolute 100% Fit -->
-      <div class="relative flex-1 min-h-0 min-w-0 w-full overflow-hidden bg-[#090A0F]">
+      <!-- TradingView Chart Container with Floating Legend -->
+      <div class="relative flex-1 min-h-0 min-w-0 w-full overflow-hidden bg-[#07080C]">
+        <!-- Crosshair Hover OHLCV Legend -->
+        <div id="chart-legend" class="absolute top-2.5 left-3.5 z-20 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[11px] pointer-events-none bg-[#07080C]/85 px-3 py-1 rounded border border-[#1C202E]/80 backdrop-blur-sm shadow-md">
+          <span class="text-zinc-400">O: <span id="leg-open" class="text-zinc-100 font-bold tabular-nums">--</span></span>
+          <span class="text-zinc-400">H: <span id="leg-high" class="text-emerald-400 font-bold tabular-nums">--</span></span>
+          <span class="text-zinc-400">L: <span id="leg-low" class="text-rose-400 font-bold tabular-nums">--</span></span>
+          <span class="text-zinc-400">C: <span id="leg-close" class="text-zinc-100 font-bold tabular-nums">--</span></span>
+          <span class="text-zinc-400">VOL: <span id="leg-vol" class="text-amber-400 font-semibold tabular-nums">--</span></span>
+          <span class="text-zinc-400">CHG: <span id="leg-chg" class="font-bold tabular-nums">--%</span></span>
+        </div>
+
         <div id="tv-chart" class="absolute inset-0 w-full h-full"></div>
       </div>
     </div>
 
     <!-- RIGHT: STREAMLINED DATA & INTELLIGENCE SIDEBAR -->
-    <div class="w-[360px] lg:w-[380px] xl:w-[410px] flex flex-col min-h-0 h-full bg-[#090A0F] overflow-y-auto divide-y divide-[#1E2028] shrink-0">
+    <div class="w-[370px] lg:w-[400px] xl:w-[440px] flex flex-col min-h-0 h-full bg-[#07080C] overflow-y-auto divide-y divide-[#1C202E] shrink-0">
       
       <!-- WIDGET 1: POSITIONS & LIMIT ORDERS -->
-      <div class="p-3 space-y-2 bg-[#11131A]">
+      <div class="p-3 space-y-2 bg-[#0E1017]">
         <div class="flex items-center justify-between">
           <div class="flex items-center space-x-1.5">
-            <span class="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">Open Positions</span>
-            <span id="pos-total-pnl-pill" class="hidden px-1.5 py-0.5 rounded-sm text-[10px] font-mono tabular-nums font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/25">+$0.00</span>
+            <span class="text-[10px] font-bold uppercase tracking-wider text-zinc-300">Open Positions</span>
+            <span id="pos-total-pnl-pill" class="hidden px-2 py-0.5 rounded text-[10px] font-mono tabular-nums font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">+$0.00</span>
           </div>
-          <span id="pos-status-badge" class="px-1.5 py-0.5 rounded-sm text-[9px] font-mono font-medium uppercase tracking-wider bg-zinc-900 border border-[#1E2028] text-zinc-500">NO TRADES OPEN</span>
+          <span id="pos-status-badge" class="px-2 py-0.5 rounded text-[9px] font-mono font-semibold uppercase tracking-wider bg-zinc-900 border border-[#1C202E] text-zinc-400">NO TRADES OPEN</span>
         </div>
 
         <!-- Dynamic Multi-Position Container -->
         <div id="positions-container" class="space-y-1.5 max-h-[260px] overflow-y-auto pr-0.5">
           <!-- Default empty state -->
-          <div id="pos-empty-state" class="p-3 rounded-sm border border-dashed border-[#1E2028] bg-[#090A0F]/60 text-center text-zinc-600 font-mono text-[11px]">
+          <div id="pos-empty-state" class="p-3 rounded border border-dashed border-[#1C202E] bg-[#07080C]/70 text-center text-zinc-500 font-mono text-[11px]">
             No open trades on MT5. Scanning 4-TF confluence...
           </div>
         </div>
 
         <!-- Dynamic Pending Limit Orders Container -->
-        <div id="pending-orders-wrapper" class="hidden space-y-1.5 pt-2 border-t border-[#1E2028]">
+        <div id="pending-orders-wrapper" class="hidden space-y-1.5 pt-2 border-t border-[#1C202E]">
           <div class="flex items-center justify-between text-[10px] font-mono text-zinc-400">
             <div class="flex items-center space-x-1.5">
-              <span class="uppercase tracking-wider font-semibold">Pending Limits</span>
-              <span id="pending-orders-count" class="px-1.5 py-0.2 rounded-sm text-[9px] bg-sky-500/10 text-sky-400 border border-sky-500/25 font-mono font-medium">0</span>
+              <span class="uppercase tracking-wider font-semibold text-zinc-300">Pending Limits</span>
+              <span id="pending-orders-count" class="px-1.5 py-0.2 rounded text-[9px] bg-sky-500/15 text-sky-400 border border-sky-500/30 font-mono font-bold">0</span>
             </div>
-            <button onclick="cancelAllLimitOrders()" class="text-[9px] text-rose-400 hover:text-rose-300 font-mono uppercase tracking-wider transition duration-150 ease-out">Cancel All</button>
+            <button onclick="cancelAllLimitOrders()" class="text-[9px] text-rose-400 hover:text-rose-300 font-mono uppercase tracking-wider transition duration-150 ease-out font-semibold">Cancel All</button>
           </div>
           <div id="pending-orders-container" class="space-y-1.5 max-h-[180px] overflow-y-auto pr-0.5"></div>
         </div>
 
-
-
         <!-- Global Action Bar (visible when positions active) -->
         <div id="pos-global-actions" class="hidden grid grid-cols-2 gap-1.5 pt-1">
-          <button onclick="emergencyAction('close_all')" class="py-1 rounded-sm bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 font-mono text-[10px] uppercase tracking-wider transition duration-150 ease-out">
+          <button onclick="openCloseAllModal()" class="py-1.5 rounded bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/40 font-mono font-bold text-[10px] uppercase tracking-wider transition duration-150 ease-out active:scale-95">
             Close All
           </button>
-          <button onclick="emergencyAction('lock_breakeven')" class="py-1 rounded-sm bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-[#1E2028] font-mono text-[10px] uppercase tracking-wider transition duration-150 ease-out">
+          <button onclick="emergencyAction('lock_breakeven')" class="py-1.5 rounded bg-zinc-900 hover:bg-zinc-800 text-zinc-200 border border-[#1C202E] font-mono font-semibold text-[10px] uppercase tracking-wider transition duration-150 ease-out">
             Lock BE All
           </button>
         </div>
       </div>
 
       <!-- WIDGET 2: PERFORMANCE METRICS -->
-      <div class="p-3 space-y-2 bg-[#11131A]">
+      <div class="p-3 space-y-2 bg-[#0E1017]">
         <div class="flex items-center justify-between">
           <div class="flex items-center space-x-1.5">
-            <span class="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">Performance</span>
-            <span class="px-1.5 py-0.2 rounded-sm text-[9px] font-mono bg-[#151821] text-zinc-400 border border-[#1E2028]">SQLITE</span>
+            <span class="text-[10px] font-bold uppercase tracking-wider text-zinc-300">Performance</span>
+            <span class="px-1.5 py-0.2 rounded text-[9px] font-mono bg-[#141722] text-zinc-400 border border-[#1C202E]">SQLITE</span>
           </div>
           <div class="flex items-center space-x-2">
-            <button onclick="confirmClearHistory()" title="Reset trade history & recalculate win rate" class="px-2 py-0.5 rounded-sm bg-zinc-900 hover:bg-rose-950/40 text-zinc-500 hover:text-rose-400 border border-[#1E2028] text-[9px] font-mono uppercase tracking-wider transition duration-150 ease-out">
+            <button onclick="openClearHistoryModal()" title="Reset trade history & recalculate win rate" class="px-2 py-0.5 rounded bg-zinc-900 hover:bg-rose-950/40 text-zinc-400 hover:text-rose-400 border border-[#1C202E] text-[9px] font-mono uppercase tracking-wider transition duration-150 ease-out">
               Reset
             </button>
-            <span id="stat-winrate-hero" class="text-xs font-mono font-semibold text-emerald-400 tabular-nums">WR: --%</span>
+            <span id="stat-winrate-hero" class="text-xs font-mono font-bold text-emerald-400 tabular-nums">WR: --%</span>
           </div>
         </div>
 
         <div class="grid grid-cols-2 gap-1.5 text-[11px] font-mono tabular-nums">
-          <div class="bg-[#090A0F] p-2 rounded-sm border border-[#1E2028]">
-            <span class="text-zinc-500 text-[9px] block uppercase font-sans tracking-wider">Lifetime Win Rate</span>
+          <div class="bg-[#07080C] p-2 rounded border border-[#1C202E]">
+            <span class="text-zinc-500 text-[9px] block uppercase font-sans tracking-wider font-medium">Lifetime Win Rate</span>
             <div class="flex items-baseline space-x-1 mt-0.5">
-              <span id="stat-winrate" class="text-sm font-semibold text-emerald-400">0.0%</span>
+              <span id="stat-winrate" class="text-sm font-bold text-emerald-400">0.0%</span>
               <span id="stat-record" class="text-[10px] text-zinc-500">(0W - 0L)</span>
             </div>
           </div>
-          <div class="bg-[#090A0F] p-2 rounded-sm border border-[#1E2028]">
-            <span class="text-zinc-500 text-[9px] block uppercase font-sans tracking-wider">Net Realized P&L</span>
+          <div class="bg-[#07080C] p-2 rounded border border-[#1C202E]">
+            <span class="text-zinc-500 text-[9px] block uppercase font-sans tracking-wider font-medium">Net Realized P&L</span>
             <div class="flex items-baseline space-x-1 mt-0.5">
-              <span id="stat-total-pnl" class="text-sm font-semibold text-zinc-200">$0.00</span>
+              <span id="stat-total-pnl" class="text-sm font-bold text-zinc-100">$0.00</span>
               <span id="stat-pf" class="text-[10px] text-zinc-500">PF 1.0</span>
             </div>
           </div>
-          <div class="bg-[#090A0F] p-2 rounded-sm border border-[#1E2028]">
-            <span class="text-zinc-500 text-[9px] block uppercase font-sans tracking-wider">Today's P&L</span>
-            <span id="stat-today-pnl" class="text-xs font-semibold text-zinc-300 mt-0.5 block">$0.00 (0 trades)</span>
+          <div class="bg-[#07080C] p-2 rounded border border-[#1C202E]">
+            <span class="text-zinc-500 text-[9px] block uppercase font-sans tracking-wider font-medium">Today's P&L</span>
+            <span id="stat-today-pnl" class="text-xs font-bold text-zinc-200 mt-0.5 block">$0.00 (0 trades)</span>
           </div>
-          <div class="bg-[#090A0F] p-2 rounded-sm border border-[#1E2028]">
-            <span class="text-zinc-500 text-[9px] block uppercase font-sans tracking-wider">Today's Win Rate</span>
-            <span id="stat-today-wr" class="text-xs font-semibold text-emerald-400 mt-0.5 block">0.0%</span>
+          <div class="bg-[#07080C] p-2 rounded border border-[#1C202E]">
+            <span class="text-zinc-500 text-[9px] block uppercase font-sans tracking-wider font-medium">Today's Win Rate</span>
+            <span id="stat-today-wr" class="text-xs font-bold text-emerald-400 mt-0.5 block">0.0%</span>
           </div>
         </div>
       </div>
 
-      <!-- WIDGET 3: ACTIVITY TABS (THINKING / HISTORY / NEWS / LOGS) -->
-      <div class="p-3 space-y-2 flex-1 flex flex-col min-h-[300px] bg-[#11131A]">
+      <!-- WIDGET 3: ACTIVITY TABS (THINKING / LEARNING / HISTORY / NEWS / LOGS) -->
+      <div class="p-3 space-y-2 flex-1 flex flex-col min-h-[320px] bg-[#0E1017]">
         <!-- Activity Tabs Switcher -->
         <div class="flex items-center justify-between">
-          <div class="flex bg-[#090A0F] p-0.5 rounded-sm border border-[#1E2028] text-[10px] font-mono w-full">
-            <button id="btn-main-tab-thinking" onclick="switchMainTab('thinking')" class="flex-1 py-1 rounded-sm bg-zinc-800 text-zinc-100 border border-zinc-700/60 font-semibold uppercase tracking-wider transition duration-150 ease-out flex items-center justify-center space-x-1">
+          <div class="flex bg-[#07080C] p-0.5 rounded border border-[#1C202E] text-[10px] font-mono w-full">
+            <button id="btn-main-tab-thinking" onclick="switchMainTab('thinking')" class="flex-1 py-1 rounded bg-zinc-800 text-zinc-100 border border-zinc-700/60 font-bold uppercase tracking-wider transition duration-150 ease-out flex items-center justify-center space-x-1">
               <span>🧠 THINKING</span>
               <span id="tab-pulse-dot" class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
             </button>
-            <button id="btn-main-tab-learning" onclick="switchMainTab('learning')" class="flex-1 py-1 rounded-sm text-zinc-500 hover:text-zinc-300 uppercase tracking-wider transition duration-150 ease-out flex items-center justify-center space-x-1">
+            <button id="btn-main-tab-learning" onclick="switchMainTab('learning')" class="flex-1 py-1 rounded text-zinc-500 hover:text-zinc-300 uppercase tracking-wider transition duration-150 ease-out flex items-center justify-center space-x-1">
               <span>🎓 AI LEARNING</span>
-              <span id="tab-learning-count-badge" class="px-1 py-0.2 rounded-sm text-[8px] bg-amber-500/20 text-amber-300 font-bold ml-1">0</span>
+              <span id="tab-learning-count-badge" class="px-1 py-0.2 rounded text-[8px] bg-amber-500/20 text-amber-300 font-bold ml-0.5">0</span>
             </button>
-            <button id="btn-main-tab-history" onclick="switchMainTab('history')" class="flex-1 py-1 rounded-sm text-zinc-500 hover:text-zinc-300 uppercase tracking-wider transition duration-150 ease-out">
+            <button id="btn-main-tab-history" onclick="switchMainTab('history')" class="flex-1 py-1 rounded text-zinc-500 hover:text-zinc-300 uppercase tracking-wider transition duration-150 ease-out">
               History (<span id="history-count-badge" class="tabular-nums">0</span>)
             </button>
-            <button id="btn-main-tab-news" onclick="switchMainTab('news')" class="flex-1 py-1 rounded-sm text-zinc-500 hover:text-zinc-300 uppercase tracking-wider transition duration-150 ease-out">
+            <button id="btn-main-tab-news" onclick="switchMainTab('news')" class="flex-1 py-1 rounded text-zinc-500 hover:text-zinc-300 uppercase tracking-wider transition duration-150 ease-out">
               News
             </button>
-            <button id="btn-main-tab-logs" onclick="switchMainTab('logs')" class="flex-1 py-1 rounded-sm text-zinc-500 hover:text-zinc-300 uppercase tracking-wider transition duration-150 ease-out">
+            <button id="btn-main-tab-logs" onclick="switchMainTab('logs')" class="flex-1 py-1 rounded text-zinc-500 hover:text-zinc-300 uppercase tracking-wider transition duration-150 ease-out">
               Logs
             </button>
           </div>
         </div>
 
         <!-- PANE: PREDICTIVE BRAIN & THINKING STREAM -->
-        <div id="pane-predictive-thinking" class="flex-1 flex flex-col min-h-0 space-y-2 border border-[#1E2028] rounded-sm bg-[#090A0F] p-2 overflow-y-auto">
-          <!-- Top Bar: Live Status & Monotonic Heartbeat (Proves bot is never frozen) -->
-          <div class="flex items-center justify-between bg-[#151821] px-2.5 py-1.5 rounded-sm border border-[#1E2028]">
+        <div id="pane-predictive-thinking" class="flex-1 flex flex-col min-h-0 space-y-2 border border-[#1C202E] rounded bg-[#07080C] p-2.5 overflow-y-auto">
+          <!-- Top Bar: Live Status & Monotonic Heartbeat -->
+          <div class="flex items-center justify-between bg-[#141722] px-2.5 py-1.5 rounded border border-[#1C202E]">
             <div class="flex items-center space-x-2">
               <span id="brain-heartbeat-dot" class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
-              <span id="brain-status-pill" class="px-2 py-0.5 rounded-sm bg-emerald-500/10 text-emerald-400 border border-emerald-500/25 font-mono text-[10px] font-semibold uppercase tracking-wider">
+              <span id="brain-status-pill" class="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-mono text-[10px] font-bold uppercase tracking-wider">
                 WAITING FOR PULLBACK
               </span>
               <span id="brain-liveness-label" class="text-zinc-400 font-mono text-[9px] uppercase tracking-wider hidden sm:inline">
@@ -510,38 +541,38 @@
               </span>
             </div>
             <div class="flex items-center space-x-2 font-mono text-[10px]">
-              <span class="text-zinc-500 hidden sm:inline">CYCLE: <span id="brain-cycle-index" class="text-zinc-300 font-bold tabular-nums">#0</span></span>
-              <span class="text-zinc-600 hidden sm:inline">|</span>
-              <span id="brain-eval-clock" class="text-[#D4AF37] font-semibold tabular-nums">--:--:-- UTC</span>
-              <span id="brain-updated-ago" class="text-emerald-400 text-[9px] tabular-nums">(LIVE)</span>
+              <span class="text-zinc-500 hidden sm:inline">CYCLE: <span id="brain-cycle-index" class="text-zinc-200 font-bold tabular-nums">#0</span></span>
+              <span class="text-zinc-700 hidden sm:inline">|</span>
+              <span id="brain-eval-clock" class="text-[#D4AF37] font-bold tabular-nums">--:--:-- UTC</span>
+              <span id="brain-updated-ago" class="text-emerald-400 text-[9px] tabular-nums font-semibold">(LIVE)</span>
             </div>
           </div>
 
           <!-- Quantitative Predictor Gauges (6 Grid Cards) -->
           <div class="grid grid-cols-2 md:grid-cols-6 gap-1.5 font-mono text-[11px]">
             <!-- Card 1: Expected Value (EV) -->
-            <div class="bg-[#11131A] p-2 rounded-sm border border-[#1E2028] flex flex-col justify-between">
-              <span class="text-zinc-500 text-[9px] uppercase tracking-wider">Expected Value (EV)</span>
+            <div class="bg-[#0E1017] p-2 rounded border border-[#1C202E] flex flex-col justify-between">
+              <span class="text-zinc-500 text-[9px] uppercase tracking-wider font-medium">Expected Value (EV)</span>
               <div class="flex items-baseline space-x-1 mt-0.5">
                 <span id="brain-metric-ev" class="text-base font-bold text-emerald-400 tabular-nums">+0.00R</span>
                 <span class="text-[9px] text-zinc-500">/ trade</span>
               </div>
-              <span id="brain-metric-ev-sub" class="text-[9px] text-zinc-400">Min edge: +0.25R</span>
+              <span id="brain-metric-ev-sub" class="text-[9px] text-zinc-400 font-sans">Min edge: +0.25R</span>
             </div>
 
             <!-- Card 2: Win Probability -->
-            <div class="bg-[#11131A] p-2 rounded-sm border border-[#1E2028] flex flex-col justify-between">
-              <span class="text-zinc-500 text-[9px] uppercase tracking-wider">Win Probability</span>
+            <div class="bg-[#0E1017] p-2 rounded border border-[#1C202E] flex flex-col justify-between">
+              <span class="text-zinc-500 text-[9px] uppercase tracking-wider font-medium">Win Probability</span>
               <div class="flex items-baseline space-x-1 mt-0.5">
                 <span id="brain-metric-pwin" class="text-base font-bold text-sky-400 tabular-nums">50.0%</span>
               </div>
-              <span class="text-[9px] text-zinc-400">Bayesian Multi-Factor</span>
+              <span class="text-[9px] text-zinc-400 font-sans">Bayesian Multi-Factor</span>
             </div>
 
-            <!-- Card 3: Directional Odds (Bull vs Bear vs Chop) -->
-            <div class="bg-[#11131A] p-2 rounded-sm border border-[#1E2028] flex flex-col justify-between">
-              <span class="text-zinc-500 text-[9px] uppercase tracking-wider">Directional Odds</span>
-              <div class="flex items-center space-x-1 mt-1 text-[10px] tabular-nums font-semibold">
+            <!-- Card 3: Directional Odds -->
+            <div class="bg-[#0E1017] p-2 rounded border border-[#1C202E] flex flex-col justify-between">
+              <span class="text-zinc-500 text-[9px] uppercase tracking-wider font-medium">Directional Odds</span>
+              <div class="flex items-center space-x-1 mt-1 text-[10px] tabular-nums font-bold">
                 <span id="brain-prob-bull" class="text-emerald-400">▲ 33%</span>
                 <span class="text-zinc-600">/</span>
                 <span id="brain-prob-bear" class="text-rose-400">▼ 33%</span>
@@ -552,8 +583,8 @@
             </div>
 
             <!-- Card 4: Valuation & Flow -->
-            <div class="bg-[#11131A] p-2 rounded-sm border border-[#1E2028] flex flex-col justify-between">
-              <span class="text-zinc-500 text-[9px] uppercase tracking-wider">Valuation & Flow</span>
+            <div class="bg-[#0E1017] p-2 rounded border border-[#1C202E] flex flex-col justify-between">
+              <span class="text-zinc-500 text-[9px] uppercase tracking-wider font-medium">Valuation & Flow</span>
               <div class="text-[10px] mt-0.5 space-y-0.5">
                 <div class="flex justify-between"><span class="text-zinc-500">VWAP Diff:</span> <span id="brain-vwap-diff" class="text-zinc-200 tabular-nums font-semibold">0.00 pts</span></div>
                 <div class="flex justify-between"><span class="text-zinc-500">5m StochRSI:</span> <span id="brain-stoch-k" class="text-zinc-200 tabular-nums font-semibold">50.0</span></div>
@@ -561,31 +592,31 @@
               <span id="brain-kaufman-er" class="text-[9px] text-zinc-400">Kaufman ER: 0.50</span>
             </div>
 
-            <!-- Card 5: Ensemble Suite (OFI + FVG + Parkinson Vol) -->
-            <div class="bg-[#11131A] p-2 rounded-sm border border-[#1E2028] flex flex-col justify-between">
-              <span class="text-zinc-500 text-[9px] uppercase tracking-wider">Quant Ensemble</span>
+            <!-- Card 5: Ensemble Suite -->
+            <div class="bg-[#0E1017] p-2 rounded border border-[#1C202E] flex flex-col justify-between">
+              <span class="text-zinc-500 text-[9px] uppercase tracking-wider font-medium">Quant Ensemble</span>
               <div class="text-[10px] mt-0.5 space-y-0.5">
-                <div class="flex justify-between"><span class="text-zinc-500">Consensus:</span> <span id="brain-ensemble-bias" class="text-emerald-400 font-semibold">NEUTRAL</span></div>
+                <div class="flex justify-between"><span class="text-zinc-500">Consensus:</span> <span id="brain-ensemble-bias" class="text-emerald-400 font-bold">NEUTRAL</span></div>
                 <div class="flex justify-between"><span class="text-zinc-500">OFI Delta:</span> <span id="brain-ensemble-ofi" class="text-zinc-200 tabular-nums font-semibold">0.00</span></div>
               </div>
               <span id="brain-ensemble-vol" class="text-[9px] text-zinc-400 truncate">Vol: NORMAL</span>
             </div>
 
             <!-- Card 6: Continual Experience Learner -->
-            <div class="bg-[#11131A] p-2 rounded-sm border border-[#1E2028] flex flex-col justify-between">
-              <span class="text-zinc-500 text-[9px] uppercase tracking-wider">Experience Learner</span>
+            <div class="bg-[#0E1017] p-2 rounded border border-[#1C202E] flex flex-col justify-between">
+              <span class="text-zinc-500 text-[9px] uppercase tracking-wider font-medium">Experience Learner</span>
               <div class="text-[10px] mt-0.5 space-y-0.5">
                 <div class="flex justify-between"><span class="text-zinc-500">Studied:</span> <span id="brain-learner-trades" class="text-zinc-200 tabular-nums font-semibold">0 Trades</span></div>
-                <div class="flex justify-between"><span class="text-zinc-500">Reflex:</span> <span id="brain-learner-status" class="text-emerald-400 font-semibold">ACTIVE</span></div>
+                <div class="flex justify-between"><span class="text-zinc-500">Reflex:</span> <span id="brain-learner-status" class="text-emerald-400 font-bold">ACTIVE</span></div>
               </div>
               <span id="brain-learner-clusters" class="text-[9px] text-zinc-400 truncate">Priors Locked &bull; L2</span>
             </div>
           </div>
 
           <!-- Institutional Multi-Gate Diagnostic Matrix -->
-          <div class="bg-[#11131A] p-2 rounded-sm border border-[#1E2028] space-y-1.5">
-            <div class="flex items-center justify-between text-[10px] font-mono border-b border-[#1E2028]/80 pb-1">
-              <span class="text-zinc-400 uppercase tracking-wider font-semibold text-[9px]">Gating Checklist & Safety Filters</span>
+          <div class="bg-[#0E1017] p-2.5 rounded border border-[#1C202E] space-y-1.5">
+            <div class="flex items-center justify-between text-[10px] font-mono border-b border-[#1C202E] pb-1">
+              <span class="text-zinc-300 uppercase tracking-wider font-bold text-[9px]">Gating Checklist & Safety Filters</span>
               <span class="text-zinc-500 text-[9px]">All Gates Must Pass For Execution</span>
             </div>
             <div id="brain-gates-container" class="space-y-1 font-mono text-[10px]">
@@ -594,11 +625,11 @@
           </div>
 
           <!-- Live Reasoning Chain-of-Thought Stream -->
-          <div class="flex-1 flex flex-col min-h-0 bg-[#06070A] p-2 rounded-sm border border-[#1E2028] font-mono text-[10px]">
-            <div class="flex items-center justify-between border-b border-[#1E2028] pb-1 mb-1.5 text-zinc-400">
-              <span class="uppercase tracking-wider font-semibold text-[9px] flex items-center space-x-1.5">
+          <div class="flex-1 flex flex-col min-h-0 bg-[#07080C] p-2.5 rounded border border-[#1C202E] font-mono text-[10px]">
+            <div class="flex items-center justify-between border-b border-[#1C202E] pb-1 mb-1.5 text-zinc-400">
+              <span class="uppercase tracking-wider font-bold text-[9px] flex items-center space-x-1.5">
                 <span class="w-1.5 h-1.5 rounded-full bg-[#D4AF37]"></span>
-                <span>Live Model "Thinking" & Reasoning Stream</span>
+                <span class="text-zinc-200">Live Model "Thinking" & Reasoning Stream</span>
               </span>
               <span class="text-zinc-500 text-[9px]">Updates every evaluation tick</span>
             </div>
@@ -608,14 +639,14 @@
           </div>
 
           <!-- Rolling Thought History Audit -->
-          <div class="bg-[#11131A] p-2 rounded-sm border border-[#1E2028]">
-            <div class="flex items-center justify-between text-[9px] font-mono text-zinc-400 uppercase tracking-wider border-b border-[#1E2028] pb-1 mb-1">
-              <span class="font-semibold">Recent Evaluation Audit Trail</span>
+          <div class="bg-[#0E1017] p-2.5 rounded border border-[#1C202E]">
+            <div class="flex items-center justify-between text-[9px] font-mono text-zinc-400 uppercase tracking-wider border-b border-[#1C202E] pb-1 mb-1">
+              <span class="font-bold text-zinc-300">Recent Evaluation Audit Trail</span>
               <span class="text-zinc-500">Last 15 Decisions</span>
             </div>
             <div class="overflow-y-auto max-h-24">
               <table class="w-full text-left font-mono text-[10px]">
-                <thead class="text-zinc-500 text-[8px] uppercase tracking-wider">
+                <thead class="text-zinc-500 text-[8px] uppercase tracking-wider border-b border-[#1C202E]">
                   <tr>
                     <th class="py-0.5">Time</th>
                     <th class="py-0.5">Verdict</th>
@@ -624,22 +655,21 @@
                     <th class="py-0.5">Reason</th>
                   </tr>
                 </thead>
-                <tbody id="brain-history-tbody" class="divide-y divide-[#1E2028]/40 text-zinc-300 tabular-nums">
+                <tbody id="brain-history-tbody" class="divide-y divide-[#1C202E]/60 text-zinc-300 tabular-nums">
                   <tr><td colspan="5" class="py-1 text-center text-zinc-600">Standby for recent audit trail...</td></tr>
                 </tbody>
               </table>
             </div>
           </div>
-
         </div>
 
         <!-- PANE: AI LEARNING & EXPERIENTIAL REFLEXES -->
-        <div id="pane-ai-learning" class="hidden flex-1 flex flex-col min-h-0 space-y-2 border border-[#1E2028] rounded-sm bg-[#090A0F] p-2 overflow-y-auto font-mono text-[11px]">
+        <div id="pane-ai-learning" class="hidden flex-1 flex flex-col min-h-0 space-y-2 border border-[#1C202E] rounded bg-[#07080C] p-2.5 overflow-y-auto font-mono text-[11px]">
           <!-- Top Bar: Live AI State & Reflex Heartbeat -->
-          <div class="flex items-center justify-between bg-[#151821] px-2.5 py-1.5 rounded-sm border border-[#1E2028]">
+          <div class="flex items-center justify-between bg-[#141722] px-2.5 py-1.5 rounded border border-[#1C202E]">
             <div class="flex items-center space-x-2">
               <span class="w-2 h-2 rounded-full bg-sky-400 animate-pulse"></span>
-              <span id="learning-status-pill" class="px-2 py-0.5 rounded-sm bg-sky-500/10 text-sky-400 border border-sky-500/25 font-mono text-[10px] font-semibold uppercase tracking-wider">
+              <span id="learning-status-pill" class="px-2 py-0.5 rounded bg-sky-500/15 text-sky-400 border border-sky-500/30 font-mono text-[10px] font-bold uppercase tracking-wider">
                 CONTINUAL LEARNER ACTIVE
               </span>
               <span class="text-zinc-400 text-[9px] uppercase tracking-wider hidden sm:inline">
@@ -648,47 +678,47 @@
             </div>
             <div class="flex items-center space-x-2 text-[10px]">
               <span class="text-zinc-500">TRADES STUDIED: <span id="learn-total-trades" class="text-amber-300 font-bold tabular-nums">0</span></span>
-              <span class="text-zinc-600">|</span>
+              <span class="text-zinc-700">|</span>
               <span class="text-zinc-500">LEARNED WIN RATE: <span id="learn-win-rate" class="text-emerald-400 font-bold tabular-nums">0.0%</span></span>
             </div>
           </div>
 
           <!-- Section 1: What The AI Is Doing Right Now -->
-          <div class="bg-[#11131A] p-2.5 rounded-sm border border-[#1E2028] space-y-1.5">
-            <div class="flex items-center justify-between text-[10px] border-b border-[#1E2028]/80 pb-1">
+          <div class="bg-[#0E1017] p-2.5 rounded border border-[#1C202E] space-y-1.5">
+            <div class="flex items-center justify-between text-[10px] border-b border-[#1C202E] pb-1">
               <div class="flex items-center space-x-2">
                 <span class="text-emerald-400 font-bold text-[10px] uppercase tracking-wider">🎯 WHAT THE AI IS DOING RIGHT NOW</span>
-                <span id="learn-action-mode-badge" class="px-1.5 py-0.2 rounded-sm text-[8px] bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 uppercase font-semibold">SCANNING ORDER FLOW</span>
+                <span id="learn-action-mode-badge" class="px-1.5 py-0.2 rounded text-[8px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 uppercase font-bold">SCANNING ORDER FLOW</span>
               </div>
               <span id="learn-action-timestamp" class="text-zinc-500 text-[9px] tabular-nums">--:--:-- UTC</span>
             </div>
             
             <div class="grid grid-cols-1 md:grid-cols-3 gap-2 pt-1 text-[10px]">
-              <div class="bg-[#090A0F] p-2 rounded-sm border border-[#1E2028]/80 space-y-1">
-                <span class="text-zinc-500 text-[9px] uppercase tracking-wider block">Current Strategic Objective</span>
-                <p id="learn-current-objective" class="text-zinc-200 font-medium leading-relaxed">
+              <div class="bg-[#07080C] p-2 rounded border border-[#1C202E] space-y-1">
+                <span class="text-zinc-500 text-[9px] uppercase tracking-wider font-semibold block">Current Strategic Objective</span>
+                <p id="learn-current-objective" class="text-zinc-200 font-medium leading-relaxed font-sans">
                   Analyzing multi-timeframe order flow for high-expectancy discount entries.
                 </p>
               </div>
-              <div class="bg-[#090A0F] p-2 rounded-sm border border-[#1E2028]/80 space-y-1">
-                <span class="text-zinc-500 text-[9px] uppercase tracking-wider block">Why It Hasn't Entered (or Entered)</span>
-                <p id="learn-entry-rationale" class="text-zinc-300 leading-relaxed">
+              <div class="bg-[#07080C] p-2 rounded border border-[#1C202E] space-y-1">
+                <span class="text-zinc-500 text-[9px] uppercase tracking-wider font-semibold block">Why It Hasn't Entered (or Entered)</span>
+                <p id="learn-entry-rationale" class="text-zinc-300 leading-relaxed font-sans">
                   Evaluating pullback parameters. Price must reach value zone without overextension.
                 </p>
               </div>
-              <div class="bg-[#090A0F] p-2 rounded-sm border border-[#1E2028]/80 space-y-1">
-                <span class="text-zinc-500 text-[9px] uppercase tracking-wider block">Target Execution Zone & Invalidation</span>
+              <div class="bg-[#07080C] p-2 rounded border border-[#1C202E] space-y-1">
+                <span class="text-zinc-500 text-[9px] uppercase tracking-wider font-semibold block">Target Execution Zone & Invalidation</span>
                 <div class="flex justify-between text-[10px]">
                   <span class="text-zinc-500">Direction:</span>
                   <span id="learn-target-dir" class="font-bold text-emerald-400">BUY</span>
                 </div>
                 <div class="flex justify-between text-[10px]">
                   <span class="text-zinc-500">Optimal Range:</span>
-                  <span id="learn-target-range" class="text-zinc-200 font-semibold tabular-nums">-- - --</span>
+                  <span id="learn-target-range" class="text-zinc-100 font-bold tabular-nums">-- - --</span>
                 </div>
                 <div class="flex justify-between text-[10px]">
                   <span class="text-zinc-500">Structural Invalidation:</span>
-                  <span id="learn-target-inval" class="text-rose-400 font-semibold tabular-nums">--</span>
+                  <span id="learn-target-inval" class="text-rose-400 font-bold tabular-nums">--</span>
                 </div>
               </div>
             </div>
@@ -696,55 +726,55 @@
 
           <!-- Section 2: Four Core Learning Metrics -->
           <div class="grid grid-cols-2 md:grid-cols-4 gap-1.5 text-[11px]">
-            <div class="bg-[#11131A] p-2 rounded-sm border border-[#1E2028] flex flex-col justify-between">
-              <span class="text-zinc-500 text-[9px] uppercase tracking-wider">Experience Memory Bank</span>
+            <div class="bg-[#0E1017] p-2 rounded border border-[#1C202E] flex flex-col justify-between">
+              <span class="text-zinc-500 text-[9px] uppercase tracking-wider font-medium">Experience Memory Bank</span>
               <div class="flex items-baseline space-x-1 mt-0.5">
                 <span id="card-learn-wins" class="text-sm font-bold text-emerald-400 tabular-nums">0W</span>
                 <span class="text-zinc-600">/</span>
                 <span id="card-learn-losses" class="text-sm font-bold text-rose-400 tabular-nums">0L</span>
               </div>
-              <span class="text-[9px] text-zinc-400">Closed Trades Analyzed</span>
+              <span class="text-[9px] text-zinc-400 font-sans">Closed Trades Analyzed</span>
             </div>
 
-            <div class="bg-[#11131A] p-2 rounded-sm border border-[#1E2028] flex flex-col justify-between">
-              <span class="text-zinc-500 text-[9px] uppercase tracking-wider">Mistake Reflex Clusters</span>
+            <div class="bg-[#0E1017] p-2 rounded border border-[#1C202E] flex flex-col justify-between">
+              <span class="text-zinc-500 text-[9px] uppercase tracking-wider font-medium">Mistake Reflex Clusters</span>
               <div class="flex items-baseline space-x-1 mt-0.5">
                 <span id="card-mistake-count" class="text-sm font-bold text-amber-400 tabular-nums">0</span>
-                <span class="text-[9px] text-zinc-500">vectors saved</span>
+                <span class="text-[9px] text-zinc-500 font-sans">vectors saved</span>
               </div>
-              <span id="card-mistake-sub" class="text-[9px] text-zinc-400">Damping &ge;70% similarity</span>
+              <span id="card-mistake-sub" class="text-[9px] text-zinc-400 font-sans">Damping &ge;70% similarity</span>
             </div>
 
-            <div class="bg-[#11131A] p-2 rounded-sm border border-[#1E2028] flex flex-col justify-between">
-              <span class="text-zinc-500 text-[9px] uppercase tracking-wider">Success Synergy Patterns</span>
+            <div class="bg-[#0E1017] p-2 rounded border border-[#1C202E] flex flex-col justify-between">
+              <span class="text-zinc-500 text-[9px] uppercase tracking-wider font-medium">Success Synergy Patterns</span>
               <div class="flex items-baseline space-x-1 mt-0.5">
                 <span id="card-success-count" class="text-sm font-bold text-emerald-400 tabular-nums">0</span>
-                <span class="text-[9px] text-zinc-500">vectors saved</span>
+                <span class="text-[9px] text-zinc-500 font-sans">vectors saved</span>
               </div>
-              <span id="card-success-sub" class="text-[9px] text-zinc-400">Bonus: up to +10% win prob</span>
+              <span id="card-success-sub" class="text-[9px] text-zinc-400 font-sans">Bonus: up to +10% win prob</span>
             </div>
 
-            <div class="bg-[#11131A] p-2 rounded-sm border border-[#1E2028] flex flex-col justify-between">
-              <span class="text-zinc-500 text-[9px] uppercase tracking-wider">L2 Decay Regularization</span>
+            <div class="bg-[#0E1017] p-2 rounded border border-[#1C202E] flex flex-col justify-between">
+              <span class="text-zinc-500 text-[9px] uppercase tracking-wider font-medium">L2 Decay Regularization</span>
               <div class="flex items-baseline space-x-1 mt-0.5">
                 <span class="text-sm font-bold text-sky-400 tabular-nums">&lambda; = 0.015</span>
               </div>
-              <span class="text-[9px] text-zinc-400">Guarantees Anti-Memorization</span>
+              <span class="text-[9px] text-zinc-400 font-sans">Guarantees Anti-Memorization</span>
             </div>
           </div>
 
-          <!-- Section 3: Adaptive Weight Shift Matrix (Factors vs Institutional Priors) -->
-          <div class="bg-[#11131A] p-2 rounded-sm border border-[#1E2028] space-y-1">
-            <div class="flex items-center justify-between text-[10px] border-b border-[#1E2028]/80 pb-1">
+          <!-- Section 3: Adaptive Weight Shift Matrix -->
+          <div class="bg-[#0E1017] p-2 rounded border border-[#1C202E] space-y-1">
+            <div class="flex items-center justify-between text-[10px] border-b border-[#1C202E] pb-1">
               <div class="flex items-center space-x-2">
-                <span class="text-zinc-300 font-semibold uppercase text-[9px] tracking-wider">🧠 ADAPTIVE WEIGHT SHIFTS (LIVE vs INSTITUTIONAL PRIORS)</span>
-                <span class="text-[8px] text-zinc-500">Started from Institutional Priors &bull; Adapts Without Memorizing</span>
+                <span class="text-zinc-200 font-bold uppercase text-[9px] tracking-wider">🧠 ADAPTIVE WEIGHT SHIFTS (LIVE vs INSTITUTIONAL PRIORS)</span>
+                <span class="text-[8px] text-zinc-500">Priors Active &bull; Adapts Without Memorizing</span>
               </div>
               <span class="text-zinc-500 text-[9px]">Elastic Net Regularized</span>
             </div>
             <div class="overflow-x-auto max-h-[190px] overflow-y-auto">
               <table class="w-full text-left text-[10px]">
-                <thead class="text-zinc-500 border-b border-[#1E2028] text-[9px] uppercase tracking-wider sticky top-0 bg-[#11131A]">
+                <thead class="text-zinc-500 border-b border-[#1C202E] text-[9px] uppercase tracking-wider sticky top-0 bg-[#0E1017]">
                   <tr>
                     <th class="py-1">Factor Name & Purpose</th>
                     <th class="py-1">Category</th>
@@ -754,56 +784,56 @@
                     <th class="py-1 text-center">Reflex Status</th>
                   </tr>
                 </thead>
-                <tbody id="learn-factors-tbody" class="divide-y divide-[#1E2028]/40 tabular-nums">
+                <tbody id="learn-factors-tbody" class="divide-y divide-[#1C202E]/60 tabular-nums">
                   <tr><td colspan="6" class="py-2 text-center text-zinc-600">Loading factor weight matrix...</td></tr>
                 </tbody>
               </table>
             </div>
           </div>
 
-          <!-- Section 4: Dual Memory Columns (Mistakes Corrected vs Successes Reinforced) -->
+          <!-- Section 4: Dual Memory Columns -->
           <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
-            <!-- Column 1: Mistake Memory Bank & Active Reflex Dampers -->
-            <div class="bg-[#11131A] p-2 rounded-sm border border-[#1E2028] flex flex-col space-y-1.5">
-              <div class="flex items-center justify-between text-[10px] border-b border-[#1E2028]/80 pb-1">
-                <span class="text-rose-400 font-semibold text-[9px] uppercase tracking-wider flex items-center space-x-1">
+            <!-- Column 1: Mistake Memory Bank -->
+            <div class="bg-[#0E1017] p-2 rounded border border-[#1C202E] flex flex-col space-y-1.5">
+              <div class="flex items-center justify-between text-[10px] border-b border-[#1C202E] pb-1">
+                <span class="text-rose-400 font-bold text-[9px] uppercase tracking-wider flex items-center space-x-1">
                   <span>🛑 MISTAKE MEMORY & REFLEX DAMPERS</span>
-                  <span id="mistake-badge-count" class="px-1 rounded-sm bg-rose-500/20 text-rose-300 text-[8px] font-bold">0</span>
+                  <span id="mistake-badge-count" class="px-1.5 rounded bg-rose-500/25 text-rose-300 text-[8px] font-bold">0</span>
                 </span>
                 <span class="text-[8px] text-zinc-500">Auto-Damps Repeat Errors</span>
               </div>
               <div id="learn-mistakes-container" class="space-y-1.5 max-h-[170px] overflow-y-auto pr-1">
-                <div class="p-2 text-center text-zinc-600 text-[10px] border border-dashed border-[#1E2028] rounded-sm">
+                <div class="p-2 text-center text-zinc-600 text-[10px] border border-dashed border-[#1C202E] rounded">
                   No mistake clusters recorded yet. Bot is operating cleanly on institutional prior gates.
                 </div>
               </div>
             </div>
 
             <!-- Column 2: Success Synergy Bank -->
-            <div class="bg-[#11131A] p-2 rounded-sm border border-[#1E2028] flex flex-col space-y-1.5">
-              <div class="flex items-center justify-between text-[10px] border-b border-[#1E2028]/80 pb-1">
-                <span class="text-emerald-400 font-semibold text-[9px] uppercase tracking-wider flex items-center space-x-1">
+            <div class="bg-[#0E1017] p-2 rounded border border-[#1C202E] flex flex-col space-y-1.5">
+              <div class="flex items-center justify-between text-[10px] border-b border-[#1C202E] pb-1">
+                <span class="text-emerald-400 font-bold text-[9px] uppercase tracking-wider flex items-center space-x-1">
                   <span>✨ SUCCESS SYNERGY PATTERNS</span>
-                  <span id="success-badge-count" class="px-1 rounded-sm bg-emerald-500/20 text-emerald-300 text-[8px] font-bold">0</span>
+                  <span id="success-badge-count" class="px-1.5 rounded bg-emerald-500/25 text-emerald-300 text-[8px] font-bold">0</span>
                 </span>
                 <span class="text-[8px] text-zinc-500">Confidence Bonus on Match</span>
               </div>
               <div id="learn-successes-container" class="space-y-1.5 max-h-[170px] overflow-y-auto pr-1">
-                <div class="p-2 text-center text-zinc-600 text-[10px] border border-dashed border-[#1E2028] rounded-sm">
+                <div class="p-2 text-center text-zinc-600 text-[10px] border border-dashed border-[#1C202E] rounded">
                   Awaiting first profitable trade to record positive alpha drivers and synergistic patterns.
                 </div>
               </div>
             </div>
           </div>
 
-          <!-- Section 5: Chronological AI Lesson & Self-Reflection Stream -->
-          <div class="bg-[#11131A] p-2 rounded-sm border border-[#1E2028] space-y-1">
-            <div class="flex items-center justify-between text-[10px] border-b border-[#1E2028]/80 pb-1">
-              <span class="text-[#D4AF37] font-semibold text-[9px] uppercase tracking-wider">📜 CHRONOLOGICAL AI LESSONS & REFLECTIONS</span>
+          <!-- Section 5: Chronological AI Lesson Stream -->
+          <div class="bg-[#0E1017] p-2 rounded border border-[#1C202E] space-y-1">
+            <div class="flex items-center justify-between text-[10px] border-b border-[#1C202E] pb-1">
+              <span class="text-[#D4AF37] font-bold text-[9px] uppercase tracking-wider">📜 CHRONOLOGICAL AI LESSONS & REFLECTIONS</span>
               <span class="text-[8px] text-zinc-500">Real-Time Continuous Learning Audit</span>
             </div>
             <div id="learn-lessons-container" class="space-y-1 max-h-[140px] overflow-y-auto pr-1 text-[10px]">
-              <div class="p-1.5 bg-[#090A0F] rounded-sm border border-[#1E2028]/60 text-zinc-400">
+              <div class="p-1.5 bg-[#07080C] rounded border border-[#1C202E] text-zinc-400 font-sans">
                 Institutional prior weights initialized. Reflex damping and pattern synergy primed.
               </div>
             </div>
@@ -811,16 +841,16 @@
         </div>
 
         <!-- PANE A: TRADE HISTORY TABLE -->
-        <div id="pane-trade-history" class="hidden flex-1 flex flex-col min-h-0 border border-[#1E2028] rounded-sm overflow-hidden bg-[#090A0F]">
-          <div class="flex items-center justify-between px-2.5 py-1 bg-[#151821] border-b border-[#1E2028] text-[10px]">
+        <div id="pane-trade-history" class="hidden flex-1 flex flex-col min-h-0 border border-[#1C202E] rounded overflow-hidden bg-[#07080C]">
+          <div class="flex items-center justify-between px-2.5 py-1 bg-[#141722] border-b border-[#1C202E] text-[10px]">
             <span class="text-zinc-400 font-mono uppercase tracking-wider text-[9px]">Recorded Deals</span>
-            <button onclick="confirmClearHistory()" class="px-1.5 py-0.2 rounded-sm bg-zinc-900 hover:bg-rose-950/40 text-zinc-500 hover:text-rose-400 border border-[#1E2028] font-mono text-[9px] uppercase tracking-wider transition duration-150 ease-out">
+            <button onclick="openClearHistoryModal()" class="px-2 py-0.5 rounded bg-zinc-900 hover:bg-rose-950/40 text-zinc-400 hover:text-rose-400 border border-[#1C202E] font-mono text-[9px] uppercase tracking-wider transition duration-150 ease-out">
               Reset
             </button>
           </div>
           <div class="overflow-y-auto flex-1 max-h-72">
             <table class="w-full text-left text-[11px] font-mono">
-              <thead class="bg-[#11131A] text-zinc-500 border-b border-[#1E2028] sticky top-0 text-[9px] uppercase tracking-wider font-semibold">
+              <thead class="bg-[#0E1017] text-zinc-500 border-b border-[#1C202E] sticky top-0 text-[9px] uppercase tracking-wider font-semibold">
                 <tr>
                   <th class="p-1.5">Time</th>
                   <th class="p-1.5">Trade</th>
@@ -830,7 +860,7 @@
                   <th class="p-1.5 text-center w-6"></th>
                 </tr>
               </thead>
-              <tbody id="trade-history-tbody" class="divide-y divide-[#1E2028]/60 text-zinc-300 tabular-nums">
+              <tbody id="trade-history-tbody" class="divide-y divide-[#1C202E]/60 text-zinc-300 tabular-nums">
                 <tr><td colspan="6" class="p-4 text-center text-zinc-600 font-mono text-xs">No closed trades yet. Recorded trades persist in SQLite forever.</td></tr>
               </tbody>
             </table>
@@ -840,16 +870,16 @@
         <!-- PANE B: ECONOMIC NEWS & HEADLINES -->
         <div id="pane-economic-news" class="hidden flex-1 flex flex-col min-h-0 space-y-2">
           <div class="flex items-center justify-between text-[10px]">
-            <div class="flex bg-[#090A0F] p-0.5 rounded-sm border border-[#1E2028] font-mono">
-              <button id="btn-tab-calendar-all" onclick="setNewsTab('all')" class="px-2 py-0.5 rounded-sm bg-zinc-800 text-zinc-100 border border-zinc-700/60 font-semibold uppercase tracking-wider text-[9px]">All</button>
-              <button id="btn-tab-calendar-major" onclick="setNewsTab('major')" class="px-2 py-0.5 rounded-sm text-zinc-500 hover:text-zinc-300 uppercase tracking-wider text-[9px]">Major</button>
-              <button id="btn-tab-headlines" onclick="setNewsTab('headlines')" class="px-2 py-0.5 rounded-sm text-zinc-500 hover:text-zinc-300 uppercase tracking-wider text-[9px]">Headlines</button>
+            <div class="flex bg-[#07080C] p-0.5 rounded border border-[#1C202E] font-mono">
+              <button id="btn-tab-calendar-all" onclick="setNewsTab('all')" class="px-2 py-0.5 rounded bg-zinc-800 text-zinc-100 border border-zinc-700/60 font-semibold uppercase tracking-wider text-[9px]">All</button>
+              <button id="btn-tab-calendar-major" onclick="setNewsTab('major')" class="px-2 py-0.5 rounded text-zinc-500 hover:text-zinc-300 uppercase tracking-wider text-[9px]">Major</button>
+              <button id="btn-tab-headlines" onclick="setNewsTab('headlines')" class="px-2 py-0.5 rounded text-zinc-500 hover:text-zinc-300 uppercase tracking-wider text-[9px]">Headlines</button>
             </div>
           </div>
           <!-- Subview 1: Calendar Table -->
-          <div id="view-calendar-timeline" class="flex-1 overflow-y-auto max-h-64 border border-[#1E2028] rounded-sm bg-[#090A0F]">
+          <div id="view-calendar-timeline" class="flex-1 overflow-y-auto max-h-64 border border-[#1C202E] rounded bg-[#07080C]">
             <table class="w-full text-left text-[11px] font-mono">
-              <thead class="bg-[#11131A] text-zinc-500 border-b border-[#1E2028] sticky top-0 text-[9px] uppercase tracking-wider font-semibold">
+              <thead class="bg-[#0E1017] text-zinc-500 border-b border-[#1C202E] sticky top-0 text-[9px] uppercase tracking-wider font-semibold">
                 <tr>
                   <th class="p-1.5">Time</th>
                   <th class="p-1.5">Cur</th>
@@ -858,7 +888,7 @@
                   <th class="p-1.5 text-right">Status</th>
                 </tr>
               </thead>
-              <tbody id="calendar-table-body" class="divide-y divide-[#1E2028]/60 text-zinc-300 tabular-nums">
+              <tbody id="calendar-table-body" class="divide-y divide-[#1C202E]/60 text-zinc-300 tabular-nums">
               </tbody>
             </table>
           </div>
@@ -870,7 +900,7 @@
 
         <!-- PANE C: LIVE EXECUTION LOGS -->
         <div id="pane-execution-logs" class="hidden flex-1 flex flex-col min-h-0">
-          <div id="log-feed" class="flex-1 bg-[#090A0F] rounded-sm p-2 font-mono text-[10px] space-y-1 overflow-y-auto border border-[#1E2028] max-h-64">
+          <div id="log-feed" class="flex-1 bg-[#07080C] rounded p-2.5 font-mono text-[10px] space-y-1 overflow-y-auto border border-[#1C202E] max-h-64">
             <div class="text-zinc-500">[SYSTEM] ApexGold Terminal initialized. Real-time telemetry feed standby.</div>
           </div>
         </div>
@@ -879,6 +909,62 @@
     </div>
   </main>
 
+  <!-- CLOSE ALL SAFETY CONFIRMATION MODAL -->
+  <div id="modal-close-all" class="hidden fixed inset-0 z-50 flex items-center justify-center modal-backdrop p-4">
+    <div class="bg-[#0E1017] border border-rose-500/40 rounded-lg max-w-sm w-full p-4 space-y-3.5 shadow-2xl">
+      <div class="flex items-center space-x-3">
+        <div class="w-9 h-9 rounded-full bg-rose-500/15 border border-rose-500/30 flex items-center justify-center text-rose-400 text-base font-bold shrink-0">
+          ⚠
+        </div>
+        <div>
+          <h3 class="text-xs font-bold text-zinc-100 uppercase tracking-wider font-mono">Emergency Close All</h3>
+          <p class="text-[11px] text-zinc-400 font-sans mt-0.5 leading-snug">Market-close all open trades on MetaTrader 5 and cancel pending limits.</p>
+        </div>
+      </div>
+      <div class="bg-[#07080C] p-2.5 rounded border border-[#1C202E] font-mono text-xs space-y-1 tabular-nums">
+        <div class="flex justify-between text-zinc-400">
+          <span>Active Positions:</span>
+          <span id="modal-close-count" class="text-zinc-100 font-bold">0</span>
+        </div>
+        <div class="flex justify-between text-zinc-400">
+          <span>Total Floating P&L:</span>
+          <span id="modal-close-pnl" class="text-emerald-400 font-bold">$0.00</span>
+        </div>
+      </div>
+      <div class="flex items-center space-x-2 pt-0.5 font-mono text-xs">
+        <button onclick="closeModalCloseAll()" class="flex-1 py-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-medium transition border border-[#1C202E]">
+          CANCEL
+        </button>
+        <button onclick="confirmExecuteCloseAll()" class="flex-1 py-1.5 rounded bg-rose-600 hover:bg-rose-500 text-white font-bold tracking-wider transition shadow-lg shadow-rose-950/50">
+          CONFIRM CLOSE
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- CLEAR HISTORY CONFIRMATION MODAL -->
+  <div id="modal-clear-history" class="hidden fixed inset-0 z-50 flex items-center justify-center modal-backdrop p-4">
+    <div class="bg-[#0E1017] border border-amber-500/40 rounded-lg max-w-sm w-full p-4 space-y-3.5 shadow-2xl">
+      <div class="flex items-center space-x-3">
+        <div class="w-9 h-9 rounded-full bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400 text-base font-bold shrink-0">
+          ↺
+        </div>
+        <div>
+          <h3 class="text-xs font-bold text-zinc-100 uppercase tracking-wider font-mono">Reset Trade History</h3>
+          <p class="text-[11px] text-zinc-400 font-sans mt-0.5 leading-snug">Purges all closed trade records in SQLite and resets win rate to zero.</p>
+        </div>
+      </div>
+      <div class="flex items-center space-x-2 pt-0.5 font-mono text-xs">
+        <button onclick="closeModalClearHistory()" class="flex-1 py-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-medium transition border border-[#1C202E]">
+          CANCEL
+        </button>
+        <button onclick="confirmExecuteClearHistory()" class="flex-1 py-1.5 rounded bg-amber-600 hover:bg-amber-500 text-zinc-950 font-bold tracking-wider transition">
+          PURGE & RESET
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- REUSABLE TOAST CONTAINER -->
   <div id="toast-container" class="fixed bottom-3 right-3 z-50 flex flex-col space-y-1.5 pointer-events-none"></div>
 
@@ -886,7 +972,7 @@
   <script>
     let activeTimeframe = '1H';
     let currentNewsTab = 'all';
-    let chart, candleSeries;
+    let chart, candleSeries, volumeSeries, vwapSeries, ema20Series, ema50Series;
     let chartLines = {};
     let cachedNewsState = null;
     let isUserDraggingSlider = false;
@@ -904,6 +990,11 @@
     window.editingOrdSlValues = {};
     window.editingOrdTpValues = {};
 
+    let showVWAP = true;
+    let showEMA = true;
+    let showVolume = true;
+    let showZones = true;
+
     const browserTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Beirut';
 
     // Toast notification helper
@@ -911,14 +1002,132 @@
       const container = document.getElementById('toast-container');
       if (!container) return;
       const el = document.createElement('div');
-      const borderColor = type === 'error' ? 'border-rose-500/40 text-rose-300' : type === 'success' ? 'border-emerald-500/40 text-emerald-300' : 'border-[#1E2028] text-zinc-300';
-      el.className = `pointer-events-auto px-3 py-1.5 rounded-sm bg-[#11131A] border font-mono text-[11px] ${borderColor} shadow transition duration-150 ease-out`;
+      const borderColor = type === 'error' ? 'border-rose-500/50 text-rose-300' : type === 'success' ? 'border-emerald-500/50 text-emerald-300' : 'border-[#272C3E] text-zinc-200';
+      el.className = `pointer-events-auto px-3 py-1.5 rounded bg-[#0E1017] border font-mono text-[11px] ${borderColor} shadow-lg transition duration-150 ease-out`;
       el.innerText = msg;
       container.appendChild(el);
       setTimeout(() => {
         el.style.opacity = '0';
         setTimeout(() => el.remove(), 200);
       }, 3000);
+    }
+
+    function setDirectVolume(vol) {
+      const inp = document.getElementById('direct-trade-volume');
+      if (inp) {
+        inp.value = Number(vol).toFixed(2);
+        syncSelectedLot(inp.value);
+      }
+    }
+
+    function syncSelectedLot(val) {
+      const num = parseFloat(val) || 0.01;
+      const formatted = num.toFixed(2);
+      document.querySelectorAll('.lot-display-val').forEach(el => {
+        el.innerText = formatted;
+      });
+    }
+
+    // Modal Handlers
+    function openCloseAllModal() {
+      const modal = document.getElementById('modal-close-all');
+      if (!modal) return;
+      const countEl = document.getElementById('modal-close-count');
+      const pnlEl = document.getElementById('modal-close-pnl');
+      const positions = (window.lastTelemetryData && window.lastTelemetryData.positions) || [];
+      const totalPnl = positions.reduce((acc, p) => acc + (p.profit || 0), 0);
+      
+      if (countEl) countEl.innerText = positions.length;
+      if (pnlEl) {
+        pnlEl.innerText = `${totalPnl >= 0 ? '+' : ''}$${totalPnl.toFixed(2)}`;
+        pnlEl.className = totalPnl >= 0 ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold';
+      }
+      modal.classList.remove('hidden');
+    }
+
+    function closeModalCloseAll() {
+      const modal = document.getElementById('modal-close-all');
+      if (modal) modal.classList.add('hidden');
+    }
+
+    async function confirmExecuteCloseAll() {
+      closeModalCloseAll();
+      await emergencyAction('close_all');
+    }
+
+    function openClearHistoryModal() {
+      const modal = document.getElementById('modal-clear-history');
+      if (modal) modal.classList.remove('hidden');
+    }
+
+    function closeModalClearHistory() {
+      const modal = document.getElementById('modal-clear-history');
+      if (modal) modal.classList.add('hidden');
+    }
+
+    async function confirmExecuteClearHistory() {
+      closeModalClearHistory();
+      try {
+        appendLog('HISTORY', 'Purging trade history and resetting win rate...');
+        const res = await fetch('/api/actions/clear_history', { method: 'POST' });
+        const data = await res.json();
+        if (data.status === 'OK') {
+          appendLog('HISTORY', 'History cleared. Metrics reset to zero.');
+          showToast('History cleared. Metrics reset.', 'info');
+          document.getElementById('stat-winrate-hero').innerText = 'WR: 0.0%';
+          document.getElementById('stat-winrate').innerText = '0.0%';
+          document.getElementById('stat-record').innerText = '(0W - 0L)';
+          document.getElementById('stat-total-pnl').innerText = '$0.00';
+          document.getElementById('stat-pf').innerText = 'PF 1.0';
+          document.getElementById('stat-today-pnl').innerText = '$0.00 (0 trades)';
+          document.getElementById('stat-today-wr').innerText = '0.0%';
+          const hWr = document.getElementById('header-winrate');
+          if (hWr) hWr.innerText = '0.0%';
+          const hPnl = document.getElementById('header-net-pnl');
+          if (hPnl) {
+            hPnl.innerText = '$0.00';
+            hPnl.className = 'font-bold text-zinc-200 tabular-nums';
+          }
+          document.getElementById('history-count-badge').innerText = '0';
+          document.getElementById('trade-history-tbody').innerHTML = '<tr><td colspan="6" class="p-4 text-center text-zinc-600 font-mono text-xs">No closed trades yet. Recorded trades persist in SQLite forever.</td></tr>';
+          if (window.lastTelemetryData) {
+            window.lastTelemetryData.history = [];
+            window.lastTelemetryData.stats = data.stats || {};
+          }
+        } else {
+          appendLog('ERROR', `Failed to clear history: ${data.detail || data.message}`);
+          showToast(`Clear failed: ${data.detail || data.message}`, 'error');
+        }
+      } catch (err) {
+        appendLog('ERROR', `Clear history error: ${err.message}`);
+        showToast(`Clear error: ${err.message}`, 'error');
+      }
+    }
+
+    // Toggle Indicators on Chart
+    function toggleIndicator(ind) {
+      if (ind === 'vwap') {
+        showVWAP = !showVWAP;
+        if (vwapSeries) vwapSeries.applyOptions({ visible: showVWAP });
+        const btn = document.getElementById('btn-toggle-vwap');
+        if (btn) btn.className = showVWAP ? 'px-2 py-0.5 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/35 font-semibold transition' : 'px-2 py-0.5 rounded bg-zinc-900 text-zinc-500 border border-[#1C202E] transition';
+      } else if (ind === 'ema') {
+        showEMA = !showEMA;
+        if (ema20Series) ema20Series.applyOptions({ visible: showEMA });
+        if (ema50Series) ema50Series.applyOptions({ visible: showEMA });
+        const btn = document.getElementById('btn-toggle-ema');
+        if (btn) btn.className = showEMA ? 'px-2 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/35 font-semibold transition' : 'px-2 py-0.5 rounded bg-zinc-900 text-zinc-500 border border-[#1C202E] transition';
+      } else if (ind === 'vol') {
+        showVolume = !showVolume;
+        if (volumeSeries) volumeSeries.applyOptions({ visible: showVolume });
+        const btn = document.getElementById('btn-toggle-vol');
+        if (btn) btn.className = showVolume ? 'px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/35 font-semibold transition' : 'px-2 py-0.5 rounded bg-zinc-900 text-zinc-500 border border-[#1C202E] transition';
+      } else if (ind === 'zones') {
+        showZones = !showZones;
+        syncTargetZoneLines();
+        const btn = document.getElementById('btn-toggle-zones');
+        if (btn) btn.className = showZones ? 'px-2 py-0.5 rounded bg-purple-500/15 text-purple-300 border border-purple-500/35 font-semibold transition' : 'px-2 py-0.5 rounded bg-zinc-900 text-zinc-500 border border-[#1C202E] transition';
+      }
     }
 
     async function fetchStatus() {
@@ -953,6 +1162,82 @@
       return 68;
     }
 
+    // Indicator calculation utilities
+    function calculateVWAP(candles) {
+      if (!candles || candles.length === 0) return [];
+      let cumVol = 0;
+      let cumVolPrice = 0;
+      let lastDay = null;
+      const vwapData = [];
+      for (let i = 0; i < candles.length; i++) {
+        const c = candles[i];
+        const date = new Date(c.time * 1000);
+        const day = date.getUTCDate();
+        if (lastDay !== null && day !== lastDay) {
+          cumVol = 0;
+          cumVolPrice = 0;
+        }
+        lastDay = day;
+        const vol = c.volume || 1;
+        const typical = (c.high + c.low + c.close) / 3;
+        cumVol += vol;
+        cumVolPrice += typical * vol;
+        const vwap = cumVol > 0 ? cumVolPrice / cumVol : typical;
+        vwapData.push({ time: c.time, value: parseFloat(vwap.toFixed(2)) });
+      }
+      return vwapData;
+    }
+
+    function calculateEMA(candles, period) {
+      if (!candles || candles.length < period) return [];
+      const k = 2 / (period + 1);
+      const emaData = [];
+      let ema = candles[0].close;
+      for (let i = 0; i < candles.length; i++) {
+        const close = candles[i].close;
+        if (i === 0) {
+          ema = close;
+        } else {
+          ema = (close * k) + (ema * (1 - k));
+        }
+        if (i >= period - 1) {
+          emaData.push({ time: candles[i].time, value: parseFloat(ema.toFixed(2)) });
+        }
+      }
+      return emaData;
+    }
+
+    function buildVolumeData(candles) {
+      if (!candles) return [];
+      return candles.map(c => ({
+        time: c.time,
+        value: c.volume || 0,
+        color: c.close >= c.open ? 'rgba(16, 185, 129, 0.45)' : 'rgba(239, 68, 68, 0.45)',
+      }));
+    }
+
+    // Update Floating Crosshair Legend
+    function updateLegend(c) {
+      if (!c) return;
+      const oEl = document.getElementById('leg-open');
+      const hEl = document.getElementById('leg-high');
+      const lEl = document.getElementById('leg-low');
+      const cEl = document.getElementById('leg-close');
+      const vEl = document.getElementById('leg-vol');
+      const chgEl = document.getElementById('leg-chg');
+
+      if (oEl) oEl.innerText = Number(c.open || 0).toFixed(2);
+      if (hEl) hEl.innerText = Number(c.high || 0).toFixed(2);
+      if (lEl) lEl.innerText = Number(c.low || 0).toFixed(2);
+      if (cEl) cEl.innerText = Number(c.close || 0).toFixed(2);
+      if (vEl) vEl.innerText = c.volume ? Number(c.volume).toLocaleString() : '--';
+      if (chgEl && c.open) {
+        const chg = ((c.close - c.open) / c.open) * 100;
+        chgEl.innerText = `${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%`;
+        chgEl.className = chg >= 0 ? 'text-emerald-400 font-bold tabular-nums' : 'text-rose-400 font-bold tabular-nums';
+      }
+    }
+
     // Initialize TradingView Lightweight Chart
     function initChart() {
       const chartContainer = document.getElementById('tv-chart');
@@ -960,14 +1245,14 @@
         width: chartContainer.clientWidth || 800,
         height: chartContainer.clientHeight || 500,
         layout: {
-          background: { color: '#090A0F' },
+          background: { color: '#07080C' },
           textColor: '#71717A',
           fontFamily: "'JetBrains Mono', 'Inter', monospace",
           fontSize: 11,
         },
         grid: {
-          vertLines: { color: 'rgba(30, 32, 40, 0.65)' },
-          horzLines: { color: 'rgba(30, 32, 40, 0.65)' },
+          vertLines: { color: 'rgba(28, 32, 46, 0.65)' },
+          horzLines: { color: 'rgba(28, 32, 46, 0.65)' },
         },
         crosshair: {
           mode: LightweightCharts.CrosshairMode.Normal,
@@ -983,7 +1268,7 @@
           },
         },
         timeScale: {
-          borderColor: '#1E2028',
+          borderColor: '#1C202E',
           timeVisible: true,
           secondsVisible: false,
           rightOffset: 6,
@@ -993,10 +1278,10 @@
           fixRightEdge: false,
         },
         rightPriceScale: {
-          borderColor: '#1E2028',
+          borderColor: '#1C202E',
           scaleMargins: {
             top: 0.08,
-            bottom: 0.08,
+            bottom: 0.18,
           },
           autoScale: true,
         },
@@ -1013,17 +1298,66 @@
         },
       });
 
+      // Volume Histogram Series at bottom 18%
+      volumeSeries = chart.addHistogramSeries({
+        priceFormat: { type: 'volume' },
+        priceScaleId: '',
+        scaleMargins: {
+          top: 0.82,
+          bottom: 0,
+        },
+      });
+
+      // Session VWAP Line Series
+      vwapSeries = chart.addLineSeries({
+        color: '#06B6D4',
+        lineWidth: 2,
+        lineStyle: 0,
+        title: 'VWAP',
+        priceScaleId: 'right',
+      });
+
+      // EMA 20 Line Series
+      ema20Series = chart.addLineSeries({
+        color: '#F59E0B',
+        lineWidth: 1.5,
+        lineStyle: 2,
+        title: 'EMA 20',
+        priceScaleId: 'right',
+      });
+
+      // EMA 50 Line Series
+      ema50Series = chart.addLineSeries({
+        color: '#8B5CF6',
+        lineWidth: 1.5,
+        lineStyle: 0,
+        title: 'EMA 50',
+        priceScaleId: 'right',
+      });
+
       // Institutional Emerald / Rose Candlestick Palette
       candleSeries = chart.addCandlestickSeries({
         upColor: '#10B981',
-        downColor: '#F43F5E',
+        downColor: '#EF4444',
         borderVisible: true,
         borderColor: '#10B981',
         borderUpColor: '#10B981',
-        borderDownColor: '#F43F5E',
+        borderDownColor: '#EF4444',
         wickVisible: true,
         wickUpColor: '#10B981',
-        wickDownColor: '#F43F5E',
+        wickDownColor: '#EF4444',
+      });
+
+      // Subscribe to Crosshair Move to update OHLCV legend
+      chart.subscribeCrosshairMove(param => {
+        if (!param || !param.time || !param.seriesData) {
+          if (window.lastBar) updateLegend(window.lastBar);
+          return;
+        }
+        const candleData = param.seriesData.get(candleSeries);
+        if (candleData) {
+          updateLegend(candleData);
+        }
       });
 
       const ro = new ResizeObserver((entries) => {
@@ -1047,7 +1381,7 @@
       }
     }
 
-    // Load Candles for Timeframe with 800+ Historical Bars
+    // Load Candles for Timeframe with Indicators
     async function loadCandles(tf, forceFullReload = false) {
       try {
         const symbol = window.currentSymbol || 'XAUUSD.m';
@@ -1062,6 +1396,13 @@
           }
           if (isInitialChartLoad || forceFullReload || !window.lastBar || Math.abs(sorted[sorted.length - 1].time - window.lastBar.time) > (tf === '1H' ? 7200 : 600)) {
             candleSeries.setData(sorted);
+            
+            // Populate Volume & Indicators
+            if (volumeSeries) volumeSeries.setData(buildVolumeData(sorted));
+            if (vwapSeries) vwapSeries.setData(calculateVWAP(sorted));
+            if (ema20Series) ema20Series.setData(calculateEMA(sorted, 20));
+            if (ema50Series) ema50Series.setData(calculateEMA(sorted, 50));
+
             const total = sorted.length;
             const barsToShow = (tf === '1H') ? 55 : (tf === '15m' ? 65 : 75);
             chart.timeScale().setVisibleLogicalRange({
@@ -1071,10 +1412,20 @@
             isInitialChartLoad = false;
           } else {
             for (let i = Math.max(0, sorted.length - 15); i < sorted.length; i++) {
-              try { candleSeries.update(sorted[i]); } catch (e) {}
+              try {
+                candleSeries.update(sorted[i]);
+                if (volumeSeries) {
+                  volumeSeries.update({
+                    time: sorted[i].time,
+                    value: sorted[i].volume || 0,
+                    color: sorted[i].close >= sorted[i].open ? 'rgba(16, 185, 129, 0.45)' : 'rgba(239, 68, 68, 0.45)',
+                  });
+                }
+              } catch (e) {}
             }
           }
           window.lastBar = { ...sorted[sorted.length - 1] };
+          updateLegend(window.lastBar);
         }
       } catch (e) {
         console.error('Error loading candles:', e);
@@ -1088,9 +1439,9 @@
         const btn = document.getElementById(`tf-${t}`);
         if (btn) {
           if (t === tf) {
-            btn.className = 'px-2 py-0.5 rounded-sm bg-zinc-800 text-zinc-100 border border-zinc-700/60 font-semibold transition duration-150 ease-out';
+            btn.className = 'px-2 py-0.5 rounded bg-zinc-800 text-zinc-100 border border-zinc-700/60 font-bold transition duration-150 ease-out';
           } else {
-            btn.className = 'px-2 py-0.5 rounded-sm text-zinc-500 hover:text-zinc-300 transition duration-150 ease-out';
+            btn.className = 'px-2 py-0.5 rounded text-zinc-500 hover:text-zinc-300 transition duration-150 ease-out';
           }
         }
       });
@@ -1127,15 +1478,17 @@
       loadCandles(activeTimeframe, false);
     }, 15000);
 
-    // Direct 1-Click MT5 Test Trade Dispatcher
+    // Direct 1-Click MT5 Trade Dispatcher
     async function dispatchDirectTestTrade(dir) {
+      const volInp = document.getElementById('direct-trade-volume');
+      const vol = volInp ? parseFloat(volInp.value) || 0.01 : 0.01;
       try {
-        appendLog('EXECUTION', `Submitting 1-Click ${dir} 0.01 lot to MT5...`);
-        const res = await fetch(`/api/actions/test_trade?direction=${dir}&volume=0.01`, { method: 'POST' });
+        appendLog('EXECUTION', `Submitting 1-Click ${dir} ${vol.toFixed(2)} lot to MT5...`);
+        const res = await fetch(`/api/actions/test_trade?direction=${dir}&volume=${vol}`, { method: 'POST' });
         const json = await res.json();
         if (json.status === 'OK') {
-          appendLog('MT5 BRIDGE', `Dispatched ${dir} 0.01 lot. Awaiting MT5 fill.`);
-          showToast(`Dispatched ${dir} 0.01 to MT5`, 'success');
+          appendLog('MT5 BRIDGE', `Dispatched ${dir} ${vol.toFixed(2)} lot. Awaiting MT5 fill.`);
+          showToast(`Dispatched ${dir} ${vol.toFixed(2)} to MT5`, 'success');
         } else {
           appendLog('ERROR', `Order rejected: ${json.detail || json.message}`);
           showToast(`Order rejected: ${json.detail || json.message}`, 'error');
@@ -1165,14 +1518,14 @@
       if (data.is_mt5_live && data.mt5_algo_trading_allowed === false) {
         document.getElementById('mt5-algo-warning')?.classList.remove('hidden');
         document.getElementById('broker-status-text').innerText = 'MT5 LIVE (ALGO OFF)';
-        document.getElementById('broker-status-text').className = 'font-mono text-rose-400 font-semibold';
+        document.getElementById('broker-status-text').className = 'font-mono text-rose-400 font-bold';
         document.getElementById('broker-status-dot').className = 'w-1.5 h-1.5 rounded-full bg-rose-500 pulse-dot';
       } else {
         document.getElementById('mt5-algo-warning')?.classList.add('hidden');
         if (data.broker_name) {
           document.getElementById('broker-status-text').innerText = data.broker_name;
           if (data.broker_name.includes('LIVE')) {
-            document.getElementById('broker-status-text').className = 'font-mono text-emerald-400 font-semibold';
+            document.getElementById('broker-status-text').className = 'font-mono text-emerald-400 font-bold';
             document.getElementById('broker-status-dot').className = 'w-1.5 h-1.5 rounded-full bg-emerald-400 pulse-dot';
           } else {
             document.getElementById('broker-status-text').className = 'font-mono text-zinc-500';
@@ -1239,6 +1592,7 @@
             }
             try {
               candleSeries.update(window.lastBar);
+              updateLegend(window.lastBar);
             } catch (err) {}
           }
         }
@@ -1251,14 +1605,14 @@
       scoreTier.innerText = data.tier;
 
       if (data.score >= 80) {
-        scoreNum.className = 'text-sm font-semibold font-mono tabular-nums text-emerald-400';
-        scoreTier.className = 'px-1.5 py-0.5 rounded-sm text-[9px] font-mono uppercase tracking-wider bg-emerald-500/10 text-emerald-400 border border-emerald-500/25';
+        scoreNum.className = 'text-sm font-bold font-mono tabular-nums text-emerald-400';
+        scoreTier.className = 'px-1.5 py-0.5 rounded text-[9px] font-mono uppercase tracking-wider bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-semibold';
       } else if (data.score >= 65) {
-        scoreNum.className = 'text-sm font-semibold font-mono tabular-nums text-sky-400';
-        scoreTier.className = 'px-1.5 py-0.5 rounded-sm text-[9px] font-mono uppercase tracking-wider bg-sky-500/10 text-sky-400 border border-sky-500/25';
+        scoreNum.className = 'text-sm font-bold font-mono tabular-nums text-sky-400';
+        scoreTier.className = 'px-1.5 py-0.5 rounded text-[9px] font-mono uppercase tracking-wider bg-sky-500/15 text-sky-400 border border-sky-500/30 font-semibold';
       } else {
-        scoreNum.className = 'text-sm font-semibold font-mono tabular-nums text-zinc-400';
-        scoreTier.className = 'px-1.5 py-0.5 rounded-sm text-[9px] font-mono uppercase tracking-wider bg-zinc-900 text-zinc-500 border border-[#1E2028]';
+        scoreNum.className = 'text-sm font-bold font-mono tabular-nums text-zinc-400';
+        scoreTier.className = 'px-1.5 py-0.5 rounded text-[9px] font-mono uppercase tracking-wider bg-zinc-900 text-zinc-500 border border-[#1C202E]';
       }
 
       // 4b. Dynamic 4-TF Bias Alignment Indicators Sync
@@ -1275,13 +1629,13 @@
           const bias = (tfData[item.key] || 'NEUTRAL').toUpperCase();
           if (bias === 'BULL') {
             el.innerText = `${item.label}: ▲`;
-            el.className = 'px-1.5 py-0.5 rounded-sm bg-emerald-500/10 text-emerald-400 border border-emerald-500/25 font-mono text-[10px] tabular-nums font-medium';
+            el.className = 'px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-mono text-[10px] tabular-nums font-semibold';
           } else if (bias === 'BEAR') {
             el.innerText = `${item.label}: ▼`;
-            el.className = 'px-1.5 py-0.5 rounded-sm bg-rose-500/10 text-rose-400 border border-rose-500/25 font-mono text-[10px] tabular-nums font-medium';
+            el.className = 'px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-400 border border-rose-500/30 font-mono text-[10px] tabular-nums font-semibold';
           } else {
             el.innerText = `${item.label}: ■`;
-            el.className = 'px-1.5 py-0.5 rounded-sm bg-zinc-900 text-zinc-500 border border-[#1E2028] font-mono text-[10px] tabular-nums font-medium';
+            el.className = 'px-1.5 py-0.5 rounded bg-zinc-900 text-zinc-500 border border-[#1C202E] font-mono text-[10px] tabular-nums font-semibold';
           }
         }
       });
@@ -1293,13 +1647,13 @@
       const scrollerStatus = document.getElementById('badge-scroller-status');
 
       if (isAuto) {
-        btnAuto.className = 'px-2.5 py-1 rounded-sm text-[11px] font-mono font-medium tracking-wider transition duration-150 ease-out flex items-center space-x-1.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 whitespace-nowrap';
+        btnAuto.className = 'px-2.5 py-1 rounded text-[11px] font-mono font-semibold tracking-wider transition duration-150 ease-out flex items-center space-x-1.5 bg-emerald-500/15 text-emerald-400 border border-emerald-500/35 whitespace-nowrap shadow-sm';
         scrollerStatus.innerText = 'AUTO';
-        scrollerStatus.className = 'px-1.5 py-0.5 rounded-sm text-[9px] font-mono uppercase tracking-wider bg-emerald-500/10 text-emerald-400 border border-emerald-500/20';
+        scrollerStatus.className = 'px-1.5 py-0.5 rounded text-[9px] font-mono uppercase tracking-wider bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-semibold';
       } else {
-        btnAuto.className = 'px-2.5 py-1 rounded-sm text-[11px] font-mono font-medium tracking-wider transition duration-150 ease-out flex items-center space-x-1.5 bg-[#11131A] text-zinc-400 border border-[#1E2028] hover:text-zinc-200 hover:border-zinc-700 whitespace-nowrap';
+        btnAuto.className = 'px-2.5 py-1 rounded text-[11px] font-mono font-medium tracking-wider transition duration-150 ease-out flex items-center space-x-1.5 bg-[#0E1017] text-zinc-400 border border-[#1C202E] hover:text-zinc-200 hover:border-zinc-700 whitespace-nowrap';
         scrollerStatus.innerText = 'MANUAL';
-        scrollerStatus.className = 'px-1.5 py-0.5 rounded-sm text-[9px] font-mono uppercase tracking-wider bg-[#D4AF37]/10 text-[#D4AF37] border border-[#D4AF37]/25';
+        scrollerStatus.className = 'px-1.5 py-0.5 rounded text-[9px] font-mono uppercase tracking-wider bg-[#D4AF37]/15 text-[#D4AF37] border border-[#D4AF37]/30 font-semibold';
       }
 
       // Highlight manual gear buttons
@@ -1308,9 +1662,9 @@
         if (btn) {
           const isMatch = (currentMode === g) || (g === 'hyper' && (currentMode === 'scalp' || currentMode === 'scalping'));
           if (isMatch) {
-            btn.className = 'px-1.5 md:px-2 py-0.5 rounded-sm bg-[#D4AF37]/15 text-[#D4AF37] border border-[#D4AF37]/30 font-semibold font-mono text-[10px] transition duration-150 ease-out';
+            btn.className = 'px-2 py-0.5 rounded bg-[#D4AF37]/20 text-[#D4AF37] border border-[#D4AF37]/40 font-bold font-mono text-[10px] transition duration-150 ease-out';
           } else {
-            btn.className = 'px-1.5 md:px-2 py-0.5 rounded-sm text-zinc-500 hover:text-zinc-300 font-mono text-[10px] transition duration-150 ease-out';
+            btn.className = 'px-2 py-0.5 rounded text-zinc-500 hover:text-zinc-300 font-mono text-[10px] transition duration-150 ease-out';
           }
         }
       });
@@ -1336,7 +1690,7 @@
         if (isCb || cdSec > 0) {
           const badgeText = isCb ? 'CIRCUIT BREAKER: RESUME' : `PAUSE ${cdSec}s (SKIP)`;
           subBadge.innerText = badgeText;
-          subBadge.className = 'px-2 py-0.5 rounded-sm text-[10px] font-mono uppercase tracking-wider bg-[#D4AF37]/15 text-[#D4AF37] border border-[#D4AF37]/40 shrink-0 whitespace-nowrap cursor-pointer hover:bg-[#D4AF37]/25 transition duration-150 ease-out font-semibold';
+          subBadge.className = 'px-2.5 py-0.5 rounded text-[10px] font-mono uppercase tracking-wider bg-[#D4AF37]/20 text-[#D4AF37] border border-[#D4AF37]/50 shrink-0 whitespace-nowrap cursor-pointer hover:bg-[#D4AF37]/30 transition duration-150 ease-out font-bold';
           subBadge.onclick = async () => {
             try {
               const res = await fetch('/api/actions/resume', { method: 'POST' });
@@ -1358,16 +1712,16 @@
           subBadge.onclick = null;
           if (brain.sub_regime === 'FAST_SCALP' || currentMode === 'hyper' || currentMode === 'scalp') {
             subBadge.innerText = 'FAST SCALP';
-            subBadge.className = 'px-2 py-0.5 rounded-sm text-[10px] font-mono uppercase tracking-wider bg-emerald-500/10 text-emerald-400 border border-emerald-500/25 shrink-0 whitespace-nowrap';
+            subBadge.className = 'px-2.5 py-0.5 rounded text-[10px] font-mono uppercase tracking-wider bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 shrink-0 whitespace-nowrap font-bold';
           } else if (brain.sub_regime === 'DEFENSIVE_SHIELD') {
             subBadge.innerText = 'DEFENSIVE SHIELD';
-            subBadge.className = 'px-2 py-0.5 rounded-sm text-[10px] font-mono uppercase tracking-wider bg-rose-500/10 text-rose-400 border border-rose-500/25 shrink-0 whitespace-nowrap';
+            subBadge.className = 'px-2.5 py-0.5 rounded text-[10px] font-mono uppercase tracking-wider bg-rose-500/15 text-rose-400 border border-rose-500/30 shrink-0 whitespace-nowrap font-bold';
           } else if (brain.sub_regime === 'NEWS_MOMENTUM_STUDY') {
             subBadge.innerText = 'NEWS MOMENTUM';
-            subBadge.className = 'px-2 py-0.5 rounded-sm text-[10px] font-mono uppercase tracking-wider bg-sky-500/10 text-sky-400 border border-sky-500/25 shrink-0 whitespace-nowrap';
+            subBadge.className = 'px-2.5 py-0.5 rounded text-[10px] font-mono uppercase tracking-wider bg-sky-500/15 text-sky-400 border border-sky-500/30 shrink-0 whitespace-nowrap font-bold';
           } else {
             subBadge.innerText = 'WAVE RUNNER';
-            subBadge.className = 'px-2 py-0.5 rounded-sm text-[10px] font-mono uppercase tracking-wider bg-zinc-800 text-zinc-300 border border-[#1E2028] shrink-0 whitespace-nowrap';
+            subBadge.className = 'px-2.5 py-0.5 rounded text-[10px] font-mono uppercase tracking-wider bg-zinc-800 text-zinc-300 border border-[#1C202E] shrink-0 whitespace-nowrap font-bold';
           }
         }
 
@@ -1385,13 +1739,13 @@
 
       if (data.positions && data.positions.length > 0) {
         posBadge.innerText = `${data.positions.length} OPEN`;
-        posBadge.className = 'px-1.5 py-0.5 rounded-sm text-[9px] font-mono font-medium uppercase tracking-wider bg-emerald-500/10 text-emerald-400 border border-emerald-500/25';
+        posBadge.className = 'px-2 py-0.5 rounded text-[9px] font-mono font-bold uppercase tracking-wider bg-emerald-500/15 text-emerald-400 border border-emerald-500/30';
         if (posGlobalActions) posGlobalActions.classList.remove('hidden');
 
         const totalPnl = data.positions.reduce((acc, p) => acc + (p.profit || 0.0), 0.0);
         if (posTotalPill) {
           posTotalPill.innerText = `${totalPnl >= 0 ? '+' : ''}$${totalPnl.toFixed(2)}`;
-          posTotalPill.className = `px-1.5 py-0.5 rounded-sm text-[10px] font-mono tabular-nums font-semibold ${totalPnl >= 0 ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/25' : 'bg-rose-500/10 text-rose-400 border border-rose-500/25'}`;
+          posTotalPill.className = `px-2 py-0.5 rounded text-[10px] font-mono tabular-nums font-bold ${totalPnl >= 0 ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30' : 'bg-rose-500/15 text-rose-400 border border-rose-500/30'}`;
           posTotalPill.classList.remove('hidden');
         }
 
@@ -1412,65 +1766,65 @@
               : (p.tp > 0 ? Number(p.tp).toFixed(2) : '');
 
             return `
-              <div class="space-y-1.5 bg-[#090A0F] p-2 rounded-sm border border-[#1E2028] transition duration-150 ease-out hover:border-zinc-700">
+              <div class="space-y-1.5 bg-[#07080C] p-2.5 rounded border border-[#1C202E] transition duration-150 ease-out hover:border-zinc-600 shadow-sm">
                 <div class="flex items-center justify-between font-mono text-xs tabular-nums">
                   <div class="flex items-center space-x-1.5">
-                    <span class="px-1.5 py-0.2 rounded-sm font-semibold text-[9px] ${isBuy ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/25' : 'bg-rose-500/10 text-rose-400 border border-rose-500/25'}">${dirStr}</span>
-                    <span class="font-medium text-zinc-200">${p.volume || '0.01'} ${p.symbol || 'GOLD'}</span>
+                    <span class="px-1.5 py-0.2 rounded font-bold text-[9px] ${isBuy ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30' : 'bg-rose-500/15 text-rose-400 border border-rose-500/30'}">${dirStr}</span>
+                    <span class="font-bold text-zinc-100">${p.volume || '0.01'} ${p.symbol || 'GOLD'}</span>
                     <span class="text-zinc-500 text-[10px]">#${p.ticket}</span>
-                    ${p.origin ? `<span class="px-1.5 py-0.2 rounded-sm text-[8px] font-mono uppercase ${p.origin.includes('USER') ? 'bg-sky-500/10 text-sky-400 border border-sky-500/25' : 'bg-[#D4AF37]/10 text-[#D4AF37] border border-[#D4AF37]/25'}">${p.origin}</span>` : ''}
+                    ${p.origin ? `<span class="px-1.5 py-0.2 rounded text-[8px] font-mono uppercase ${p.origin.includes('USER') ? 'bg-sky-500/15 text-sky-400 border border-sky-500/30' : 'bg-[#D4AF37]/15 text-[#D4AF37] border border-[#D4AF37]/30'}">${p.origin}</span>` : ''}
                   </div>
-                  <span class="font-semibold ${pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}">${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}</span>
+                  <span class="font-bold text-sm ${pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}">${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}</span>
                 </div>
-                <div class="grid grid-cols-3 gap-1 text-[10px] font-mono tabular-nums text-zinc-400 bg-[#11131A] p-1.5 rounded-sm border border-[#1E2028]/60">
-                  <div>Entry: <span class="text-zinc-100 font-medium">${openP}</span></div>
-                  <div>SL: <span class="text-rose-400 font-medium">${slP}</span></div>
-                  <div>TP: <span class="text-emerald-400 font-medium">${tpP}</span></div>
+                <div class="grid grid-cols-3 gap-1 text-[10px] font-mono tabular-nums text-zinc-400 bg-[#0E1017] p-1.5 rounded border border-[#1C202E]">
+                  <div>Entry: <span class="text-zinc-100 font-semibold">${openP}</span></div>
+                  <div>SL: <span class="text-rose-400 font-semibold">${slP}</span></div>
+                  <div>TP: <span class="text-emerald-400 font-semibold">${tpP}</span></div>
                 </div>
-                <div class="flex items-center justify-between text-[9px] font-mono px-1.5 py-0.5 rounded-sm bg-[#11131A] border border-[#1E2028]/80">
-                  <div class="flex items-center space-x-1">
-                    <span class="text-zinc-400 font-semibold text-[8px] uppercase">AI Study:</span>
-                    <span class="px-1 py-0.2 rounded-sm font-semibold uppercase text-[8px] ${p.exit_evaluation === 'HARVEST_PROFIT_NOW' ? 'bg-rose-500/15 text-rose-400 border border-rose-500/30' : (p.exit_evaluation === 'TIGHTEN_AND_PROTECT' ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30' : 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30')}">
+                <div class="flex items-center justify-between text-[9px] font-mono px-2 py-0.5 rounded bg-[#0E1017] border border-[#1C202E]">
+                  <div class="flex items-center space-x-1.5">
+                    <span class="text-zinc-400 font-bold text-[8px] uppercase">AI Evaluator:</span>
+                    <span class="px-1.5 py-0.2 rounded font-bold uppercase text-[8px] ${p.exit_evaluation === 'HARVEST_PROFIT_NOW' ? 'bg-rose-500/20 text-rose-400 border border-rose-500/40' : (p.exit_evaluation === 'TIGHTEN_AND_PROTECT' ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40' : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40')}">
                       ${p.exit_evaluation === 'HARVEST_PROFIT_NOW' ? 'HARVEST PROFIT' : (p.exit_evaluation === 'TIGHTEN_AND_PROTECT' ? 'TIGHTENING SL' : 'HOLD & EXPAND')}
                     </span>
                     ${p.highest_r_reached ? `<span class="text-zinc-500 text-[8px]">Peak: +${Number(p.highest_r_reached).toFixed(2)}R</span>` : ''}
                   </div>
-                  ${p.peak_r_giveback_pct > 0 ? `<span class="text-amber-400/90 text-[8px] font-mono">-${Number(p.peak_r_giveback_pct).toFixed(0)}% giveback</span>` : ''}
+                  ${p.peak_r_giveback_pct > 0 ? `<span class="text-amber-400 text-[8px] font-mono font-semibold">-${Number(p.peak_r_giveback_pct).toFixed(0)}% giveback</span>` : ''}
                 </div>
                 ${p.exit_verdict_detail ? `<div class="text-[9px] font-mono text-zinc-400 leading-tight px-1 py-0.5 truncate" title="${p.exit_verdict_detail}">${p.exit_verdict_detail}</div>` : ''}
                 <div class="flex items-center space-x-1.5 pt-0.5">
-                  <button onclick="toggleEditPosition('${p.ticket}')" class="px-2 py-0.5 rounded-sm bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-mono text-[9px] uppercase tracking-wider border border-zinc-700/60 transition duration-150 ease-out">
+                  <button onclick="toggleEditPosition('${p.ticket}')" class="px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-mono text-[9px] uppercase tracking-wider border border-zinc-700/60 transition duration-150 ease-out font-medium">
                     Edit SL/TP
                   </button>
-                  <button onclick="closePosition('${p.ticket}')" class="flex-1 py-0.5 rounded-sm bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 font-mono text-[9px] uppercase tracking-wider transition duration-150 ease-out">
+                  <button onclick="closePosition('${p.ticket}')" class="flex-1 py-0.5 rounded bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/35 font-mono text-[9px] uppercase tracking-wider transition duration-150 ease-out font-semibold">
                     Close #${p.ticket}
                   </button>
                 </div>
                 <!-- Inline Collapsible Edit SL/TP Box -->
-                <div id="edit-box-pos-${p.ticket}" class="${isEditing ? '' : 'hidden'} p-2 rounded-sm bg-[#11131A] border border-[#1E2028] text-[10px] space-y-1.5 mt-1.5">
-                  <div class="flex items-center justify-between font-mono font-medium text-zinc-300 border-b border-[#1E2028] pb-1">
-                    <span class="text-[#D4AF37] text-[10px]">Modify Position #${p.ticket}</span>
+                <div id="edit-box-pos-${p.ticket}" class="${isEditing ? '' : 'hidden'} p-2 rounded bg-[#0E1017] border border-[#1C202E] text-[10px] space-y-1.5 mt-1.5">
+                  <div class="flex items-center justify-between font-mono font-medium text-zinc-300 border-b border-[#1C202E] pb-1">
+                    <span class="text-[#D4AF37] font-bold text-[10px]">Modify Position #${p.ticket}</span>
                     <button onclick="toggleEditPosition('${p.ticket}')" class="text-zinc-500 hover:text-zinc-300 text-[11px] font-mono">✕</button>
                   </div>
                   <div class="grid grid-cols-2 gap-1.5 font-mono">
                     <div>
-                      <label class="text-[9px] text-zinc-500 block mb-0.5 uppercase tracking-wider font-sans">Stop Loss</label>
-                      <input id="input-sl-pos-${p.ticket}" type="number" step="0.1" value="${activeSlVal}" oninput="window.editingSlValues['${p.ticket}']=this.value" placeholder="SL price" class="w-full bg-[#090A0F] border border-[#1E2028] rounded-sm px-1.5 py-0.5 text-zinc-100 font-semibold focus:border-rose-500/60 focus:outline-none tabular-nums" />
+                      <label class="text-[9px] text-zinc-500 block mb-0.5 uppercase tracking-wider font-sans font-medium">Stop Loss</label>
+                      <input id="input-sl-pos-${p.ticket}" type="number" step="0.1" value="${activeSlVal}" oninput="window.editingSlValues['${p.ticket}']=this.value" placeholder="SL price" class="w-full bg-[#07080C] border border-[#1C202E] rounded px-1.5 py-0.5 text-zinc-100 font-semibold focus:border-rose-500/60 focus:outline-none tabular-nums" />
                     </div>
                     <div>
-                      <label class="text-[9px] text-zinc-500 block mb-0.5 uppercase tracking-wider font-sans">Take Profit</label>
-                      <input id="input-tp-pos-${p.ticket}" type="number" step="0.1" value="${activeTpVal}" oninput="window.editingTpValues['${p.ticket}']=this.value" placeholder="TP price" class="w-full bg-[#090A0F] border border-[#1E2028] rounded-sm px-1.5 py-0.5 text-zinc-100 font-semibold focus:border-emerald-500/60 focus:outline-none tabular-nums" />
+                      <label class="text-[9px] text-zinc-500 block mb-0.5 uppercase tracking-wider font-sans font-medium">Take Profit</label>
+                      <input id="input-tp-pos-${p.ticket}" type="number" step="0.1" value="${activeTpVal}" oninput="window.editingTpValues['${p.ticket}']=this.value" placeholder="TP price" class="w-full bg-[#07080C] border border-[#1C202E] rounded px-1.5 py-0.5 text-zinc-100 font-semibold focus:border-emerald-500/60 focus:outline-none tabular-nums" />
                     </div>
                   </div>
                   <div class="flex items-center space-x-1 pt-0.5 font-mono">
-                    <button onclick="quickNudgeSl('${p.ticket}', ${isBuy ? 1.0 : -1.0})" class="px-1.5 py-0.5 bg-[#090A0F] hover:bg-zinc-800 text-zinc-300 border border-[#1E2028] rounded-sm text-[9px] tabular-nums transition duration-150 ease-out">SL +$1</button>
-                    <button onclick="quickNudgeSl('${p.ticket}', ${isBuy ? -1.0 : 1.0})" class="px-1.5 py-0.5 bg-[#090A0F] hover:bg-zinc-800 text-zinc-300 border border-[#1E2028] rounded-sm text-[9px] tabular-nums transition duration-150 ease-out">SL -$1</button>
-                    <button onclick="quickNudgeTp('${p.ticket}', ${isBuy ? 2.0 : -2.0})" class="px-1.5 py-0.5 bg-[#090A0F] hover:bg-zinc-800 text-emerald-400 border border-[#1E2028] rounded-sm text-[9px] tabular-nums transition duration-150 ease-out">TP +$2</button>
-                    <button onclick="setBreakevenInput('${p.ticket}', ${p.open_price}, ${isBuy ? 0.25 : -0.25})" class="px-1.5 py-0.5 bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 border border-sky-500/25 rounded-sm text-[9px] uppercase tracking-wider transition duration-150 ease-out">Lock BE</button>
+                    <button onclick="quickNudgeSl('${p.ticket}', ${isBuy ? 1.0 : -1.0})" class="px-1.5 py-0.5 bg-[#07080C] hover:bg-zinc-800 text-zinc-300 border border-[#1C202E] rounded text-[9px] tabular-nums transition">SL +$1</button>
+                    <button onclick="quickNudgeSl('${p.ticket}', ${isBuy ? -1.0 : 1.0})" class="px-1.5 py-0.5 bg-[#07080C] hover:bg-zinc-800 text-zinc-300 border border-[#1C202E] rounded text-[9px] tabular-nums transition">SL -$1</button>
+                    <button onclick="quickNudgeTp('${p.ticket}', ${isBuy ? 2.0 : -2.0})" class="px-1.5 py-0.5 bg-[#07080C] hover:bg-zinc-800 text-emerald-400 border border-[#1C202E] rounded text-[9px] tabular-nums transition">TP +$2</button>
+                    <button onclick="setBreakevenInput('${p.ticket}', ${p.open_price}, ${isBuy ? 0.25 : -0.25})" class="px-1.5 py-0.5 bg-sky-500/15 hover:bg-sky-500/25 text-sky-400 border border-sky-500/30 rounded text-[9px] uppercase tracking-wider transition">Lock BE</button>
                   </div>
                   <div class="flex items-center space-x-1.5 pt-1">
-                    <button onclick="submitModifyPosition('${p.ticket}')" class="flex-1 py-1 rounded-sm bg-[#D4AF37]/15 hover:bg-[#D4AF37]/25 text-[#D4AF37] border border-[#D4AF37]/30 font-mono font-semibold text-[10px] uppercase tracking-wider transition duration-150 ease-out">Save to MT5</button>
-                    <button onclick="toggleEditPosition('${p.ticket}')" class="px-2.5 py-1 rounded-sm bg-zinc-800 hover:bg-zinc-700 text-zinc-400 text-[10px] font-mono transition duration-150 ease-out">Cancel</button>
+                    <button onclick="submitModifyPosition('${p.ticket}')" class="flex-1 py-1 rounded bg-[#D4AF37]/20 hover:bg-[#D4AF37]/30 text-[#D4AF37] border border-[#D4AF37]/40 font-mono font-bold text-[10px] uppercase tracking-wider transition">Save to MT5</button>
+                    <button onclick="toggleEditPosition('${p.ticket}')" class="px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-400 text-[10px] font-mono transition">Cancel</button>
                   </div>
                 </div>
               </div>
@@ -1480,13 +1834,13 @@
       } else {
         if (posBadge) {
           posBadge.innerText = 'NO TRADES OPEN';
-          posBadge.className = 'px-1.5 py-0.5 rounded-sm text-[9px] font-mono font-medium uppercase tracking-wider bg-zinc-900 border border-[#1E2028] text-zinc-500';
+          posBadge.className = 'px-2 py-0.5 rounded text-[9px] font-mono font-semibold uppercase tracking-wider bg-zinc-900 border border-[#1C202E] text-zinc-500';
         }
         if (posGlobalActions) posGlobalActions.classList.add('hidden');
         if (posTotalPill) posTotalPill.classList.add('hidden');
         if (posContainer) {
           posContainer.innerHTML = `
-            <div id="pos-empty-state" class="p-3 rounded-sm border border-dashed border-[#1E2028] bg-[#090A0F]/60 text-center text-zinc-600 font-mono text-[11px]">
+            <div id="pos-empty-state" class="p-3 rounded border border-dashed border-[#1C202E] bg-[#07080C]/70 text-center text-zinc-500 font-mono text-[11px]">
               No open trades on MT5. Scanning 4-TF confluence...
             </div>
           `;
@@ -1524,45 +1878,45 @@
               : (o.tp > 0 ? Number(o.tp).toFixed(2) : '');
 
             return `
-              <div class="bg-[#090A0F] p-2 rounded-sm border border-[#1E2028] text-[10px] font-mono tabular-nums space-y-1 hover:border-zinc-700 transition duration-150 ease-out">
+              <div class="bg-[#07080C] p-2 rounded border border-[#1C202E] text-[10px] font-mono tabular-nums space-y-1 hover:border-zinc-700 transition">
                 <div class="flex items-center justify-between">
                   <div class="flex items-center space-x-1.5">
-                    <span class="px-1.5 py-0.2 rounded-sm font-semibold text-[9px] ${isBuy ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/25' : 'bg-rose-500/10 text-rose-400 border border-rose-500/25'}">${ordType}</span>
-                    <span class="font-medium text-zinc-200">${oVol} ${oSym}</span>
+                    <span class="px-1.5 py-0.2 rounded font-bold text-[9px] ${isBuy ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30' : 'bg-rose-500/15 text-rose-400 border border-rose-500/30'}">${ordType}</span>
+                    <span class="font-bold text-zinc-100">${oVol} ${oSym}</span>
                     <span class="text-zinc-500 text-[9px]">#${oTicket}</span>
                   </div>
-                  <span class="text-[#D4AF37] font-semibold">@ ${oPrice}</span>
+                  <span class="text-[#D4AF37] font-bold">@ ${oPrice}</span>
                 </div>
                 <div class="flex items-center justify-between text-zinc-400 pt-0.5">
-                  <span class="text-[9px]">SL: <span class="text-rose-400">${oSl}</span> | TP: <span class="text-emerald-400">${oTp}</span></span>
+                  <span class="text-[9px]">SL: <span class="text-rose-400 font-semibold">${oSl}</span> | TP: <span class="text-emerald-400 font-semibold">${oTp}</span></span>
                   <div class="flex items-center space-x-1">
-                    <button onclick="toggleEditOrder('${oTicket}')" class="px-1.5 py-0.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-sm font-mono text-[9px] border border-zinc-700/60 transition duration-150 ease-out">Edit</button>
-                    <button onclick="cancelLimitOrder('${oTicket}')" class="px-2 py-0.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/25 rounded-sm font-mono text-[9px] transition duration-150 ease-out">Cancel</button>
+                    <button onclick="toggleEditOrder('${oTicket}')" class="px-1.5 py-0.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded font-mono text-[9px] border border-zinc-700/60 transition">Edit</button>
+                    <button onclick="cancelLimitOrder('${oTicket}')" class="px-2 py-0.5 bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/30 rounded font-mono text-[9px] transition">Cancel</button>
                   </div>
                 </div>
                 <!-- Inline Collapsible Edit Pending Order Box -->
-                <div id="edit-box-ord-${oTicket}" class="${isOrdEditing ? '' : 'hidden'} p-2 rounded-sm bg-[#11131A] border border-[#1E2028] text-[10px] space-y-1.5 mt-1.5">
-                  <div class="flex items-center justify-between font-mono font-medium text-zinc-300 border-b border-[#1E2028] pb-1">
-                    <span class="text-[#D4AF37]">Modify Limit #${oTicket}</span>
+                <div id="edit-box-ord-${oTicket}" class="${isOrdEditing ? '' : 'hidden'} p-2 rounded bg-[#0E1017] border border-[#1C202E] text-[10px] space-y-1.5 mt-1.5">
+                  <div class="flex items-center justify-between font-mono font-medium text-zinc-300 border-b border-[#1C202E] pb-1">
+                    <span class="text-[#D4AF37] font-bold">Modify Limit #${oTicket}</span>
                     <button onclick="toggleEditOrder('${oTicket}')" class="text-zinc-500 hover:text-zinc-300 text-[11px] font-mono">✕</button>
                   </div>
                   <div class="grid grid-cols-3 gap-1 font-mono">
                     <div>
-                      <label class="text-[8px] text-zinc-500 block mb-0.5 uppercase tracking-wider font-sans">Price</label>
-                      <input id="input-price-ord-${oTicket}" type="number" step="0.1" value="${activeOrdPrice}" oninput="window.editingOrdPriceValues['${oTicket}']=this.value" class="w-full bg-[#090A0F] border border-[#1E2028] rounded-sm px-1 py-0.5 text-zinc-100 font-semibold focus:border-[#D4AF37]/60 focus:outline-none text-[10px] tabular-nums" />
+                      <label class="text-[8px] text-zinc-500 block mb-0.5 uppercase tracking-wider font-sans font-medium">Price</label>
+                      <input id="input-price-ord-${oTicket}" type="number" step="0.1" value="${activeOrdPrice}" oninput="window.editingOrdPriceValues['${oTicket}']=this.value" class="w-full bg-[#07080C] border border-[#1C202E] rounded px-1 py-0.5 text-zinc-100 font-semibold focus:border-[#D4AF37]/60 focus:outline-none text-[10px] tabular-nums" />
                     </div>
                     <div>
-                      <label class="text-[8px] text-zinc-500 block mb-0.5 uppercase tracking-wider font-sans">SL</label>
-                      <input id="input-sl-ord-${oTicket}" type="number" step="0.1" value="${activeOrdSl}" oninput="window.editingOrdSlValues['${oTicket}']=this.value" class="w-full bg-[#090A0F] border border-[#1E2028] rounded-sm px-1 py-0.5 text-zinc-100 font-semibold focus:border-rose-500/60 focus:outline-none text-[10px] tabular-nums" />
+                      <label class="text-[8px] text-zinc-500 block mb-0.5 uppercase tracking-wider font-sans font-medium">SL</label>
+                      <input id="input-sl-ord-${oTicket}" type="number" step="0.1" value="${activeOrdSl}" oninput="window.editingOrdSlValues['${oTicket}']=this.value" class="w-full bg-[#07080C] border border-[#1C202E] rounded px-1 py-0.5 text-zinc-100 font-semibold focus:border-rose-500/60 focus:outline-none text-[10px] tabular-nums" />
                     </div>
                     <div>
-                      <label class="text-[8px] text-zinc-500 block mb-0.5 uppercase tracking-wider font-sans">TP</label>
-                      <input id="input-tp-ord-${oTicket}" type="number" step="0.1" value="${activeOrdTp}" oninput="window.editingOrdTpValues['${oTicket}']=this.value" class="w-full bg-[#090A0F] border border-[#1E2028] rounded-sm px-1 py-0.5 text-zinc-100 font-semibold focus:border-emerald-500/60 focus:outline-none text-[10px] tabular-nums" />
+                      <label class="text-[8px] text-zinc-500 block mb-0.5 uppercase tracking-wider font-sans font-medium">TP</label>
+                      <input id="input-tp-ord-${oTicket}" type="number" step="0.1" value="${activeOrdTp}" oninput="window.editingOrdTpValues['${oTicket}']=this.value" class="w-full bg-[#07080C] border border-[#1C202E] rounded px-1 py-0.5 text-zinc-100 font-semibold focus:border-emerald-500/60 focus:outline-none text-[10px] tabular-nums" />
                     </div>
                   </div>
                   <div class="flex items-center space-x-1.5 pt-1">
-                    <button onclick="submitModifyOrder('${oTicket}')" class="flex-1 py-1 rounded-sm bg-[#D4AF37]/15 hover:bg-[#D4AF37]/25 text-[#D4AF37] border border-[#D4AF37]/30 font-mono font-semibold text-[10px] uppercase tracking-wider transition duration-150 ease-out">Save Limit Order</button>
-                    <button onclick="toggleEditOrder('${oTicket}')" class="px-2 py-1 rounded-sm bg-zinc-800 hover:bg-zinc-700 text-zinc-400 text-[10px] font-mono transition duration-150 ease-out">Cancel</button>
+                    <button onclick="submitModifyOrder('${oTicket}')" class="flex-1 py-1 rounded bg-[#D4AF37]/20 hover:bg-[#D4AF37]/30 text-[#D4AF37] border border-[#D4AF37]/40 font-mono font-bold text-[10px] uppercase tracking-wider transition">Save Limit Order</button>
+                    <button onclick="toggleEditOrder('${oTicket}')" class="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-400 text-[10px] font-mono transition">Cancel</button>
                   </div>
                 </div>
               </div>
@@ -1577,14 +1931,14 @@
       // 7c. Synchronize Chart Lines
       syncAllChartLines(data.positions || [], data.pending_orders || []);
 
-      // 7d. Institutional Planned Limits Engine Rendering
+      // 7d. Planned Limits Engine Rendering
       const isAutoLimits = (data.auto_limits_enabled !== false);
       const btnAutoLim = document.getElementById('btn-toggle-auto-limits');
       if (btnAutoLim) {
         btnAutoLim.innerText = isAutoLimits ? 'AUTO LIMITS: ON' : 'AUTO LIMITS: OFF';
         btnAutoLim.className = isAutoLimits
-          ? 'px-1.5 py-0.2 rounded-sm text-[9px] font-mono uppercase tracking-wider transition duration-150 ease-out bg-emerald-500/10 text-emerald-400 border border-emerald-500/25 hover:bg-emerald-500/20'
-          : 'px-1.5 py-0.2 rounded-sm text-[9px] font-mono uppercase tracking-wider transition duration-150 ease-out bg-zinc-800 text-zinc-500 border border-[#1E2028] hover:bg-zinc-700';
+          ? 'px-1.5 py-0.2 rounded text-[9px] font-mono uppercase tracking-wider transition duration-150 ease-out bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/25'
+          : 'px-1.5 py-0.2 rounded text-[9px] font-mono uppercase tracking-wider transition duration-150 ease-out bg-zinc-800 text-zinc-500 border border-[#1C202E] hover:bg-zinc-700';
       }
 
       if (data.planned_limits) {
@@ -1615,11 +1969,11 @@
             const st = pBuy.status || 'CALCULATING';
             buyStatus.innerText = st.replace(/_/g, ' ');
             if (st === 'ACTIVE_ON_BROKER') {
-              buyStatus.className = 'px-1.5 py-0.2 rounded-sm text-[8px] font-mono font-semibold uppercase bg-emerald-500/10 text-emerald-400 border border-emerald-500/25';
+              buyStatus.className = 'px-1.5 py-0.2 rounded text-[8px] font-mono font-bold uppercase bg-emerald-500/15 text-emerald-400 border border-emerald-500/30';
             } else if (st === 'READY_TO_STAGE') {
-              buyStatus.className = 'px-1.5 py-0.2 rounded-sm text-[8px] font-mono font-semibold uppercase bg-sky-500/10 text-sky-400 border border-sky-500/25';
+              buyStatus.className = 'px-1.5 py-0.2 rounded text-[8px] font-mono font-bold uppercase bg-sky-500/15 text-sky-400 border border-sky-500/30';
             } else {
-              buyStatus.className = 'px-1.5 py-0.2 rounded-sm text-[8px] font-mono uppercase bg-zinc-900 border border-[#1E2028] text-zinc-500';
+              buyStatus.className = 'px-1.5 py-0.2 rounded text-[8px] font-mono uppercase bg-zinc-900 border border-[#1C202E] text-zinc-500';
             }
           }
         }
@@ -1647,11 +2001,11 @@
             const st = pSell.status || 'CALCULATING';
             sellStatus.innerText = st.replace(/_/g, ' ');
             if (st === 'ACTIVE_ON_BROKER') {
-              sellStatus.className = 'px-1.5 py-0.2 rounded-sm text-[8px] font-mono font-semibold uppercase bg-rose-500/10 text-rose-400 border border-rose-500/25';
+              sellStatus.className = 'px-1.5 py-0.2 rounded text-[8px] font-mono font-bold uppercase bg-rose-500/15 text-rose-400 border border-rose-500/30';
             } else if (st === 'READY_TO_STAGE') {
-              sellStatus.className = 'px-1.5 py-0.2 rounded-sm text-[8px] font-mono font-semibold uppercase bg-sky-500/10 text-sky-400 border border-sky-500/25';
+              sellStatus.className = 'px-1.5 py-0.2 rounded text-[8px] font-mono font-bold uppercase bg-sky-500/15 text-sky-400 border border-sky-500/30';
             } else {
-              sellStatus.className = 'px-1.5 py-0.2 rounded-sm text-[8px] font-mono uppercase bg-zinc-900 border border-[#1E2028] text-zinc-500';
+              sellStatus.className = 'px-1.5 py-0.2 rounded text-[8px] font-mono uppercase bg-zinc-900 border border-[#1C202E] text-zinc-500';
             }
           }
         }
@@ -1671,7 +2025,7 @@
         const headerPnl = document.getElementById('header-net-pnl');
         if (headerPnl) {
           headerPnl.innerText = `${totalPnl >= 0 ? '+' : ''}$${totalPnl.toFixed(2)}`;
-          headerPnl.className = `font-semibold tabular-nums ${totalPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`;
+          headerPnl.className = `font-bold tabular-nums text-xs ${totalPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`;
         }
 
         const statWr = document.getElementById('stat-winrate');
@@ -1683,7 +2037,7 @@
         const statTotalPnl = document.getElementById('stat-total-pnl');
         if (statTotalPnl) {
           statTotalPnl.innerText = `${totalPnl >= 0 ? '+' : ''}$${totalPnl.toFixed(2)}`;
-          statTotalPnl.className = `text-sm font-semibold tabular-nums ${totalPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`;
+          statTotalPnl.className = `text-sm font-bold tabular-nums ${totalPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`;
         }
 
         const statPf = document.getElementById('stat-pf');
@@ -1693,7 +2047,7 @@
         if (statTodayPnl) {
           const tPnl = s.today_pnl || 0.0;
           statTodayPnl.innerText = `${tPnl >= 0 ? '+' : ''}$${tPnl.toFixed(2)} (${s.today_trades || 0} trades)`;
-          statTodayPnl.className = `text-xs font-semibold mt-0.5 block tabular-nums ${tPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`;
+          statTodayPnl.className = `text-xs font-bold mt-0.5 block tabular-nums ${tPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`;
         }
 
         const statTodayWr = document.getElementById('stat-today-wr');
@@ -1717,11 +2071,11 @@
                 <tr class="hover:bg-white/[0.02] transition duration-150 ease-out group" id="trade-row-${h.ticket}">
                   <td class="p-1.5 text-zinc-500 text-[10px] whitespace-nowrap">${h.close_time_str || '--:--:--'}</td>
                   <td class="p-1.5 whitespace-nowrap">
-                    <span class="font-semibold ${isBuy ? 'text-emerald-400' : 'text-rose-400'}">${dirStr}</span>
-                    <span class="text-zinc-400 text-[10px]">${h.volume}</span>
+                    <span class="font-bold ${isBuy ? 'text-emerald-400' : 'text-rose-400'}">${dirStr}</span>
+                    <span class="text-zinc-400 text-[10px] font-semibold">${h.volume}</span>
                   </td>
                   <td class="p-1.5 text-zinc-300 text-[10px] whitespace-nowrap">${Number(h.open_price).toFixed(2)} &rarr; ${Number(h.close_price).toFixed(2)}</td>
-                  <td class="p-1.5 text-right font-semibold whitespace-nowrap ${pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}">
+                  <td class="p-1.5 text-right font-bold whitespace-nowrap ${pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}">
                     ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}
                     <span class="text-[9px] block text-zinc-500 font-normal">${pnlR >= 0 ? '+' : ''}${pnlR.toFixed(2)}R</span>
                   </td>
@@ -1729,7 +2083,7 @@
                     ${h.close_reason || 'Manual'}
                   </td>
                   <td class="p-1.5 text-center whitespace-nowrap">
-                    <button onclick="deleteTrade(${h.ticket})" title="Delete trade #${h.ticket}" class="text-zinc-600 hover:text-rose-400 hover:bg-rose-950/40 px-1 py-0.5 rounded-sm text-[10px] transition duration-150 ease-out">✕</button>
+                    <button onclick="deleteTrade(${h.ticket})" title="Delete trade #${h.ticket}" class="text-zinc-600 hover:text-rose-400 hover:bg-rose-950/40 px-1 py-0.5 rounded text-[10px] transition duration-150 ease-out">✕</button>
                   </td>
                 </tr>
               `;
@@ -1754,8 +2108,8 @@
       if (btnToggle) {
         btnToggle.innerText = allowTraj ? 'PRE-NEWS: ON' : 'PRE-NEWS: OFF';
         btnToggle.className = allowTraj
-          ? 'px-2 py-0.5 rounded-sm text-[10px] font-mono font-semibold uppercase transition duration-150 ease-out bg-[#151821] text-zinc-300 border border-[#1E2028] hover:border-zinc-700'
-          : 'px-2 py-0.5 rounded-sm text-[10px] font-mono uppercase transition duration-150 ease-out bg-zinc-900 text-zinc-600 border border-[#1E2028] hover:bg-zinc-800';
+          ? 'px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase transition duration-150 ease-out bg-[#141722] text-zinc-300 border border-[#1C202E] hover:border-zinc-700'
+          : 'px-2 py-0.5 rounded text-[10px] font-mono uppercase transition duration-150 ease-out bg-zinc-900 text-zinc-600 border border-[#1C202E] hover:bg-zinc-800';
       }
       if (traj && traj.active && trajBanner) {
         trajBanner.classList.remove('hidden');
@@ -1764,11 +2118,11 @@
         if (badge) {
           badge.innerText = `${traj.trajectory_bias} (${traj.confidence_pct}%)`;
           if (traj.trajectory_bias === 'BUY') {
-            badge.className = 'px-1.5 py-0.5 rounded-sm text-[10px] font-mono font-semibold uppercase bg-emerald-500/10 text-emerald-400 border border-emerald-500/25';
+            badge.className = 'px-1.5 py-0.5 rounded text-[10px] font-mono font-bold uppercase bg-emerald-500/15 text-emerald-400 border border-emerald-500/30';
           } else if (traj.trajectory_bias === 'SELL') {
-            badge.className = 'px-1.5 py-0.5 rounded-sm text-[10px] font-mono font-semibold uppercase bg-rose-500/10 text-rose-400 border border-rose-500/25';
+            badge.className = 'px-1.5 py-0.5 rounded text-[10px] font-mono font-bold uppercase bg-rose-500/15 text-rose-400 border border-rose-500/30';
           } else {
-            badge.className = 'px-1.5 py-0.5 rounded-sm text-[10px] font-mono font-semibold uppercase bg-zinc-800 text-zinc-300 border border-[#1E2028]';
+            badge.className = 'px-1.5 py-0.5 rounded text-[10px] font-mono font-bold uppercase bg-zinc-800 text-zinc-300 border border-[#1C202E]';
           }
         }
         const evName = document.getElementById('traj-event-name');
@@ -1809,7 +2163,7 @@
       }
     }
 
-    // Slider user input handlers with anti-jitter debouncing and lock-out
+    // Slider user input handlers with anti-jitter debouncing
     function onSliderInput(val) {
       isUserDraggingSlider = true;
       sliderDragLockUntil = Date.now() + 2000;
@@ -1840,7 +2194,7 @@
           const scrollerStatus = document.getElementById('badge-scroller-status');
           if (scrollerStatus) {
             scrollerStatus.innerText = 'MANUAL';
-            scrollerStatus.className = 'px-1.5 py-0.5 rounded-sm text-[9px] font-mono uppercase tracking-wider bg-[#D4AF37]/10 text-[#D4AF37] border border-[#D4AF37]/25';
+            scrollerStatus.className = 'px-1.5 py-0.5 rounded text-[9px] font-mono uppercase tracking-wider bg-[#D4AF37]/15 text-[#D4AF37] border border-[#D4AF37]/30 font-semibold';
           }
         }
       } catch (e) {
@@ -1926,8 +2280,8 @@
       ['all', 'major', 'headlines'].forEach(t => {
         const btn = document.getElementById(`btn-tab-calendar-${t}`) || document.getElementById(`btn-tab-${t}`);
         if (btn) {
-          if (t === tab) btn.className = 'px-2 py-0.5 rounded-sm bg-zinc-800 text-zinc-100 border border-zinc-700/60 font-semibold uppercase tracking-wider text-[9px]';
-          else btn.className = 'px-2 py-0.5 rounded-sm text-zinc-500 hover:text-zinc-300 uppercase tracking-wider text-[9px]';
+          if (t === tab) btn.className = 'px-2 py-0.5 rounded bg-zinc-800 text-zinc-100 border border-zinc-700/60 font-bold uppercase tracking-wider text-[9px]';
+          else btn.className = 'px-2 py-0.5 rounded text-zinc-500 hover:text-zinc-300 uppercase tracking-wider text-[9px]';
         }
       });
 
@@ -1950,13 +2304,13 @@
         const streamDiv = document.getElementById('headlines-stream');
         if (news.headlines && news.headlines.length > 0) {
           streamDiv.innerHTML = news.headlines.map(h => `
-            <div class="bg-[#090A0F] p-2 rounded-sm border border-[#1E2028] space-y-1">
+            <div class="bg-[#07080C] p-2 rounded border border-[#1C202E] space-y-1">
               <div class="flex items-center justify-between text-[10px] font-mono">
                 <span class="text-zinc-500">${h.source} &bull; ${h.local_time_str}</span>
-                <span class="px-1.5 py-0.2 rounded-sm text-[8px] font-semibold uppercase ${
-                  h.sentiment === 'BULLISH_GOLD' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/25' :
-                  h.sentiment === 'BEARISH_GOLD' ? 'bg-rose-500/10 text-rose-400 border border-rose-500/25' :
-                  'bg-zinc-900 text-zinc-500 border border-[#1E2028]'
+                <span class="px-1.5 py-0.2 rounded text-[8px] font-bold uppercase ${
+                  h.sentiment === 'BULLISH_GOLD' ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30' :
+                  h.sentiment === 'BEARISH_GOLD' ? 'bg-rose-500/15 text-rose-400 border border-rose-500/30' :
+                  'bg-zinc-900 text-zinc-500 border border-[#1C202E]'
                 }">${h.sentiment_badge}</span>
               </div>
               <div class="text-[11px] font-normal text-zinc-200 leading-tight font-sans">${h.title}</div>
@@ -1976,21 +2330,105 @@
           tbody.innerHTML = events.map(e => `
             <tr class="hover:bg-white/[0.02] transition duration-150 ease-out ${e.status === 'LIVE NOW' ? 'bg-rose-950/20 font-semibold' : ''}">
               <td class="p-1.5 text-zinc-200 font-mono">${e.local_time_hm}</td>
-              <td class="p-1.5 text-zinc-400 font-mono">${e.currency}</td>
+              <td class="p-1.5 text-zinc-400 font-mono font-medium">${e.currency}</td>
               <td class="p-1.5 font-mono ${
-                e.impact === 'HIGH' ? 'text-rose-400' :
-                e.impact === 'MEDIUM' ? 'text-[#D4AF37]' : 'text-zinc-400'
+                e.impact === 'HIGH' ? 'text-rose-400 font-bold' :
+                e.impact === 'MEDIUM' ? 'text-[#D4AF37] font-semibold' : 'text-zinc-400'
               }">${e.impact_badge}</td>
               <td class="p-1.5 text-zinc-200 font-sans max-w-[140px] truncate" title="${e.title}">${e.title}</td>
               <td class="p-1.5 text-right font-mono ${
-                e.status === 'LIVE NOW' ? 'text-rose-400' :
-                e.status === 'PASSED' ? 'text-zinc-600' : 'text-sky-400'
+                e.status === 'LIVE NOW' ? 'text-rose-400 font-bold' :
+                e.status === 'PASSED' ? 'text-zinc-600' : 'text-sky-400 font-medium'
               }">${e.relative_time}</td>
             </tr>
           `).join('');
         } else {
           tbody.innerHTML = '<tr><td colspan="5" class="p-3 text-center text-zinc-600 font-mono text-xs">No scheduled events found.</td></tr>';
         }
+      }
+    }
+
+    // Synchronize Target Execution & Invalidation Lines on Chart
+    function syncTargetZoneLines() {
+      if (!candleSeries) return;
+      const pb = window.lastPredictiveBrain;
+      const tz = (pb && pb.target_zone) || {};
+      
+      if (!showZones || !tz.invalidation_level) {
+        if (chartLines['zone_inval']) {
+          candleSeries.removePriceLine(chartLines['zone_inval']);
+          delete chartLines['zone_inval'];
+        }
+        if (chartLines['zone_opt_min']) {
+          candleSeries.removePriceLine(chartLines['zone_opt_min']);
+          delete chartLines['zone_opt_min'];
+        }
+        if (chartLines['zone_opt_max']) {
+          candleSeries.removePriceLine(chartLines['zone_opt_max']);
+          delete chartLines['zone_opt_max'];
+        }
+        return;
+      }
+
+      const isBuy = (tz.direction || (pb.p_bull >= pb.p_bear ? 'BUY' : 'SELL')) === 'BUY';
+
+      if (tz.invalidation_level > 0) {
+        try {
+          if (!chartLines['zone_inval']) {
+            chartLines['zone_inval'] = candleSeries.createPriceLine({
+              price: tz.invalidation_level,
+              color: '#EF4444',
+              lineStyle: 0,
+              lineWidth: 1,
+              title: `INVALIDATION @ ${tz.invalidation_level.toFixed(2)}`,
+              axisLabelVisible: true,
+            });
+          } else {
+            chartLines['zone_inval'].applyOptions({
+              price: tz.invalidation_level,
+              color: '#EF4444',
+              title: `INVALIDATION @ ${tz.invalidation_level.toFixed(2)}`,
+            });
+          }
+        } catch (e) {}
+      }
+
+      if (tz.optimal_entry_min > 0 && tz.optimal_entry_max > 0) {
+        try {
+          if (!chartLines['zone_opt_min']) {
+            chartLines['zone_opt_min'] = candleSeries.createPriceLine({
+              price: tz.optimal_entry_min,
+              color: isBuy ? '#10B981' : '#F59E0B',
+              lineStyle: 2,
+              lineWidth: 1,
+              title: `ENTRY ZONE MIN @ ${tz.optimal_entry_min.toFixed(2)}`,
+              axisLabelVisible: false,
+            });
+          } else {
+            chartLines['zone_opt_min'].applyOptions({
+              price: tz.optimal_entry_min,
+              color: isBuy ? '#10B981' : '#F59E0B',
+              title: `ENTRY ZONE MIN @ ${tz.optimal_entry_min.toFixed(2)}`,
+            });
+          }
+
+          if (!chartLines['zone_opt_max']) {
+            chartLines['zone_opt_max'] = candleSeries.createPriceLine({
+              price: tz.optimal_entry_max,
+              color: isBuy ? '#10B981' : '#F59E0B',
+              lineStyle: 2,
+              lineWidth: 1,
+              title: `ENTRY ZONE MAX @ ${tz.optimal_entry_max.toFixed(2)}`,
+              axisLabelVisible: false,
+            });
+          } else {
+            chartLines['zone_opt_max'].applyOptions({
+              price: tz.optimal_entry_max,
+              color: isBuy ? '#10B981' : '#F59E0B',
+              title: `ENTRY ZONE MAX @ ${tz.optimal_entry_max.toFixed(2)}`,
+            });
+          }
+        } catch (e) {}
       }
     }
 
@@ -2022,34 +2460,36 @@
           if (entryPrice > 0) {
             setOrUpdateLine(`pos_${t}_entry`, {
               price: entryPrice,
-              color: isBuy ? '#10B981' : '#F43F5E',
+              color: isBuy ? '#10B981' : '#EF4444',
               lineStyle: 2, // Dashed
               lineWidth: 1,
-              title: `${dirStr} #${t}`,
+              title: `${dirStr} ${p.volume || '0.01'} #${t} @ ${entryPrice.toFixed(2)}`,
               axisLabelVisible: true,
             });
           }
 
           const slPrice = Number(p.sl);
           if (slPrice > 0) {
+            const riskPts = Math.abs(entryPrice - slPrice);
             setOrUpdateLine(`pos_${t}_sl`, {
               price: slPrice,
-              color: '#F43F5E',
+              color: '#EF4444',
               lineStyle: 0, // Solid
               lineWidth: 1,
-              title: `SL #${t}`,
+              title: `SL #${t}: ${slPrice.toFixed(2)} (-${riskPts.toFixed(1)} pts)`,
               axisLabelVisible: true,
             });
           }
 
           const tpPrice = Number(p.tp);
           if (tpPrice > 0) {
+            const rewardPts = Math.abs(tpPrice - entryPrice);
             setOrUpdateLine(`pos_${t}_tp`, {
               price: tpPrice,
               color: '#10B981',
               lineStyle: 0, // Solid
               lineWidth: 1,
-              title: `TP #${t}`,
+              title: `TP #${t}: ${tpPrice.toFixed(2)} (+${rewardPts.toFixed(1)} pts)`,
               axisLabelVisible: true,
             });
           }
@@ -2069,7 +2509,7 @@
               color: '#D4AF37',
               lineStyle: 1, // Dotted
               lineWidth: 1,
-              title: `${ordType} #${t}`,
+              title: `${ordType} #${t} @ ${ordPrice.toFixed(2)}`,
               axisLabelVisible: true,
             });
           }
@@ -2078,10 +2518,10 @@
           if (slPrice > 0) {
             setOrUpdateLine(`ord_${t}_sl`, {
               price: slPrice,
-              color: '#F43F5E',
+              color: '#EF4444',
               lineStyle: 1, // Dotted
               lineWidth: 1,
-              title: `LMT SL #${t}`,
+              title: `LMT SL #${t}: ${slPrice.toFixed(2)}`,
               axisLabelVisible: true,
             });
           }
@@ -2093,11 +2533,18 @@
               color: '#10B981',
               lineStyle: 1, // Dotted
               lineWidth: 1,
-              title: `LMT TP #${t}`,
+              title: `LMT TP #${t}: ${tpPrice.toFixed(2)}`,
               axisLabelVisible: true,
             });
           }
         });
+      }
+
+      // Preserve zone lines in activeKeys if enabled
+      if (showZones) {
+        if (chartLines['zone_inval']) activeKeys.add('zone_inval');
+        if (chartLines['zone_opt_min']) activeKeys.add('zone_opt_min');
+        if (chartLines['zone_opt_max']) activeKeys.add('zone_opt_max');
       }
 
       // 3. Remove lines that are no longer active
@@ -2136,7 +2583,6 @@
     }
 
     async function cancelAllLimitOrders() {
-      if (!confirm('Cancel all pending limit orders on MT5?')) return;
       try {
         appendLog('EXECUTION', 'Canceling all pending limit orders...');
         const res = await fetch('/api/actions/cancel_all_limits', { method: 'POST' });
@@ -2156,6 +2602,7 @@
 
     function appendLog(type, msg) {
       const feed = document.getElementById('log-feed');
+      if (!feed) return;
       const time = new Date().toLocaleTimeString();
       const div = document.createElement('div');
       div.className = 'text-zinc-300 font-mono text-[10px] leading-relaxed';
@@ -2172,8 +2619,8 @@
       });
       ['auto', 'confirm', 'scanner'].forEach(m => {
         const btn = document.getElementById(`btn-mode-${m}`);
-        if (m === mode.replace('full_', '')) btn.className = 'px-2 py-0.5 rounded-sm bg-[#D4AF37]/15 text-[#D4AF37] border border-[#D4AF37]/30 font-semibold tracking-wider transition duration-150 ease-out';
-        else btn.className = 'px-2 py-0.5 rounded-sm text-zinc-500 hover:text-zinc-300 tracking-wider transition duration-150 ease-out';
+        if (m === mode.replace('full_', '')) btn.className = 'px-2 py-0.5 rounded bg-[#D4AF37]/15 text-[#D4AF37] border border-[#D4AF37]/30 font-bold tracking-wider transition duration-150 ease-out';
+        else btn.className = 'px-2 py-0.5 rounded text-zinc-500 hover:text-zinc-300 tracking-wider transition duration-150 ease-out';
       });
       appendLog('MODE', `Execution mode switched to ${mode.toUpperCase()}`);
     }
@@ -2213,9 +2660,9 @@
         );
         if (btn) {
           if (t === tab) {
-            btn.className = 'flex-1 py-1 rounded-sm bg-zinc-800 text-zinc-100 border border-zinc-700/60 font-semibold uppercase tracking-wider transition duration-150 ease-out flex items-center justify-center space-x-1';
+            btn.className = 'flex-1 py-1 rounded bg-zinc-800 text-zinc-100 border border-zinc-700/60 font-bold uppercase tracking-wider transition duration-150 ease-out flex items-center justify-center space-x-1';
           } else {
-            btn.className = 'flex-1 py-1 rounded-sm text-zinc-500 hover:text-zinc-300 uppercase tracking-wider transition duration-150 ease-out flex items-center justify-center space-x-1';
+            btn.className = 'flex-1 py-1 rounded text-zinc-500 hover:text-zinc-300 uppercase tracking-wider transition duration-150 ease-out flex items-center justify-center space-x-1';
           }
         }
         if (pane) {
@@ -2238,6 +2685,9 @@
       window.lastPredictiveBrain = pb;
       lastBrainUpdateTime = Date.now();
 
+      // Sync zone lines on chart
+      syncTargetZoneLines();
+
       // Heartbeat & Liveness
       const cycleEl = document.getElementById('brain-cycle-index');
       if (cycleEl) cycleEl.innerText = `#${pb.cycle_index || 0}`;
@@ -2252,13 +2702,13 @@
       if (statusPill) {
         statusPill.innerText = pb.verdict_badge || 'ACTIVE';
         if ((pb.status || '').includes('PULLBACK')) {
-          statusPill.className = 'px-2 py-0.5 rounded-sm bg-amber-500/10 text-amber-400 border border-amber-500/25 font-mono text-[10px] font-semibold uppercase tracking-wider';
+          statusPill.className = 'px-2 py-0.5 rounded bg-amber-500/15 text-amber-400 border border-amber-500/30 font-mono text-[10px] font-bold uppercase tracking-wider';
         } else if ((pb.status || '').includes('QUALIFIED')) {
-          statusPill.className = 'px-2 py-0.5 rounded-sm bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-mono text-[10px] font-semibold uppercase tracking-wider';
+          statusPill.className = 'px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 font-mono text-[10px] font-bold uppercase tracking-wider';
         } else if ((pb.status || '').includes('SHIELD')) {
-          statusPill.className = 'px-2 py-0.5 rounded-sm bg-rose-500/10 text-rose-400 border border-rose-500/25 font-mono text-[10px] font-semibold uppercase tracking-wider';
+          statusPill.className = 'px-2 py-0.5 rounded bg-rose-500/15 text-rose-400 border border-rose-500/30 font-mono text-[10px] font-bold uppercase tracking-wider';
         } else {
-          statusPill.className = 'px-2 py-0.5 rounded-sm bg-sky-500/10 text-sky-400 border border-sky-500/25 font-mono text-[10px] font-semibold uppercase tracking-wider';
+          statusPill.className = 'px-2 py-0.5 rounded bg-sky-500/15 text-sky-400 border border-sky-500/30 font-mono text-[10px] font-bold uppercase tracking-wider';
         }
       }
 
@@ -2300,14 +2750,14 @@
       if (vwapEl) {
         const diff = pb.vwap_deviation || 0;
         vwapEl.innerText = `${diff >= 0 ? '+' : ''}${diff.toFixed(2)} pts`;
-        vwapEl.className = Math.abs(diff) > 2.0 ? 'text-amber-400 tabular-nums font-semibold' : 'text-zinc-200 tabular-nums font-semibold';
+        vwapEl.className = Math.abs(diff) > 2.0 ? 'text-amber-400 tabular-nums font-bold' : 'text-zinc-200 tabular-nums font-bold';
       }
 
       const stochEl = document.getElementById('brain-stoch-k');
       if (stochEl) {
         const k = pb.stoch_rsi_k || 50;
         stochEl.innerText = k.toFixed(1);
-        stochEl.className = (k > 70 || k < 30) ? 'text-amber-400 tabular-nums font-semibold' : 'text-zinc-200 tabular-nums font-semibold';
+        stochEl.className = (k > 70 || k < 30) ? 'text-amber-400 tabular-nums font-bold' : 'text-zinc-200 tabular-nums font-bold';
       }
 
       const kaufEl = document.getElementById('brain-kaufman-er');
@@ -2324,12 +2774,12 @@
       if (ens) {
         if (ensBiasEl) {
           ensBiasEl.innerText = `${ens.ensemble_bias || 'NEUTRAL'} (${Math.round((ens.ensemble_confidence || 0.5) * 100)}%)`;
-          ensBiasEl.className = ens.ensemble_bias === 'BUY' ? 'text-emerald-400 font-semibold' : (ens.ensemble_bias === 'SELL' ? 'text-rose-400 font-semibold' : 'text-zinc-400 font-semibold');
+          ensBiasEl.className = ens.ensemble_bias === 'BUY' ? 'text-emerald-400 font-bold' : (ens.ensemble_bias === 'SELL' ? 'text-rose-400 font-bold' : 'text-zinc-400 font-bold');
         }
         if (ensOfiEl) {
           const delta = ens.delta_ratio_60s || 0;
           ensOfiEl.innerText = `${delta >= 0 ? '+' : ''}${delta.toFixed(2)}`;
-          ensOfiEl.className = delta > 0.20 ? 'text-emerald-400 tabular-nums font-semibold' : (delta < -0.20 ? 'text-rose-400 tabular-nums font-semibold' : 'text-zinc-200 tabular-nums font-semibold');
+          ensOfiEl.className = delta > 0.20 ? 'text-emerald-400 tabular-nums font-bold' : (delta < -0.20 ? 'text-rose-400 tabular-nums font-bold' : 'text-zinc-200 tabular-nums font-bold');
         }
         if (ensVolEl) {
           const fvgText = ens.active_fvg_type ? ` | ${ens.active_fvg_type} FVG` : '';
@@ -2350,10 +2800,10 @@
           const mist = exp.mistakes_recorded || 0;
           if (mist > 0) {
             expStatusEl.innerText = `${mist} MISTAKE CLUSTERS`;
-            expStatusEl.className = 'text-amber-400 font-semibold text-[9px] truncate';
+            expStatusEl.className = 'text-amber-400 font-bold text-[9px] truncate';
           } else {
             expStatusEl.innerText = 'ADAPTIVE REFLEX';
-            expStatusEl.className = 'text-emerald-400 font-semibold text-[9px] truncate';
+            expStatusEl.className = 'text-emerald-400 font-bold text-[9px] truncate';
           }
         }
         if (expClustersEl) {
@@ -2365,19 +2815,19 @@
       const gatesContainer = document.getElementById('brain-gates-container');
       if (gatesContainer && pb.gates && pb.gates.length > 0) {
         gatesContainer.innerHTML = pb.gates.map(g => {
-          let badgeClass = 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25';
-          if (g.status === 'WAITING') badgeClass = 'bg-amber-500/10 text-amber-400 border-amber-500/25';
-          else if (g.status === 'BLOCKED') badgeClass = 'bg-rose-500/10 text-rose-400 border-rose-500/25';
+          let badgeClass = 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30';
+          if (g.status === 'WAITING') badgeClass = 'bg-amber-500/15 text-amber-400 border-amber-500/30';
+          else if (g.status === 'BLOCKED') badgeClass = 'bg-rose-500/15 text-rose-400 border-rose-500/30';
 
           return `
-            <div class="flex items-center justify-between py-0.5 border-b border-[#1E2028]/40 last:border-b-0">
+            <div class="flex items-center justify-between py-1 border-b border-[#1C202E]/60 last:border-b-0">
               <div class="flex items-center space-x-2 truncate">
-                <span class="px-1.5 py-0.2 rounded-sm text-[9px] font-semibold uppercase tracking-wider border ${badgeClass}">
+                <span class="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase tracking-wider border ${badgeClass}">
                   ${g.status}
                 </span>
-                <span class="text-zinc-300 font-medium">${g.name}</span>
+                <span class="text-zinc-200 font-semibold">${g.name}</span>
               </div>
-              <span class="text-zinc-500 text-[9px] truncate max-w-[260px] ml-2 text-right">${g.detail}</span>
+              <span class="text-zinc-400 text-[9px] truncate max-w-[260px] ml-2 text-right font-sans">${g.detail}</span>
             </div>
           `;
         }).join('');
@@ -2396,10 +2846,10 @@
           return `
             <tr class="hover:bg-zinc-900/40">
               <td class="py-1 text-zinc-400">${h.time || ''}</td>
-              <td class="py-1 text-zinc-200 font-medium">${h.badge || h.status}</td>
-              <td class="py-1 text-sky-400">${h.p_win || '--'}</td>
+              <td class="py-1 text-zinc-200 font-bold">${h.badge || h.status}</td>
+              <td class="py-1 text-sky-400 font-semibold">${h.p_win || '--'}</td>
               <td class="py-1 text-emerald-400 font-bold">${h.ev || '--'}</td>
-              <td class="py-1 text-zinc-400 text-[9px] truncate max-w-xs">${h.summary || ''}</td>
+              <td class="py-1 text-zinc-400 text-[9px] truncate max-w-xs font-sans">${h.summary || ''}</td>
             </tr>
           `;
         }).join('');
@@ -2443,13 +2893,13 @@
       if (actionBadge) {
         actionBadge.innerText = pb.verdict_badge || 'ACTIVE SCANNING';
         if ((pb.status || '').includes('PULLBACK')) {
-          actionBadge.className = 'px-1.5 py-0.2 rounded-sm text-[8px] bg-amber-500/15 text-amber-300 border border-amber-500/30 uppercase font-semibold';
+          actionBadge.className = 'px-1.5 py-0.2 rounded text-[8px] bg-amber-500/20 text-amber-300 border border-amber-500/40 uppercase font-bold';
         } else if ((pb.status || '').includes('QUALIFIED')) {
-          actionBadge.className = 'px-1.5 py-0.2 rounded-sm text-[8px] bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 uppercase font-semibold';
+          actionBadge.className = 'px-1.5 py-0.2 rounded text-[8px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 uppercase font-bold';
         } else if ((pb.status || '').includes('SHIELD')) {
-          actionBadge.className = 'px-1.5 py-0.2 rounded-sm text-[8px] bg-rose-500/15 text-rose-300 border border-rose-500/30 uppercase font-semibold';
+          actionBadge.className = 'px-1.5 py-0.2 rounded text-[8px] bg-rose-500/20 text-rose-300 border border-rose-500/40 uppercase font-bold';
         } else {
-          actionBadge.className = 'px-1.5 py-0.2 rounded-sm text-[8px] bg-sky-500/15 text-sky-300 border border-sky-500/30 uppercase font-semibold';
+          actionBadge.className = 'px-1.5 py-0.2 rounded text-[8px] bg-sky-500/20 text-sky-300 border border-sky-500/40 uppercase font-bold';
         }
       }
 
@@ -2463,9 +2913,9 @@
 
       if (objEl) {
         if (pb.status === 'WAITING_FOR_PULLBACK') {
-          objEl.innerHTML = `Hunting high-probability <span class="font-bold text-amber-400">${dominantDir}</span> pullback into institutional discount zone <span class="text-zinc-100 font-semibold">[${tz.optimal_entry_min ? tz.optimal_entry_min.toFixed(2) : '--'} - ${tz.optimal_entry_max ? tz.optimal_entry_max.toFixed(2) : '--'}]</span>. Rejecting top/bottom chases.`;
+          objEl.innerHTML = `Hunting high-probability <span class="font-bold text-amber-400">${dominantDir}</span> pullback into institutional discount zone <span class="text-zinc-100 font-bold">[${tz.optimal_entry_min ? tz.optimal_entry_min.toFixed(2) : '--'} - ${tz.optimal_entry_max ? tz.optimal_entry_max.toFixed(2) : '--'}]</span>. Rejecting top/bottom chases.`;
         } else if (pb.status === 'QUALIFIED_TRADE') {
-          objEl.innerHTML = `Dispatched <span class="font-bold text-emerald-400">${dominantDir}</span> setup. All 7 institutional gates confirmed with Expected Value <span class="text-emerald-400 font-bold">${pb.expected_value_r >= 0 ? '+' : ''}${pb.expected_value_r.toFixed(2)}R</span>.`;
+          objEl.innerHTML = `Dispatched <span class="font-bold text-emerald-400">${dominantDir}</span> setup. All 8 institutional gates confirmed with Expected Value <span class="text-emerald-400 font-bold">${pb.expected_value_r >= 0 ? '+' : ''}${pb.expected_value_r.toFixed(2)}R</span>.`;
         } else if (pb.status === 'STAND_ASIDE_CHOP') {
           objEl.innerText = `Preserving capital. Market choppiness index is elevated (${(pb.chop_val || 50).toFixed(1)} > 60). Standing aside until clean directional breakout.`;
         } else if (pb.status === 'DEFENSIVE_SHIELD') {
@@ -2508,24 +2958,24 @@
           let deltaBadgeClass = 'bg-zinc-800 text-zinc-400 border border-zinc-700/50';
           if (f.delta > 0.01) {
             deltaClass = 'text-emerald-400 font-bold';
-            deltaBadgeClass = 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-semibold';
+            deltaBadgeClass = 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold';
           } else if (f.delta < -0.01) {
             deltaClass = 'text-rose-400 font-bold';
-            deltaBadgeClass = 'bg-rose-500/15 text-rose-300 border border-rose-500/30 font-semibold';
+            deltaBadgeClass = 'bg-rose-500/20 text-rose-300 border border-rose-500/40 font-bold';
           }
 
           return `
-            <tr class="hover:bg-[#151821]/60 transition-colors">
+            <tr class="hover:bg-[#141722]/60 transition-colors">
               <td class="py-1.5 pr-2">
-                <span class="text-zinc-200 font-semibold block text-[10px]">${f.name}</span>
+                <span class="text-zinc-100 font-bold block text-[10px]">${f.name}</span>
                 <span class="text-zinc-500 text-[9px] block leading-tight font-sans">${f.description}</span>
               </td>
               <td class="py-1.5 pr-2 text-zinc-400 text-[9px]">${f.category}</td>
               <td class="py-1.5 text-right font-mono text-zinc-400 text-[10px]">${f.prior_weight >= 0 ? '+' : ''}${f.prior_weight.toFixed(2)}</td>
-              <td class="py-1.5 text-right font-mono text-zinc-100 font-semibold text-[10px]">${f.learned_weight >= 0 ? '+' : ''}${f.learned_weight.toFixed(3)}</td>
+              <td class="py-1.5 text-right font-mono text-zinc-100 font-bold text-[10px]">${f.learned_weight >= 0 ? '+' : ''}${f.learned_weight.toFixed(3)}</td>
               <td class="py-1.5 text-right font-mono ${deltaClass} text-[10px]">${f.delta >= 0 ? '+' : ''}${f.delta.toFixed(3)}</td>
               <td class="py-1.5 text-center">
-                <span class="px-1.5 py-0.2 rounded-sm text-[8px] uppercase tracking-wider ${deltaBadgeClass}">
+                <span class="px-1.5 py-0.2 rounded text-[8px] uppercase tracking-wider ${deltaBadgeClass}">
                   ${f.status}
                 </span>
               </td>
@@ -2540,13 +2990,13 @@
         if (exp.mistakes && exp.mistakes.length > 0) {
           mistakesBox.innerHTML = exp.mistakes.map(m => {
             return `
-              <div class="p-1.5 bg-[#090A0F] rounded-sm border border-[#1E2028] text-[10px] space-y-1">
+              <div class="p-2 bg-[#07080C] rounded border border-[#1C202E] text-[10px] space-y-1 shadow-sm">
                 <div class="flex items-center justify-between">
                   <span class="font-bold text-rose-400">#${m.ticket} ${m.direction} (${m.pnl_r >= 0 ? '+' : ''}${m.pnl_r.toFixed(2)}R, $${m.pnl_usd.toFixed(2)})</span>
                   <span class="text-[9px] text-zinc-500 tabular-nums">${m.time_str || ''}</span>
                 </div>
-                <div class="text-zinc-300"><span class="text-zinc-500 font-semibold">Diagnosed Root Cause:</span> ${m.cause || 'Stop loss sweep'}</div>
-                <div class="text-amber-400/90 text-[9px] bg-amber-500/5 px-1.5 py-0.5 rounded-sm border border-amber-500/20">
+                <div class="text-zinc-300 font-sans"><span class="text-zinc-500 font-bold font-mono">Diagnosed Cause:</span> ${m.cause || 'Stop loss sweep'}</div>
+                <div class="text-amber-300 text-[9px] bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/30 font-sans">
                   🛡️ ${m.ai_correction}
                 </div>
               </div>
@@ -2554,7 +3004,7 @@
           }).join('');
         } else {
           mistakesBox.innerHTML = `
-            <div class="p-2 text-center text-zinc-600 text-[10px] border border-dashed border-[#1E2028] rounded-sm">
+            <div class="p-2 text-center text-zinc-600 text-[10px] border border-dashed border-[#1C202E] rounded">
               No mistake clusters recorded yet. Bot is operating cleanly on institutional prior gates.
             </div>
           `;
@@ -2567,13 +3017,13 @@
         if (exp.successes && exp.successes.length > 0) {
           successesBox.innerHTML = exp.successes.map(s => {
             return `
-              <div class="p-1.5 bg-[#090A0F] rounded-sm border border-[#1E2028] text-[10px] space-y-1">
+              <div class="p-2 bg-[#07080C] rounded border border-[#1C202E] text-[10px] space-y-1 shadow-sm">
                 <div class="flex items-center justify-between">
                   <span class="font-bold text-emerald-400">#${s.ticket} ${s.direction} (+${s.pnl_r.toFixed(2)}R, +$${s.pnl_usd.toFixed(2)})</span>
                   <span class="text-[9px] text-zinc-500 tabular-nums">${s.time_str || ''}</span>
                 </div>
-                <div class="text-zinc-300"><span class="text-zinc-500 font-semibold">Positive Driver:</span> ${s.driver || 'R:R discipline'}</div>
-                <div class="text-emerald-400/90 text-[9px] bg-emerald-500/5 px-1.5 py-0.5 rounded-sm border border-emerald-500/20">
+                <div class="text-zinc-300 font-sans"><span class="text-zinc-500 font-bold font-mono">Positive Driver:</span> ${s.driver || 'R:R discipline'}</div>
+                <div class="text-emerald-300 text-[9px] bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/30 font-sans">
                   ✨ ${s.ai_reinforcement}
                 </div>
               </div>
@@ -2581,7 +3031,7 @@
           }).join('');
         } else {
           successesBox.innerHTML = `
-            <div class="p-2 text-center text-zinc-600 text-[10px] border border-dashed border-[#1E2028] rounded-sm">
+            <div class="p-2 text-center text-zinc-600 text-[10px] border border-dashed border-[#1C202E] rounded">
               Awaiting closed profitable trades to record positive alpha drivers and synergistic patterns.
             </div>
           `;
@@ -2596,8 +3046,8 @@
           lessonsBox.innerHTML = lessons.map((les, idx) => {
             const isLatest = (idx === 0);
             return `
-              <div class="p-1.5 rounded-sm border ${isLatest ? 'bg-amber-500/5 border-amber-500/30 text-amber-200' : 'bg-[#090A0F] border-[#1E2028]/60 text-zinc-400'}">
-                <div class="flex items-center space-x-1.5">
+              <div class="p-1.5 rounded border ${isLatest ? 'bg-amber-500/10 border-amber-500/40 text-amber-200' : 'bg-[#07080C] border-[#1C202E] text-zinc-300'} font-sans">
+                <div class="flex items-center space-x-1.5 font-mono">
                   <span class="text-[9px] font-bold ${isLatest ? 'text-amber-400' : 'text-zinc-500'}">[REFLEX #${lessons.length - idx}]</span>
                   <span>${les}</span>
                 </div>
@@ -2608,17 +3058,17 @@
       }
     }
 
-    // Sub-second heartbeat timer update (e.g. "Updated 0.5s ago")
+    // Sub-second heartbeat timer update
     setInterval(() => {
       const agoEl = document.getElementById('brain-updated-ago');
       if (agoEl && lastBrainUpdateTime > 0) {
         const sec = ((Date.now() - lastBrainUpdateTime) / 1000).toFixed(1);
         if (sec < 2.5) {
           agoEl.innerText = `(Updated ${sec}s ago)`;
-          agoEl.className = 'text-emerald-400 text-[9px] tabular-nums font-medium';
+          agoEl.className = 'text-emerald-400 text-[9px] tabular-nums font-bold';
         } else if (sec < 6.0) {
           agoEl.innerText = `(Updated ${sec}s ago)`;
-          agoEl.className = 'text-amber-400 text-[9px] tabular-nums font-medium';
+          agoEl.className = 'text-amber-400 text-[9px] tabular-nums font-bold';
         } else {
           agoEl.innerText = `(Standby ${sec}s)`;
           agoEl.className = 'text-zinc-500 text-[9px] tabular-nums';
@@ -2852,47 +3302,6 @@
       } catch (err) {
         appendLog('ERROR', `Delete trade error: ${err.message}`);
         showToast(`Delete error: ${err.message}`, 'error');
-      }
-    }
-
-    async function confirmClearHistory() {
-      if (!confirm("Reset all trade history and recalculate win rate from zero? This will purge all past records.")) {
-        return;
-      }
-      try {
-        appendLog('HISTORY', 'Purging trade history and resetting win rate...');
-        const res = await fetch('/api/actions/clear_history', { method: 'POST' });
-        const data = await res.json();
-        if (data.status === 'OK') {
-          appendLog('HISTORY', 'History cleared. Metrics reset to zero.');
-          showToast('History cleared. Metrics reset.', 'info');
-          document.getElementById('stat-winrate-hero').innerText = 'WR: 0.0%';
-          document.getElementById('stat-winrate').innerText = '0.0%';
-          document.getElementById('stat-record').innerText = '(0W - 0L)';
-          document.getElementById('stat-total-pnl').innerText = '$0.00';
-          document.getElementById('stat-pf').innerText = 'PF 1.0';
-          document.getElementById('stat-today-pnl').innerText = '$0.00 (0 trades)';
-          document.getElementById('stat-today-wr').innerText = '0.0%';
-          const hWr = document.getElementById('header-winrate');
-          if (hWr) hWr.innerText = '0.0%';
-          const hPnl = document.getElementById('header-net-pnl');
-          if (hPnl) {
-            hPnl.innerText = '$0.00';
-            hPnl.className = 'font-semibold text-zinc-200 tabular-nums';
-          }
-          document.getElementById('history-count-badge').innerText = '0';
-          document.getElementById('trade-history-tbody').innerHTML = '<tr><td colspan="6" class="p-4 text-center text-zinc-600 font-mono text-xs">No closed trades yet. Recorded trades persist in SQLite forever.</td></tr>';
-          if (window.lastTelemetryData) {
-            window.lastTelemetryData.history = [];
-            window.lastTelemetryData.stats = data.stats || {};
-          }
-        } else {
-          appendLog('ERROR', `Failed to clear history: ${data.detail || data.message}`);
-          showToast(`Clear failed: ${data.detail || data.message}`, 'error');
-        }
-      } catch (err) {
-        appendLog('ERROR', `Clear history error: ${err.message}`);
-        showToast(`Clear error: ${err.message}`, 'error');
       }
     }
 
