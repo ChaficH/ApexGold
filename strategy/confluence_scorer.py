@@ -26,6 +26,7 @@ import numpy as np
 import pandas as pd
 
 from engine.indicators import TechnicalIndicators
+from strategy.predictive_brain import ApexPredictiveBrain
 
 logger = logging.getLogger("ApexGold.ConfluenceScorer")
 
@@ -173,6 +174,7 @@ class ConfluenceScorer:
             "tf_trends": self.tf_trends,
             "last_update": 0.0,
         }
+        self.predictive_brain = ApexPredictiveBrain()
 
     def set_mode(self, mode_name: str, pct: Optional[float] = None) -> None:
         """Switch active transmission mode or dial a continuous manual percentage."""
@@ -247,6 +249,8 @@ class ConfluenceScorer:
         status["aggressiveness_pct"] = self.get_active_aggressiveness_pct()
         status["threshold"] = self.get_active_threshold()
         status["tf_trends"] = self.tf_trends
+        if hasattr(self, "predictive_brain") and self.predictive_brain:
+            status["predictive_brain"] = self.predictive_brain.get_state()
         return status
 
     def evaluate_auto_brain(
@@ -262,6 +266,8 @@ class ConfluenceScorer:
         df_15m: Optional[pd.DataFrame] = None,
         df_5m: Optional[pd.DataFrame] = None,
         df_1m: Optional[pd.DataFrame] = None,
+        current_bid: Optional[float] = None,
+        current_ask: Optional[float] = None,
         **kwargs: Any,
     ) -> Dict[str, Any]:
         """
@@ -287,6 +293,29 @@ class ConfluenceScorer:
         # Update real-time mathematical directional bias across all 4 timeframes
         self.tf_trends = TechnicalIndicators.get_4tf_trends(dfs)
         self.auto_brain_state["tf_trends"] = self.tf_trends
+
+        # Continuous Sub-Second Predictive Model Engine Evaluation
+        df_5m = dfs.get("5m")
+        df_1m = dfs.get("1m")
+        if hasattr(self, "predictive_brain") and self.predictive_brain:
+            ref_bid = current_bid
+            if ref_bid is None:
+                if df_5m is not None and not df_5m.empty:
+                    ref_bid = float(df_5m["close"].iloc[-1])
+                elif df_1m is not None and not df_1m.empty:
+                    ref_bid = float(df_1m["close"].iloc[-1])
+                else:
+                    ref_bid = 2650.0
+            ref_ask = current_ask if current_ask is not None else (ref_bid + current_spread)
+            self.predictive_brain.evaluate_market(
+                symbol=symbol,
+                dfs=dfs,
+                current_bid=ref_bid,
+                current_ask=ref_ask,
+                spread=current_spread,
+                news_reactor=news_reactor,
+                now_ts=now,
+            )
 
         # Rate-limit evaluation updates to once every 2.0s to avoid UI jitter (skip if now_ts provided)
         last_up = self.auto_brain_state.get("last_update", 0.0)
@@ -617,6 +646,19 @@ class ConfluenceScorer:
             is_impulse_active=is_impulse_active,
             utc_timestamp=now_ts,
         )
+
+        # Gate signals using Predictive Brain Expected Value & Anti-Chasing Filter
+        if buy_signal and hasattr(self, "predictive_brain") and self.predictive_brain:
+            approved, p_reason = self.predictive_brain.filter_signal(buy_signal)
+            if not approved:
+                logger.info(f"[{symbol} BUY] Blocked by Predictive Model: {p_reason}")
+                buy_signal = None
+
+        if sell_signal and hasattr(self, "predictive_brain") and self.predictive_brain:
+            approved, p_reason = self.predictive_brain.filter_signal(sell_signal)
+            if not approved:
+                logger.info(f"[{symbol} SELL] Blocked by Predictive Model: {p_reason}")
+                sell_signal = None
 
         return SignalResult(buy_signal, sell_signal)
 

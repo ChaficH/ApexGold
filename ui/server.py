@@ -82,6 +82,7 @@ class ServerContext:
         self.mt5_algo_trading_allowed = True
         self.planned_limits: Dict[str, Any] = {}
         self.auto_limits_enabled: bool = False
+        self.predictive_brain: Optional[Any] = None
 
     def is_live_trading_active(self) -> bool:
         """Returns True only when live trading is explicitly enabled on a real MT5 broker adapter."""
@@ -299,6 +300,7 @@ async def get_status():
         "auto_limits_enabled": getattr(ctx, "auto_limits_enabled", False),
         "last_mt5_error": getattr(ctx, "last_mt5_error", ""),
         "planned_limits": getattr(ctx, "planned_limits", {}),
+        "predictive_brain": ctx.scorer.predictive_brain.get_state() if (ctx.scorer and hasattr(ctx.scorer, "predictive_brain")) else {},
         "pre_news_trajectory": ctx.news_reactor.evaluate_pre_news_trajectory(
             symbol=ctx.active_symbol,
             dfs={
@@ -309,6 +311,13 @@ async def get_status():
         ) if (ctx.news_reactor and hasattr(ctx.news_reactor, "evaluate_pre_news_trajectory")) else {},
     }
 
+
+@app.get("/api/predictive_brain")
+async def get_predictive_brain():
+    """Return real-time quantitative predictive model thinking state."""
+    if ctx.scorer and hasattr(ctx.scorer, "predictive_brain"):
+        return ctx.scorer.predictive_brain.get_state()
+    return {}
 
 
 @app.get("/api/news")
@@ -1465,6 +1474,7 @@ async def broadcast_loop():
                 "daily_stats": ctx.trade_manager.get_daily_status() if ctx.trade_manager else {},
                 "feed_logs": ctx.news_reactor.get_feed_logs(10) if ctx.news_reactor else [],
                 "planned_limits": getattr(ctx, "planned_limits", {}),
+                "predictive_brain": ctx.scorer.predictive_brain.get_state() if (ctx.scorer and hasattr(ctx.scorer, "predictive_brain")) else {},
             }
 
             await ws_manager.broadcast(packet)

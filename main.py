@@ -181,6 +181,8 @@ async def autonomous_trading_loop(
                     news_reactor=news_reactor,
                     symbol=cur_sym,
                     now_ts=now,
+                    current_bid=tick.bid,
+                    current_ask=tick.ask,
                 )
 
                 # Run 100-Point Confluence Scoring Engine
