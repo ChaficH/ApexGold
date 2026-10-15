@@ -398,9 +398,9 @@ class GoldRiskEngine:
         # Enforce profile max_lot_cap if specified
         if "max_lot_cap" in prof and prof["max_lot_cap"] > 0:
             lot = min(lot, prof["max_lot_cap"])
-        # Micro account safety clamp: max 0.08 lot for accounts <= $150
+        # Micro account safety clamp: max 0.05 lot for accounts <= $150
         if effective_budget <= 150.0:
-            lot = min(lot, 0.08)
+            lot = min(lot, 0.05)
         lot = round(lot, 2)
 
         # Final rounding re-verification

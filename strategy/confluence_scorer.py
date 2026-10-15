@@ -1424,9 +1424,23 @@ class ConfluenceScorer:
                 recent_high = max(h_1m[-5:])
                 raw_sl_dist = (recent_high + (0.40 if is_gold else 0.0004)) - current_price
 
+        # Anchor stop loss safely outside nearest institutional Fair Value Gap
+        if hasattr(self, "predictive_brain") and self.predictive_brain and self.predictive_brain.latest_evaluation:
+            ens = getattr(self.predictive_brain.latest_evaluation, "ensemble", None)
+            if ens and ens.get("nearest_fvg"):
+                fvg = ens["nearest_fvg"]
+                if direction == "BUY" and fvg.get("direction") == "BULL":
+                    fvg_sl_dist = current_price - (fvg["bottom"] - (0.50 if is_gold else 0.0005))
+                    if 2.50 <= fvg_sl_dist <= 7.00:
+                        raw_sl_dist = max(raw_sl_dist, fvg_sl_dist)
+                elif direction == "SELL" and fvg.get("direction") == "BEAR":
+                    fvg_sl_dist = (fvg["top"] + (0.50 if is_gold else 0.0005)) - current_price
+                    if 2.50 <= fvg_sl_dist <= 7.00:
+                        raw_sl_dist = max(raw_sl_dist, fvg_sl_dist)
+
         is_small_acc = getattr(self, "account_balance", None) is not None and self.account_balance <= 35.0
         min_sl = 2.50 if (is_gold and is_small_acc) else (2.80 if is_gold else 0.0015)
-        max_sl = 3.80 if (is_gold and is_small_acc) else (4.50 if is_gold else 0.0035)
+        max_sl = 3.80 if (is_gold and is_small_acc) else (6.50 if is_gold else 0.0035)
         risk_r_dist = float(np.clip(raw_sl_dist, min_sl, max_sl))
 
         # Sub-regime and trade parameters
