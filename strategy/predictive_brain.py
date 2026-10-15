@@ -132,10 +132,12 @@ class ApexPredictiveBrain:
             )
         return ""
 
-    def on_tick(self, bid: float, ask: float, now_ts: Optional[float] = None) -> None:
-        """Register live tick into the ensemble suite."""
+    def on_tick(self, bid: float, ask: float, now_ts: Optional[float] = None, symbol: str = "XAUUSD") -> None:
+        """Register live tick into the ensemble suite and active observer learner."""
         if hasattr(self, "ensemble_suite") and self.ensemble_suite:
             self.ensemble_suite.on_tick(bid, ask, now_ts)
+        if hasattr(self, "experience_learner") and self.experience_learner:
+            self.experience_learner.update_observer_ticks(symbol, bid, ask, now_ts)
 
     def _sigmoid(self, x: float) -> float:
         """Numerically stable sigmoid function."""
@@ -222,8 +224,10 @@ class ApexPredictiveBrain:
         if df_5m is None or len(df_5m) < 20:
             return self._build_standby_state(symbol, now, time_str, current_bid, current_ask, spread, "Warming up multi-timeframe historical candles...")
 
-        # Register live tick to ensemble order flow tracker
+        # Register live tick to ensemble order flow tracker and observer learner
         self.ensemble_suite.on_tick(current_bid, current_ask, now)
+        if hasattr(self, "experience_learner") and self.experience_learner:
+            self.experience_learner.update_observer_ticks(symbol, current_bid, current_ask, now)
 
         # ----------------------------------------------------------------------
         # 1. Multi-Timeframe Directional Bias & Trends
@@ -618,11 +622,12 @@ class ApexPredictiveBrain:
         })
 
         # Gate 5: Mathematical Edge Gate (EV >= +0.20R)
-        ev_pass = (expected_value_r >= 0.20 and p_win >= 0.55)
+        min_p_win = max(0.40, round(1.0 / (1.0 + max(1.5, target_rr)) + 0.08, 2))
+        ev_pass = (expected_value_r >= 0.20 and p_win >= min_p_win)
         gates.append({
             "name": "Mathematical Edge (EV >= +0.20R)",
             "status": "PASS" if ev_pass else "WAITING",
-            "detail": f"Quant ML P(Win): {p_win * 100:.1f}% | Expected Value: {expected_value_r:+.2f}R (Min: +0.20R)",
+            "detail": f"Quant ML P(Win): {p_win * 100:.1f}% (Min Req: {min_p_win*100:.0f}%) | Expected Value: {expected_value_r:+.2f}R (Min: +0.20R)",
             "passed": ev_pass,
         })
 
@@ -921,6 +926,40 @@ class ApexPredictiveBrain:
                 },
             }
 
+        # Continuous Observer / Counterfactual Learning:
+        # Record shadow candidate setup when standing aside or waiting for pullback so the AI
+        # continuously studies market follow-through and learns from reality even when not in a trade.
+        if (
+            hasattr(self, "experience_learner")
+            and self.experience_learner
+            and len(positions) == 0
+            and status in ["WAITING_FOR_PULLBACK", "HUNTING_SETUP", "WAITING_FOR_ALIGNMENT"]
+        ):
+            target_p = buy_target if dominant_dir == "BUY" else sell_target
+            inval_p = buy_inval if dominant_dir == "BUY" else sell_inval
+            try:
+                self.experience_learner.record_shadow_candidate(
+                    symbol=symbol,
+                    direction=dominant_dir,
+                    reference_price=current_bid,
+                    target_price=target_p,
+                    invalidation_price=inval_p,
+                    target_rr=target_rr,
+                    gate_block_reason=verdict_badge,
+                    context={
+                        "candle_pos_5m": candle_pos_5m,
+                        "vwap_deviation": vwap_diff,
+                        "stoch_rsi_k": stoch_k,
+                        "kaufman_er": efficiency_ratio,
+                        "r_squared": r_squared,
+                        "order_flow_delta": float(ensemble_telemetry.delta_ratio_60s if ensemble_telemetry else 0.0),
+                        "is_zone_reversal": 0.0,
+                    },
+                    now=now,
+                )
+            except Exception as e:
+                logger.debug(f"Observer setup record error: {e}")
+
         # Human-Readable Narrative Thinking
         narrative = self._generate_narrative_thinking(
             time_str=time_str,
@@ -1111,7 +1150,17 @@ class ApexPredictiveBrain:
             mistakes = exp_info.get("mistakes_recorded", 0)
             successes = exp_info.get("successes_recorded", 0)
             lesson = exp_info.get("last_lesson", "Institutional prior weights active. Calibrated on multi-month historical regimes.")
+            obs_stats = exp_info.get("observer_stats", {})
+            obs_setups = obs_stats.get("setups_observed", 0)
+            obs_missed = obs_stats.get("missed_expansions_learned", 0)
+            obs_avoided = obs_stats.get("avoided_traps_confirmed", 0)
+            obs_active = exp_info.get("active_shadow_setups_count", 0)
+            obs_reflection = exp_info.get("latest_observer_reflection", "")
+
             lines.append(f"• Continual Experience Memory Bank: {trades_analyzed} Trades Studied ({wins}W / {losses}L) | Mistake Memory: {mistakes} Vectors | Success Synergy: {successes} Signatures")
+            lines.append(f"• Observer / Counterfactual Reflex: {obs_setups} Passive Setups Monitored ({obs_active} Active) | {obs_missed} Missed Moves Studied | {obs_avoided} Traps Avoided Confirmed")
+            if obs_reflection:
+                lines.append(f"• Observer Empirical Reflex: \"{obs_reflection}\"")
             lines.append(f"• Latest Institutional Reflection: \"{lesson}\"")
             if exp_eval and getattr(exp_eval, "mistake_penalty", 0.0) > 0.03:
                 lines.append(f"⚠️ Active Mistake Reflex: -{exp_eval.mistake_penalty*100:.1f}% confidence damping applied (matches past failure vector)")
@@ -1285,8 +1334,9 @@ class ApexPredictiveBrain:
         dominant_dir = "BUY" if self.latest_evaluation.p_bull >= self.latest_evaluation.p_bear else "SELL"
         sig_dir = getattr(signal, "direction", dominant_dir)
 
-        # Anti-chasing veto
-        if self.latest_evaluation.status == "WAITING_FOR_PULLBACK":
+        # Anti-chasing veto: Only vetoes signals in the overextended dominant direction.
+        # Opposing mean-reversion scalps or supply/demand zone reversals are encouraged.
+        if self.latest_evaluation.status == "WAITING_FOR_PULLBACK" and sig_dir == dominant_dir:
             return False, f"Predictive Model Veto: Price is extended in {dominant_dir} direction. Waiting for pullback (EV: {ev:+.2f}R < +0.25R)"
 
         # Anti-counter-trend veto: if macro direction is strong (>= 65%) opposing the signal
@@ -1317,7 +1367,12 @@ class ApexPredictiveBrain:
             if exp_cand.veto:
                 return False, f"Predictive Model Experience Learner Veto: {exp_cand.veto_reason}"
 
-        if ev < 0.20 or p_win < 0.55:
-            return False, f"Predictive Model Veto: Sub-optimal expected value (EV: {ev:+.2f}R, P_win: {p_win*100:.1f}%)"
+        target_rr = getattr(signal, "target_rr", 3.0)
+        # Dynamically calculate minimum win rate requirement based on target R:R
+        # For high R:R (e.g. 3.0R - 4.5R), breakeven is 22%-25%. We require EV >= +0.20R and Win Rate >= min_p_win.
+        min_p_win = max(0.40, round(1.0 / (1.0 + max(1.5, target_rr)) + 0.08, 2))
+
+        if ev < 0.20 or p_win < min_p_win:
+            return False, f"Predictive Model Veto: Sub-optimal expected value (EV: {ev:+.2f}R, P_win: {p_win*100:.1f}%, Req P_win: {min_p_win*100:.0f}%)"
 
         return True, f"Predictive Model Approved: EV = {ev:+.2f}R, P_win = {p_win*100:.1f}%"

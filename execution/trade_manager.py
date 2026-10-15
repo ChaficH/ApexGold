@@ -1528,9 +1528,12 @@ class TradeManager:
            cut before full -1.0R / -2.0R SL.
         """
         # 1. Enforce minimum hold time: wait it out, never open and close trades directly on noise!
+        # BUT: Always permit rapid profit banking if profit is already substantial (>= 0.35R or >= 2.20 pts on Gold)
         hold_time = now - pos.entry_time
         min_hold = getattr(self, "min_hold_time_seconds", 90.0)
-        if hold_time < min_hold and floating_r < 0.40 and pos.highest_r_reached < 0.70:
+        is_gold = any(k in pos.symbol.upper() for k in ["XAU", "GOLD"])
+        pts_gain = (current_price - pos.open_price) if pos.direction == "BUY" else (pos.open_price - current_price)
+        if hold_time < min_hold and floating_r < 0.35 and (not is_gold or pts_gain < 2.20) and pos.highest_r_reached < 0.60:
             pos.exit_evaluation = "HOLD_AND_EXPAND"
             pos.exit_verdict_detail = f"Trade stabilizing ({int(hold_time)}s / {int(min_hold)}s min hold). Allowing setup to breathe."
             return False, ""
@@ -1659,9 +1662,47 @@ class TradeManager:
         # RULE GROUP 1: Dynamic Profit Harvesting & Trade Health Study
         # "Study if the trade can hold more or close" - don't rely passively on SL/TP!
         # =====================================================================
-        is_profitable = (floating_r >= 0.50 or pos.highest_r_reached >= 0.85)
+        gain_pts = (current_price - pos.open_price) if pos.direction == "BUY" else (pos.open_price - current_price)
+        is_profitable = (floating_r >= 0.35 or pos.highest_r_reached >= 0.60 or (is_gold and gain_pts >= 2.20))
 
         if is_profitable:
+            # Trigger C5: Opposing Tactical Zone & Scalp Profit Harvest
+            # Banks quick scalp profits (e.g. 4153 -> 4157) when testing opposing liquidity or +1σ VWAP bands,
+            # preventing runners from retracing all the way back to entry/scratch.
+            if floating_r >= 0.35 or (is_gold and gain_pts >= 2.20):
+                reached_opposing_zone = False
+                opp_zone_name = "Opposing Resistance" if pos.direction == "BUY" else "Opposing Support"
+                pb = getattr(self.scorer, "predictive_brain", None) if hasattr(self, "scorer") and self.scorer else None
+                tz = getattr(pb.latest_evaluation, "target_zone", {}) if pb and pb.latest_evaluation else {}
+                opp_zone = tz.get("opposing_zone", {}) if isinstance(tz, dict) else {}
+                opp_min = float(opp_zone.get("range_min", 0.0) or 0.0)
+                opp_max = float(opp_zone.get("range_max", 0.0) or 0.0)
+
+                if opp_min > 0 and opp_max > 0:
+                    if pos.direction == "BUY" and current_price >= opp_min - 0.25:
+                        reached_opposing_zone = True
+                        opp_zone_name = opp_zone.get("zone_name", "Supply Zone")
+                    elif pos.direction == "SELL" and current_price <= opp_max + 0.25:
+                        reached_opposing_zone = True
+                        opp_zone_name = opp_zone.get("zone_name", "Demand Zone")
+
+                exhaustion_detected = False
+                if pos.direction == "BUY":
+                    if upper_wick_1m >= 0.38 or (c1 < o1 and stoch_val >= 72.0) or ofi_delta <= -0.25:
+                        exhaustion_detected = True
+                else:
+                    if lower_wick_1m >= 0.38 or (c1 > o1 and stoch_val <= 28.0) or ofi_delta >= 0.25:
+                        exhaustion_detected = True
+
+                if (reached_opposing_zone and (exhaustion_detected or (c1 < o1 if pos.direction == "BUY" else c1 > o1))) or \
+                   (is_gold and gain_pts >= 2.50 and exhaustion_detected):
+                    pos.exit_evaluation = "HARVEST_PROFIT_NOW"
+                    pos.exit_verdict_detail = (
+                        f"Opposing Zone Harvest: Tested {opp_zone_name} with exhaustion "
+                        f"(+{gain_pts:.2f} pts | +{floating_r:.2f}R, {pnl_note}). Banking scalp profit."
+                    )
+                    return True, f"Dynamic Profit Harvest: {pos.exit_verdict_detail}"
+
             # Trigger C4: Peak Profit Protection (Surrendered >= 35% of peak profit)
             if pos.highest_r_reached >= 0.85 and pos.peak_r_giveback_pct >= 35.0 and floating_r >= 0.20:
                 is_reversing_1m = (c1 < o1 or trend_1m == "BEAR") if pos.direction == "BUY" else (c1 > o1 or trend_1m == "BULL")

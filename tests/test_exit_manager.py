@@ -327,3 +327,75 @@ def test_predictive_brain_narrative_includes_active_position_study():
     assert "High-Water Mark: +0.70R (Giveback: 7.1%)" in narrative
     assert "[HOLD_AND_EXPAND]" in narrative
 
+
+@pytest.mark.anyio
+async def test_profitable_trade_harvests_on_opposing_zone_test_and_scalp_milestone():
+    """
+    Verify that when Gold gains +3.50 to +4.00 pts (e.g. 4153 to 4157) and tests an opposing
+    zone with 1m exhaustion wick, Trigger C5 banks the profit instead of letting it retrace.
+    """
+    now = time.time()
+    pos = ManagedPosition(
+        ticket=99105,
+        symbol="XAUUSD",
+        direction="BUY",
+        volume=0.01,
+        open_price=4153.00,
+        sl=4148.00,
+        tp=4175.00,
+        entry_time=now - 60.0,
+        risk_r_dist=5.00,
+        highest_r_reached=0.80,
+        profit=3.80,
+    )
+
+    # 1m candle with upper wick exhaustion at 4156.80
+    df_1m = pd.DataFrame({
+        "open": [4154.0] * 29 + [4156.0],
+        "high": [4154.5] * 29 + [4157.20],
+        "low": [4153.8] * 29 + [4155.80],
+        "close": [4154.2] * 29 + [4156.40], # upper wick = (4157.2 - 4156.4)/1.4 = 0.57 (57%)
+        "volume": [100.0] * 30,
+    })
+
+    mock_hub = MagicMock()
+    mock_hub.get_dataframe = AsyncMock(return_value=df_1m)
+
+    mock_broker = MagicMock()
+    mock_broker.get_account_info = AsyncMock(return_value=AccountInfo(balance=100.0, equity=103.80, margin=0.0, free_margin=103.80, currency="USD", leverage=1000))
+
+    mock_pb = MagicMock()
+    mock_pb.latest_evaluation = MagicMock(
+        target_zone={
+            "opposing_zone": {
+                "direction": "SELL",
+                "zone_name": "M5 Supply Shelf",
+                "range_min": 4156.50,
+                "range_max": 4158.00,
+            }
+        }
+    )
+    mock_scorer = MagicMock(predictive_brain=mock_pb)
+
+    tm = TradeManager(
+        broker=mock_broker,
+        data_hub=mock_hub,
+        news_reactor=MagicMock(_latest_velocity=1.0),
+        risk_engine=MagicMock(base_budget_usd=100.0),
+        scorer=mock_scorer,
+    )
+
+    with patch("engine.indicators.TechnicalIndicators.calculate_stoch_rsi", return_value={"k": 76.0, "d": 74.0, "valid": True}):
+        should_exit, reason = await tm._check_market_flip(
+            pos=pos,
+            floating_r=0.76, # 3.80 pts / 5.00 SL
+            current_price=4156.80,
+            now=now,
+        )
+
+    assert should_exit is True
+    assert "Dynamic Profit Harvest" in reason
+    assert pos.exit_evaluation == "HARVEST_PROFIT_NOW"
+    assert "Opposing Zone Harvest" in pos.exit_verdict_detail
+    assert "Tested M5 Supply Shelf" in pos.exit_verdict_detail
+

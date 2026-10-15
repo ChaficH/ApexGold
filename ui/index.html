@@ -677,9 +677,11 @@
               </span>
             </div>
             <div class="flex items-center space-x-2 text-[10px]">
-              <span class="text-zinc-500">TRADES STUDIED: <span id="learn-total-trades" class="text-amber-300 font-bold tabular-nums">0</span></span>
+              <span class="text-zinc-500">TRADES: <span id="learn-total-trades" class="text-amber-300 font-bold tabular-nums">0</span></span>
               <span class="text-zinc-700">|</span>
-              <span class="text-zinc-500">LEARNED WIN RATE: <span id="learn-win-rate" class="text-emerald-400 font-bold tabular-nums">0.0%</span></span>
+              <span class="text-zinc-500">OBSERVED: <span id="learn-observer-setups" class="text-sky-300 font-bold tabular-nums">0</span></span>
+              <span class="text-zinc-700">|</span>
+              <span class="text-zinc-500">WIN RATE: <span id="learn-win-rate" class="text-emerald-400 font-bold tabular-nums">0.0%</span></span>
             </div>
           </div>
 
@@ -778,11 +780,12 @@
             </div>
 
             <div class="bg-[#0E1017] p-2 rounded border border-[#1C202E] flex flex-col justify-between">
-              <span class="text-zinc-500 text-[9px] uppercase tracking-wider font-medium">L2 Decay Regularization</span>
+              <span class="text-zinc-500 text-[9px] uppercase tracking-wider font-medium">Observer Hypotheses</span>
               <div class="flex items-baseline space-x-1 mt-0.5">
-                <span class="text-sm font-bold text-sky-400 tabular-nums">&lambda; = 0.015</span>
+                <span id="card-observer-count" class="text-sm font-bold text-sky-400 tabular-nums">0</span>
+                <span class="text-[9px] text-zinc-500 font-sans">tested</span>
               </div>
-              <span class="text-[9px] text-zinc-400 font-sans">Guarantees Anti-Memorization</span>
+              <span id="card-observer-sub" class="text-[9px] text-zinc-400 font-sans">0 Missed &bull; 0 Confirmed</span>
             </div>
           </div>
 
@@ -2893,6 +2896,11 @@
       const badgeBtn = document.getElementById('tab-learning-count-badge');
       if (badgeBtn) badgeBtn.innerText = `${totalTrades} TRADES`;
 
+      const obsStats = exp.observer_stats || {};
+      const obsCount = obsStats.setups_observed || 0;
+      const obsEl = document.getElementById('learn-observer-setups');
+      if (obsEl) obsEl.innerText = `${obsCount} (${exp.active_shadow_setups_count || 0} active)`;
+
       const wrEl = document.getElementById('learn-win-rate');
       if (wrEl) wrEl.innerText = exp.win_rate_learned || '0.0%';
 
@@ -2910,6 +2918,11 @@
       if (succCountEl) succCountEl.innerText = exp.successes_recorded || 0;
       const succBadge = document.getElementById('success-badge-count');
       if (succBadge) succBadge.innerText = exp.successes_recorded || 0;
+
+      const cardObsCount = document.getElementById('card-observer-count');
+      if (cardObsCount) cardObsCount.innerText = obsCount;
+      const cardObsSub = document.getElementById('card-observer-sub');
+      if (cardObsSub) cardObsSub.innerText = `${obsStats.missed_expansions_learned || 0} Missed • ${obsStats.avoided_traps_confirmed || 0} Confirmed`;
 
       // 2. What The AI Is Doing Right Now
       const actionBadge = document.getElementById('learn-action-mode-badge');

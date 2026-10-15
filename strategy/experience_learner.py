@@ -209,16 +209,27 @@ class AdaptiveExperienceLearner:
         self.weights: Dict[str, float] = dict(DEFAULT_PRIOR_WEIGHTS)
         self.bias: float = 0.15 # Baseline positive prior bias (log-odds corresponding to ~54% baseline)
 
+        # Performance & Learning Statistics
+        self.total_trades_analyzed: int = 0
+        self.wins_learned: int = 0
+        self.mistakes_learned: int = 0
+        self.last_lesson: str = "Institutional prior weights active. Calibrated on multi-month historical regimes."
+        self.lessons: Deque[str] = deque(maxlen=30)
+
         # Episodic Experience Buffers
         self.mistake_memory: Deque[Dict[str, Any]] = deque(maxlen=memory_capacity)
         self.success_memory: Deque[Dict[str, Any]] = deque(maxlen=memory_capacity)
         self.recent_lessons: Deque[str] = deque(maxlen=15)
 
-        # Learning Counters
-        self.total_trades_analyzed: int = 0
-        self.wins_learned: int = 0
-        self.mistakes_learned: int = 0
-        self.last_update_time: float = 0.0
+        # Observer / Counterfactual Real-Time Learning Structures (learns while flat / watching chart)
+        self.active_shadow_setups: List[Dict[str, Any]] = []
+        self.observer_lessons: Deque[str] = deque(maxlen=20)
+        self.observer_stats: Dict[str, int] = {
+            "setups_observed": 0,
+            "missed_expansions_learned": 0,
+            "avoided_traps_confirmed": 0,
+        }
+        self.last_shadow_creation_time: float = 0.0
 
         # Load persisted experience if available
         self.load_state()
@@ -460,6 +471,168 @@ class AdaptiveExperienceLearner:
         self.save_state()
         return lesson
 
+    def record_shadow_candidate(
+        self,
+        symbol: str,
+        direction: str,
+        reference_price: float,
+        target_price: float,
+        invalidation_price: float,
+        target_rr: float,
+        gate_block_reason: str,
+        context: Dict[str, Any],
+        now: Optional[float] = None,
+    ) -> None:
+        """
+        Record a shadow/hypothetical candidate setup when the bot does not enter live.
+        Allows the AI to passively monitor market follow-through, test its hypotheses,
+        and learn from missed expansions or avoided traps without taking financial risk.
+        """
+        cur_time = now or time.time()
+        # Throttled to at most one new shadow setup per 45 seconds to avoid over-clustering
+        if cur_time - self.last_shadow_creation_time < 45.0:
+            return
+
+        # Don't add if an identical shadow setup direction is already actively running
+        if any(s["direction"] == direction and s["symbol"] == symbol for s in self.active_shadow_setups):
+            return
+
+        if reference_price <= 0 or target_price <= 0 or invalidation_price <= 0:
+            return
+
+        feat_vec = self.extract_feature_vector(context, direction)
+        setup_id = f"OBS-{int(cur_time) % 100000}-{direction}"
+
+        shadow_record = {
+            "id": setup_id,
+            "symbol": symbol,
+            "direction": direction,
+            "reference_price": round(reference_price, 2),
+            "target_price": round(target_price, 2),
+            "invalidation_price": round(invalidation_price, 2),
+            "target_rr": max(1.5, target_rr),
+            "entry_time": cur_time,
+            "features": feat_vec,
+            "gate_block_reason": gate_block_reason,
+            "max_favorable_pts": 0.0,
+            "max_adverse_pts": 0.0,
+        }
+        self.active_shadow_setups.append(shadow_record)
+        self.last_shadow_creation_time = cur_time
+        self.observer_stats["setups_observed"] += 1
+
+    def update_observer_ticks(
+        self,
+        symbol: str,
+        bid: float,
+        ask: float,
+        now: Optional[float] = None,
+    ) -> List[str]:
+        """
+        Process incoming live market ticks against active shadow setups.
+        Resolves setups when price reaches target (+R) or invalidation (-R),
+        extracts empirical lessons, and updates factor weights.
+        """
+        if not self.active_shadow_setups or bid <= 0:
+            return []
+
+        cur_time = now or time.time()
+        resolved_lessons: List[str] = []
+        remaining_setups: List[Dict[str, Any]] = []
+
+        for s in self.active_shadow_setups:
+            if s["symbol"] != symbol:
+                remaining_setups.append(s)
+                continue
+
+            ref_p = s["reference_price"]
+            tgt_p = s["target_price"]
+            inv_p = s["invalidation_price"]
+            is_buy = (s["direction"] == "BUY")
+
+            # Calculate favorable and adverse excursions
+            if is_buy:
+                fav_pts = bid - ref_p
+                adv_pts = ref_p - bid
+                hit_target = (bid >= tgt_p)
+                hit_invalidation = (bid <= inv_p)
+            else:
+                fav_pts = ref_p - ask
+                adv_pts = ask - ref_p
+                hit_target = (ask <= tgt_p)
+                hit_invalidation = (ask >= inv_p)
+
+            s["max_favorable_pts"] = max(s["max_favorable_pts"], fav_pts)
+            s["max_adverse_pts"] = max(s["max_adverse_pts"], adv_pts)
+
+            age_sec = cur_time - s["entry_time"]
+
+            # Resolution A: Target Reached! (Missed High-Probability Winner)
+            if hit_target:
+                self.observer_stats["missed_expansions_learned"] += 1
+                gain_pts = abs(tgt_p - ref_p)
+                sim_r = min(3.5, s["target_rr"])
+                lesson = (
+                    f"🔭 Observer Learning [{s['id']}]: Shadow {s['direction']} @ {ref_p:.2f} reached target "
+                    f"{tgt_p:.2f} (+{gain_pts:.2f} pts | +{sim_r:.1f}R). Blocked by [{s['gate_block_reason']}]. "
+                    f"Learned to reduce hesitation on strong momentum setups."
+                )
+                self.observer_lessons.appendleft(lesson)
+                resolved_lessons.append(lesson)
+                # Apply positive reinforcement to calibrate weights
+                self.record_trade_outcome(
+                    ticket=int(time.time()) % 1000000,
+                    symbol=symbol,
+                    direction=s["direction"],
+                    open_price=ref_p,
+                    close_price=tgt_p,
+                    pnl_usd=gain_pts * 10.0,
+                    pnl_r=sim_r,
+                    close_reason="OBSERVER_TARGET_HIT",
+                    context=s["features"],
+                )
+                continue
+
+            # Resolution B: Invalidation Reached! (Avoided Trap Confirmed)
+            if hit_invalidation:
+                self.observer_stats["avoided_traps_confirmed"] += 1
+                loss_pts = abs(inv_p - ref_p)
+                lesson = (
+                    f"🛡️ Observer Validation [{s['id']}]: Shadow {s['direction']} @ {ref_p:.2f} reversed to "
+                    f"{inv_p:.2f} (-{loss_pts:.2f} pts). Gating [{s['gate_block_reason']}] successfully preserved capital."
+                )
+                self.observer_lessons.appendleft(lesson)
+                resolved_lessons.append(lesson)
+                # Reinforce defensive reflex
+                self.record_trade_outcome(
+                    ticket=int(time.time()) % 1000000,
+                    symbol=symbol,
+                    direction=s["direction"],
+                    open_price=ref_p,
+                    close_price=inv_p,
+                    pnl_usd=-loss_pts * 10.0,
+                    pnl_r=-1.0,
+                    close_reason="OBSERVER_TRAP_AVOIDED",
+                    context=s["features"],
+                )
+                continue
+
+            # Resolution C: Timeout Expiry (900 seconds / 15 minutes)
+            if age_sec > 900.0:
+                net_pts = s["max_favorable_pts"] - s["max_adverse_pts"]
+                outcome_type = "positive drift" if net_pts > 1.0 else ("adverse drift" if net_pts < -1.0 else "neutral consolidation")
+                lesson = (
+                    f"⏱️ Observer Horizon Closed [{s['id']}]: Shadow {s['direction']} expired after 15m with {outcome_type} "
+                    f"(Max Fav: +{s['max_favorable_pts']:.2f} pts, Max Adv: -{s['max_adverse_pts']:.2f} pts)."
+                )
+                self.observer_lessons.appendleft(lesson)
+                continue
+
+            remaining_setups.append(s)
+
+        self.active_shadow_setups = remaining_setups
+        return resolved_lessons
+
     def evaluate_candidate(
         self,
         context: Optional[Dict[str, Any]] = None,
@@ -655,6 +828,9 @@ class AdaptiveExperienceLearner:
                 "anti_memorization": "Dimensionless features normalized by ATR/wick bounds. L2 decay prevents overfitting.",
             },
             "has_experience": (self.total_trades_analyzed > 0),
+            "observer_stats": self.observer_stats,
+            "observer_lessons": list(self.observer_lessons),
+            "latest_observer_reflection": self.observer_lessons[0] if self.observer_lessons else "Observing live market micro-structure. Formulating shadow setups to evaluate follow-through.",
         }
 
     def save_state(self) -> None:

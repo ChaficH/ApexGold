@@ -311,3 +311,137 @@ def test_predictive_brain_filter_allows_zone_reversals_counter_macro():
     approved2, reason2 = brain.filter_signal(sig_reversal)
     assert approved2
     assert "Predictive Model Approved" in reason2
+
+
+def test_observer_counterfactual_learning_target_hit():
+    """Verify that passive observer setups hit target, record missed move, and update weights."""
+    learner = AdaptiveExperienceLearner(persistence_path=None)
+    now = time.time()
+    ctx = {
+        "candle_pos_5m": 0.50,
+        "vwap_deviation": 1.20,
+        "stoch_rsi_k": 55.0,
+        "kaufman_er": 0.60,
+        "r_squared": 0.65,
+        "order_flow_delta": 0.35,
+        "is_zone_reversal": 0.0,
+    }
+
+    # Record a shadow candidate BUY setup
+    learner.record_shadow_candidate(
+        symbol="XAUUSD",
+        direction="BUY",
+        reference_price=4153.00,
+        target_price=4157.00,
+        invalidation_price=4150.50,
+        target_rr=2.5,
+        gate_block_reason="WAITING FOR PULLBACK",
+        context=ctx,
+        now=now,
+    )
+
+    assert len(learner.active_shadow_setups) == 1
+    assert learner.observer_stats["setups_observed"] == 1
+
+    # Price moves to target 4157.10
+    lessons = learner.update_observer_ticks(symbol="XAUUSD", bid=4157.10, ask=4157.30, now=now + 30.0)
+
+    assert len(lessons) == 1
+    assert "reached target" in lessons[0]
+    assert "Learned to reduce hesitation" in lessons[0]
+    assert learner.observer_stats["missed_expansions_learned"] == 1
+    assert len(learner.active_shadow_setups) == 0
+
+
+def test_observer_counterfactual_avoided_trap():
+    """Verify that passive observer setups hit invalidation and confirm defensive gating."""
+    learner = AdaptiveExperienceLearner(persistence_path=None)
+    now = time.time()
+    ctx = {
+        "candle_pos_5m": 0.85,
+        "vwap_deviation": 2.50,
+        "stoch_rsi_k": 85.0,
+        "kaufman_er": 0.30,
+        "r_squared": 0.20,
+        "order_flow_delta": -0.20,
+        "is_zone_reversal": 0.0,
+    }
+
+    learner.record_shadow_candidate(
+        symbol="XAUUSD",
+        direction="BUY",
+        reference_price=4157.00,
+        target_price=4162.00,
+        invalidation_price=4154.00,
+        target_rr=2.5,
+        gate_block_reason="TOP-OF-CANDLE CHASE BLOCKED",
+        context=ctx,
+        now=now,
+    )
+
+    assert len(learner.active_shadow_setups) == 1
+
+    # Price dumps to 4153.80
+    lessons = learner.update_observer_ticks(symbol="XAUUSD", bid=4153.80, ask=4154.00, now=now + 25.0)
+
+    assert len(lessons) == 1
+    assert "reversed to" in lessons[0]
+    assert "successfully preserved capital" in lessons[0]
+    assert learner.observer_stats["avoided_traps_confirmed"] == 1
+    assert len(learner.active_shadow_setups) == 0
+
+
+def test_predictive_brain_filter_signal_allows_opposing_scalp_during_pullback_wait():
+    """
+    Verify that when BUY is overextended and brain is in WAITING_FOR_PULLBACK,
+    a BUY signal is vetoed, but an opposing SELL scalp is NOT blocked by pullback waiting.
+    """
+    from strategy.predictive_brain import PredictiveEvaluation
+    brain = ApexPredictiveBrain()
+    brain.latest_evaluation = PredictiveEvaluation(
+        timestamp=1000.0,
+        time_utc_str="12:00:00 UTC",
+        cycle_index=1,
+        symbol="XAUUSD",
+        current_bid=4157.0,
+        current_ask=4157.25,
+        spread_pts=0.25,
+        p_bull=0.60,
+        p_bear=0.40,
+        p_chop=0.0,
+        p_win=0.55,
+        expected_value_r=0.45,
+        kaufman_er=0.55,
+        r_squared=0.60,
+        regime_name="BULL_MOMENTUM",
+        vwap_deviation=3.2,
+        stoch_rsi_k=84.0,
+        stoch_rsi_d=82.0,
+        candle_pos_5m=0.88,
+        status="WAITING_FOR_PULLBACK",
+        verdict_badge="WAITING FOR PULLBACK (BUY EXTENDED)",
+        is_frozen=False,
+        gates=[],
+        narrative="Waiting for pullback",
+        target_zone={},
+    )
+
+    class DummyBuy:
+        direction = "BUY"
+        target_rr = 3.0
+
+    class DummySellScalp:
+        direction = "SELL"
+        mode = "FAST_SCALP"
+        tier = "TIER_1_SNIPER"
+        target_rr = 2.5
+
+    # BUY is vetoed because price is extended at top
+    app_buy, reason_buy = brain.filter_signal(DummyBuy())
+    assert not app_buy
+    assert "pullback" in reason_buy.lower()
+
+    # Opposing SELL scalp is approved (not blocked by BUY pullback wait!)
+    app_sell, reason_sell = brain.filter_signal(DummySellScalp())
+    assert app_sell
+    assert "Predictive Model Approved" in reason_sell
