@@ -623,3 +623,66 @@ async def test_micro_account_drawdown_protection_and_force_resume():
     assert tm.is_paused() is False
     assert tm._start_of_day_balance == 9.18
 
+
+@pytest.mark.anyio
+async def test_anti_hedging_mutual_exclusion():
+    """Verify that opposite BUY and SELL trades on Gold cannot be opened simultaneously (Anti-Hedging Guard)."""
+    from unittest.mock import MagicMock, AsyncMock
+    open_sell = Position(
+        ticket=12345,
+        symbol="GOLD",
+        type=PositionType.SELL,
+        volume=0.01,
+        open_price=4133.0,
+        sl=4136.0,
+        tp=4127.0,
+        current_price=4132.5,
+        profit=0.50,
+        open_time=time.time(),
+    )
+    mock_broker = MagicMock()
+    mock_broker.get_account_info = AsyncMock(return_value=AccountInfo(balance=100.0, equity=100.0, margin=0.0, free_margin=100.0, currency="USD", leverage=1000))
+    mock_broker.get_open_positions = AsyncMock(return_value=[open_sell])
+    mock_broker.get_pending_orders = AsyncMock(return_value=[])
+
+    mock_news = MagicMock()
+    mock_news.can_open_baseline_trade.return_value = (True, "OK")
+
+    tm = TradeManager(
+        broker=mock_broker,
+        data_hub=MagicMock(),
+        news_reactor=mock_news,
+        risk_engine=MagicMock(),
+    )
+    tm._start_of_day_balance = 100.0
+
+    # 1. Attempt manual BUY while SELL is active -> MUST BE REJECTED
+    can_open, reason = await tm.can_open_manual_trade("GOLD", "BUY", 0.01)
+    assert can_open is False
+    assert "Anti-Hedging Guard" in reason
+    assert "SELL position #12345 already active" in reason
+
+    # 2. Attempt automated BUY signal while SELL is active -> MUST BE REJECTED
+    buy_signal = ConfluenceSignal(
+        symbol="GOLD",
+        direction="BUY",
+        score=85,
+        tier="TIER_1_SNIPER",
+        regime="TRENDING_EXPANSION",
+        sub_regime="FAST_SCALP",
+        target_rr=2.0,
+        entry_price=4132.0,
+        suggested_sl=4130.0,
+        suggested_tp=4136.0,
+        risk_r_dist=2.0,
+        be_lock_r=0.65,
+        stall_exit_seconds=60.0,
+        breakdown={},
+        reason="Test Buy",
+        time=time.time(),
+        order_type="MARKET",
+    )
+    can_exec, exec_reason = await tm.can_execute_signal(buy_signal)
+    assert can_exec is False
+    assert "Anti-Hedging Guard" in exec_reason
+

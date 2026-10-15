@@ -255,21 +255,62 @@ async def autonomous_trading_loop(
                             if lo_res.success:
                                 best_limit["status"] = "ACTIVE_ON_BROKER"
 
-                # Prioritize highest scoring signal
+                # ---------------------------------------------------------
+                # Strict Anti-Hedging & Direction Arbitration Engine
+                # NEVER allow opening BUY and SELL simultaneously. Choose the superior setup!
+                # ---------------------------------------------------------
                 candidate_signal = None
                 if buy_sig and sell_sig:
-                    candidate_signal = buy_sig if buy_sig.score >= sell_sig.score else sell_sig
+                    # 1. Compare Confluence Score (Quality of technical setup)
+                    if buy_sig.score > sell_sig.score:
+                        candidate_signal = buy_sig
+                    elif sell_sig.score > buy_sig.score:
+                        candidate_signal = sell_sig
+                    else:
+                        # 2. Scores are tied: Arbitrate using Higher-Timeframe Trend (1H / 15m)
+                        tf_trends = getattr(scorer, "tf_trends", {})
+                        trend_1h = tf_trends.get("1H", "NEUTRAL")
+                        trend_15m = tf_trends.get("15m", "NEUTRAL")
+
+                        bull_pts = (2 if trend_1h == "BULL" else 0) + (1 if trend_15m == "BULL" else 0)
+                        bear_pts = (2 if trend_1h == "BEAR" else 0) + (1 if trend_15m == "BEAR" else 0)
+
+                        if bull_pts > bear_pts:
+                            candidate_signal = buy_sig
+                        elif bear_pts > bull_pts:
+                            candidate_signal = sell_sig
+                        else:
+                            # 3. Arbitrate using Target RR (Reward to Risk ratio)
+                            buy_rr = getattr(buy_sig, "target_rr", 2.0)
+                            sell_rr = getattr(sell_sig, "target_rr", 2.0)
+                            candidate_signal = buy_sig if buy_rr >= sell_rr else sell_sig
+
+                    winner_dir = candidate_signal.direction
+                    loser_sig = sell_sig if winner_dir == "BUY" else buy_sig
+                    logger.info(
+                        f"[DIRECTION ARBITRATION] Both BUY ({buy_sig.score}/100) and SELL ({sell_sig.score}/100) triggered. "
+                        f"Anti-hedging selected {winner_dir} as the superior setup (Score: {candidate_signal.score}, Target RR: {getattr(candidate_signal, 'target_rr', 2.0):.1f}R). "
+                        f"Discarded opposing {loser_sig.direction}."
+                    )
                 else:
                     candidate_signal = buy_sig or sell_sig
 
                 if candidate_signal:
                     threshold = scorer.get_active_threshold()
                     if candidate_signal.score >= threshold:
-                        mode = ctx.execution_mode
-
-                        if mode == "full_auto":
-                            # Auto-Execute Live Order
-                            res = await trade_manager.execute_trade(candidate_signal)
+                        # Ensure no opposing trade is currently open (Strict No-Hedging Rule)
+                        has_opposing = False
+                        if trade_manager:
+                            for mp in trade_manager._managed_positions.values():
+                                if not mp.is_closed and mp.direction != candidate_signal.direction:
+                                    has_opposing = True
+                                    logger.info(f"[ANTI-HEDGING] Blocked {candidate_signal.direction} signal: Opposing {mp.direction} position #{mp.ticket} already open.")
+                                    break
+                        if not has_opposing:
+                            mode = ctx.execution_mode
+                            if mode == "full_auto":
+                                # Auto-Execute Live Order
+                                res = await trade_manager.execute_trade(candidate_signal)
                             if res.success:
                                 await telegram.notify_order_filled(
                                     ticket=int(res.ticket) if str(res.ticket).isdigit() else 0,

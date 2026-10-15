@@ -177,10 +177,12 @@ class TradeManager:
 
         try:
             acc = await self.broker.get_account_info()
-            if acc:
+            if acc and getattr(acc, "balance", 0.0) > 0.0:
                 if self._start_of_day_balance <= 0.0:
                     self._start_of_day_balance = max(1.0, acc.balance - self._daily_realized_pnl)
                 logger.info(f"Start-of-day balance set to: ${self._start_of_day_balance:.2f} (Current: ${acc.balance:.2f})")
+            else:
+                logger.info(f"Broker account balance not yet available on startup (Current: ${getattr(acc, 'balance', 0.0):.2f}). Waiting for broker sync.")
         except Exception as e:
             logger.warning(f"Could not fetch account info for risk state sync: {e}")
 
@@ -576,7 +578,7 @@ class TradeManager:
         acc = await self.broker.get_account_info()
         eff_balance = acc.balance if acc else 100.0
         self._reset_daily_metrics_if_new_day(current_balance=eff_balance)
-        if self._start_of_day_balance <= 0:
+        if eff_balance > 0 and self._start_of_day_balance <= 0.0:
             self._start_of_day_balance = max(1.0, eff_balance - self._daily_realized_pnl)
 
         cb_tripped, cb_reason = self.is_circuit_breaker_tripped()
@@ -624,6 +626,29 @@ class TradeManager:
         active_positions = await self.broker.get_open_positions()
         managed_open = [p for p in self._managed_positions.values() if not p.is_closed]
         all_positions_count = max(len(managed_open), len(active_positions))
+
+        # Strict Anti-Hedging Guard:
+        # Never allow opening BUY and SELL simultaneously on the same symbol or Gold asset
+        is_gold = any(k in symbol.upper() for k in ["XAU", "GOLD"])
+        target_dir = direction.upper().strip()
+
+        for p in active_positions:
+            p_sym = p.symbol.upper()
+            if (is_gold and any(k in p_sym for k in ["XAU", "GOLD"])) or (p_sym == symbol.upper()):
+                p_dir = (p.type.value if hasattr(p.type, "value") else str(p.type)).upper()
+                if p_dir != target_dir:
+                    return False, f"Anti-Hedging Guard: Open {p_dir} position #{p.ticket} already active. Simultaneous BUY & SELL (hedging) is strictly forbidden."
+
+        for m in managed_open:
+            m_sym = m.symbol.upper()
+            if (is_gold and any(k in m_sym for k in ["XAU", "GOLD"])) or (m_sym == symbol.upper()):
+                if m.direction.upper() != target_dir:
+                    return False, f"Anti-Hedging Guard: Managed {m.direction} position #{m.ticket} already active. Simultaneous BUY & SELL (hedging) is strictly forbidden."
+
+        # Small account guard: accounts under $150 strictly limited to 1 active position
+        if eff_balance < 150.0 and all_positions_count >= 1:
+            return False, f"Account balance (${eff_balance:.2f}) under $150 strictly limited to 1 active position at a time."
+
         if self.max_open_positions > 0 and all_positions_count >= self.max_open_positions:
             return False, f"Maximum open positions reached ({all_positions_count}/{self.max_open_positions})"
 
@@ -657,6 +682,8 @@ class TradeManager:
         acc = await self.broker.get_account_info()
         eff_balance = acc.balance if acc else 100.0
         self._reset_daily_metrics_if_new_day(current_balance=eff_balance)
+        if eff_balance > 0 and self._start_of_day_balance <= 0.0:
+            self._start_of_day_balance = max(1.0, eff_balance - self._daily_realized_pnl)
 
         if getattr(self, "_contradictory_state_active", False):
             return False, f"Reconciliation Alert: Unresolved contradictory broker state ({self._contradictory_state_reason}). New orders blocked."
@@ -731,6 +758,24 @@ class TradeManager:
         managed_open = [p for p in self._managed_positions.values() if not p.is_closed]
         all_positions_count = max(len(managed_open), len(active_positions))
 
+        # Strict Anti-Hedging Guard:
+        # Never allow opening BUY and SELL simultaneously on the same symbol or Gold asset
+        is_gold_signal = any(k in signal.symbol.upper() for k in ["XAU", "GOLD"])
+        target_dir = signal.direction.upper().strip()
+
+        for p in active_positions:
+            p_sym = p.symbol.upper()
+            if (is_gold_signal and any(k in p_sym for k in ["XAU", "GOLD"])) or (p_sym == signal.symbol.upper()):
+                p_dir = (p.type.value if hasattr(p.type, "value") else str(p.type)).upper()
+                if p_dir != target_dir:
+                    return False, f"Anti-Hedging Guard: Conflicting open {p_dir} trade #{p.ticket} vs signal ({target_dir}). Simultaneous BUY & SELL (hedging) is strictly forbidden."
+
+        for m in managed_open:
+            m_sym = m.symbol.upper()
+            if (is_gold_signal and any(k in m_sym for k in ["XAU", "GOLD"])) or (m_sym == signal.symbol.upper()):
+                if m.direction.upper() != target_dir:
+                    return False, f"Anti-Hedging Guard: Conflicting managed {m.direction} trade #{m.ticket} vs signal ({target_dir}). Simultaneous BUY & SELL (hedging) is strictly forbidden."
+
         # Check pending orders across all layers (TradeManager, PaperBroker, and MT5 Bridge)
         import inspect
         from ui.server import ctx as server_ctx
@@ -803,7 +848,6 @@ class TradeManager:
 
 
         # 5. Smart Multi-Position Risk Guard (Pyramiding ONLY allowed for >= $150 balance with existing trade in solid profit)
-        is_gold_signal = any(k in signal.symbol.upper() for k in ["XAU", "GOLD"])
         if all_positions_count > 0:
             if eff_balance < 150.0:
                 return False, f"Account balance (${eff_balance:.2f}) under $150 strictly limited to 1 active position."
@@ -819,8 +863,6 @@ class TradeManager:
                 if not m.is_closed:
                     m_sym = m.symbol.upper()
                     if (is_gold_signal and any(k in m_sym for k in ["XAU", "GOLD"])) or (m.symbol == signal.symbol):
-                        if m.direction != signal.direction:
-                            return False, f"Conflicting open trade #{m.ticket} ({m.direction}) vs signal ({signal.direction})"
                         # If existing trade is not at least +0.80R in profit with SL secured, forbid new entry
                         cur_tick = await self.broker.get_tick(m.symbol)
                         if cur_tick and cur_tick.bid > 0:
@@ -1812,17 +1854,35 @@ class TradeManager:
 
         limit_type = planned_limit.get("order_type", "BUY_LIMIT")
 
-        # Check existing pending limit orders to avoid duplicates
+        # Check existing pending limit orders to avoid duplicates and hedging
+        limit_dir = "BUY" if "BUY" in limit_type.upper() else "SELL"
+        opposing_type = "SELL_LIMIT" if limit_dir == "BUY" else "BUY_LIMIT"
+
         async with self._lock:
             for lo in self._pending_limit_orders.values():
-                if getattr(lo, "order_type", "") == limit_type:
+                lo_ot = getattr(lo, "order_type", "")
+                if lo_ot == limit_type:
                     return OrderResult(success=False, error=f"{limit_type} already active on broker (#{getattr(lo, 'ticket', '')})")
+                if lo_ot == opposing_type:
+                    return OrderResult(success=False, error=f"Hedging forbidden: Opposing {opposing_type} already active on broker (#{getattr(lo, 'ticket', '')})")
 
         from ui.server import ctx as s_ctx
         mt5_orders = getattr(s_ctx, "mt5_pending_orders", []) or []
         for mo in mt5_orders:
-            if limit_type in str(mo.get("type", "")).upper():
+            mo_type = str(mo.get("type", "")).upper()
+            if limit_type in mo_type:
                 return OrderResult(success=False, error=f"{limit_type} already pending on MT5 (#{mo.get('ticket')})")
+            if opposing_type in mo_type:
+                return OrderResult(success=False, error=f"Hedging forbidden: Opposing {opposing_type} already pending on MT5 (#{mo.get('ticket')})")
+
+        active_positions = await self.broker.get_open_positions()
+        is_gold = any(k in planned_limit.get("symbol", "").upper() for k in ["XAU", "GOLD"])
+        for p in active_positions:
+            p_sym = p.symbol.upper()
+            if (is_gold and any(k in p_sym for k in ["XAU", "GOLD"])) or (p_sym == planned_limit.get("symbol", "").upper()):
+                p_dir = (p.type.value if hasattr(p.type, "value") else str(p.type)).upper()
+                if p_dir != limit_dir:
+                    return OrderResult(success=False, error=f"Hedging forbidden: Active {p_dir} position #{p.ticket} already open on {p.symbol}.")
 
         sig = scorer.create_signal_from_planned_limit(planned_limit)
         return await self.execute_trade(sig)
