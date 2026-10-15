@@ -39,6 +39,7 @@ CTrade          g_trade;
 CPositionInfo   g_position;
 CSymbolInfo     g_symbol_info;
 string          g_rx_buffer     = "";
+string          g_last_cmd_result = "";
 
 //+------------------------------------------------------------------+
 //| Helper: String Extractor for Simple JSON Parsing                 |
@@ -484,10 +485,13 @@ void ServiceWebRequestPump()
    // Construct JSON payload to POST to Python
    string cur_tf_str = GetChartTimeframeString();
    string token_field = (InpBridgeToken != "") ? StringFormat(",\"token\":\"%s\"", InpBridgeToken) : "";
+   string last_res_field = (g_last_cmd_result != "") ? StringFormat(",\"last_cmd_result\":%s", g_last_cmd_result) : "";
+   g_last_cmd_result = "";
+
    string payload = StringFormat(
-      "{\"symbol\":\"%s\",\"chart_tf\":\"%s\",\"bid\":%.5f,\"ask\":%.5f,\"spread\":%.2f,\"time\":%s,\"balance\":%.2f,\"equity\":%.2f,\"margin\":%.2f,\"free_margin\":%.2f,\"leverage\":%d,\"algo_trading_allowed\":%s,\"positions\":%s,\"orders\":%s,\"closed_deals\":%s,\"cur_bar\":%s,\"rates_m1\":%s,\"rates_m5\":%s,\"rates_m15\":%s,\"rates_h1\":%s,\"rates\":%s%s}",
+      "{\"symbol\":\"%s\",\"chart_tf\":\"%s\",\"bid\":%.5f,\"ask\":%.5f,\"spread\":%.2f,\"time\":%s,\"balance\":%.2f,\"equity\":%.2f,\"margin\":%.2f,\"free_margin\":%.2f,\"leverage\":%d,\"algo_trading_allowed\":%s,\"positions\":%s,\"orders\":%s,\"closed_deals\":%s,\"cur_bar\":%s,\"rates_m1\":%s,\"rates_m5\":%s,\"rates_m15\":%s,\"rates_h1\":%s,\"rates\":%s%s%s}",
       _Symbol, cur_tf_str, tick.bid, tick.ask, (tick.ask - tick.bid), IntegerToString(tick.time), balance, equity, margin, free_margin, leverage,
-      (can_auto_trade ? "true" : "false"), pos_json, orders_json, closed_deals_json, cur_bar_json, bars_m1_json, bars_m5_json, bars_m15_json, bars_h1_json, bars_m1_json, token_field
+      (can_auto_trade ? "true" : "false"), pos_json, orders_json, closed_deals_json, cur_bar_json, bars_m1_json, bars_m5_json, bars_m15_json, bars_h1_json, bars_m1_json, token_field, last_res_field
    );
 
    char post_data[];
@@ -513,7 +517,7 @@ void ServiceWebRequestPump()
       if(action != "" && action != "NONE")
       {
          PrintFormat("ApexBridge: Executing command from Python: %s", action);
-         ExecuteCommand(action, response_str);
+         g_last_cmd_result = ExecuteCommand(action, response_str);
       }
    }
    else if(res == 401)

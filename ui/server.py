@@ -296,7 +296,8 @@ async def get_status():
         "tf_trends": auto_brain.get("tf_trends", {"1H": "NEUTRAL", "15m": "NEUTRAL", "5m": "NEUTRAL", "1m": "NEUTRAL"}),
         "feed_logs": ctx.news_reactor.get_feed_logs(15) if ctx.news_reactor else [],
         "allow_pre_news_trajectory": getattr(ctx, "allow_pre_news_trajectory", True),
-        "auto_limits_enabled": getattr(ctx, "auto_limits_enabled", True),
+        "auto_limits_enabled": getattr(ctx, "auto_limits_enabled", False),
+        "last_mt5_error": getattr(ctx, "last_mt5_error", ""),
         "planned_limits": getattr(ctx, "planned_limits", {}),
         "pre_news_trajectory": ctx.news_reactor.evaluate_pre_news_trajectory(
             symbol=ctx.active_symbol,
@@ -831,6 +832,17 @@ async def mt5_bridge_tick(payload: Dict[str, Any], request: Request = None):
     cur_bar = payload.get("cur_bar")
 
     ctx.mt5_algo_trading_allowed = bool(payload.get("algo_trading_allowed", True))
+    
+    last_cmd_result = payload.get("last_cmd_result")
+    if last_cmd_result and isinstance(last_cmd_result, dict):
+        if last_cmd_result.get("status") == "ERROR":
+            err = last_cmd_result.get("error", "Unknown MT5 Error")
+            ctx.last_mt5_error = err
+            logger.error(f"[MT5 BRIDGE EXECUTION ERROR] {err}")
+        elif last_cmd_result.get("status") == "OK":
+            ticket = last_cmd_result.get("ticket")
+            ctx.last_mt5_error = ""
+            logger.info(f"[MT5 BRIDGE EXECUTION SUCCESS] Order #{ticket} filled on MT5")
 
     if sym and sym != ctx.active_symbol:
         ctx.active_symbol = sym

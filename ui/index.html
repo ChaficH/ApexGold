@@ -859,6 +859,12 @@
         }
       }
 
+      if (data.last_mt5_error && window.prevMt5Err !== data.last_mt5_error) {
+        window.prevMt5Err = data.last_mt5_error;
+        appendLog('MT5 BRIDGE', 'MT5 Execution Error: ' + data.last_mt5_error);
+        showToast('MT5 Error: ' + data.last_mt5_error, 'error');
+      }
+
       // 3. Asset & Spread Sync
       if (data.symbol && data.symbol !== window.currentSymbol) {
         window.currentSymbol = data.symbol;
