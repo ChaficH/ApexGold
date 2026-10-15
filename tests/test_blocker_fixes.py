@@ -861,3 +861,75 @@ async def test_predictive_does_not_cut_healthy_runners():
     assert reason == ""
 
 
+@pytest.mark.anyio
+async def test_signals_execute_immediately_at_market(sample_signal):
+    """Verify that bot signals execute immediately at MARKET (OrderType.BUY/SELL) rather than waiting on limits."""
+    from unittest.mock import MagicMock, AsyncMock
+
+    mock_broker = MagicMock()
+    mock_broker.get_account_info = AsyncMock(return_value=AccountInfo(balance=5.60, equity=5.60, margin=0.0, free_margin=5.60, currency="USD", leverage=1000))
+    mock_broker.get_open_positions = AsyncMock(return_value=[])
+    mock_broker.get_pending_orders = AsyncMock(return_value=[])
+    mock_broker.get_symbol_info = AsyncMock(return_value=SymbolInfo(
+        symbol="GOLD", bid=4153.20, ask=4153.40, point=0.01, digits=2, spread=0.20,
+        contract_size=100.0, tick_size=0.01, tick_value=1.0, volume_min=0.01, volume_max=100.0, volume_step=0.01
+    ))
+    mock_broker.open_order = AsyncMock(return_value=OrderResult(success=True, ticket=123456))
+
+    mock_news = MagicMock()
+    mock_news.can_open_baseline_trade.return_value = (True, "OK")
+
+    risk_engine = GoldRiskEngine(budget_usd=5.60, account_type="micro", risk_profile="aggressive")
+
+    tm = TradeManager(
+        broker=mock_broker,
+        data_hub=MagicMock(),
+        news_reactor=mock_news,
+        risk_engine=risk_engine,
+    )
+
+    # Even if signal has an order_type or limit_price, execute_trade must dispatch MARKET OrderType.BUY
+    sample_signal.symbol = "GOLD"
+    sample_signal.direction = "BUY"
+    sample_signal.entry_price = 4153.40
+    sample_signal.limit_price = 4153.26
+    sample_signal.suggested_sl = 4151.90
+    sample_signal.suggested_tp = 4156.40
+    sample_signal.order_type = "BUY_LIMIT"
+
+    res = await tm.execute_trade(sample_signal)
+    assert res.success is True
+
+    # Assert that open_order was called with OrderType.BUY (MARKET execution) and NOT OrderType.BUY_LIMIT
+    mock_broker.open_order.assert_called_once()
+    call_kwargs = mock_broker.open_order.call_args[1]
+    assert call_kwargs["order_type"] == OrderType.BUY
+    assert call_kwargs["price"] == 4153.40 # Market entry price, never waiting for 4153.26 pullback!
+
+
+@pytest.mark.anyio
+async def test_margin_feasibility_on_micro_account():
+    """Verify that GoldRiskEngine accounts for margin correctly on micro balance with 1:1000 leverage."""
+    sym = SymbolInfo(
+        symbol="XAUUSD", bid=4153.20, ask=4153.40, point=0.01, digits=2, spread=0.20,
+        contract_size=100.0, tick_size=0.01, tick_value=1.0, volume_min=0.01, volume_max=100.0, volume_step=0.01
+    )
+    # Case A: Free margin = $5.60, leverage = 1000. 0.01 lot requires (4153.40 * 0.01 * 100) / 1000 = $4.15.
+    # $5.60 >= $4.15 -> has_margin must be True!
+    acc_sufficient = AccountInfo(balance=5.60, equity=5.60, margin=0.0, free_margin=5.60, currency="USD", leverage=1000)
+    engine = GoldRiskEngine(budget_usd=5.60, account_type="micro", risk_profile="aggressive")
+    lot, details = engine.calculate_lot_size(sym, acc_sufficient, sl_distance=1.50)
+    assert lot == 0.01
+    assert details["has_margin"] is True
+    assert details["margin_required"] == 4.15
+
+    # Case B: Free margin = $2.50, leverage = 1000. Required $4.15 > $2.50.
+    # Must report has_margin = False with explicit shortfall!
+    acc_insufficient = AccountInfo(balance=2.50, equity=2.50, margin=0.0, free_margin=2.50, currency="USD", leverage=1000)
+    lot_fail, details_fail = engine.calculate_lot_size(sym, acc_insufficient, sl_distance=1.50)
+    assert lot_fail == 0.0
+    assert details_fail["has_margin"] is False
+    assert "Short by $1.65" in details_fail["warning"]
+
+
+

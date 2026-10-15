@@ -417,7 +417,7 @@ class GoldRiskEngine:
                 }
 
         # Margin Requirement Check (using verified broker ask price)
-        current_price = symbol_info.ask
+        current_price = symbol_info.ask if symbol_info.ask > 0 else (symbol_info.bid if symbol_info.bid > 0 else 4150.0)
         leverage = max(account_info.leverage, 1)
         margin_required = (current_price * lot * contract_size) / leverage
         has_margin = margin_required <= account_info.free_margin
@@ -436,9 +436,10 @@ class GoldRiskEngine:
                 has_margin = True
                 warning_msg = f"Auto-clamped lot size to {lot:.2f} to fit free margin (${account_info.free_margin:.2f})."
             else:
+                shortfall = max(0.01, round(margin_required - account_info.free_margin, 2))
                 warning_msg = (
                     f"Margin Warning: Required ${margin_required:.2f} exceeds free margin ${account_info.free_margin:.2f} "
-                    f"at 1:{leverage} leverage."
+                    f"at 1:{leverage} leverage for {lot} {symbol_info.symbol} (Short by ${shortfall:.2f})."
                 )
                 return 0.0, {
                     "lot_size": 0.0,

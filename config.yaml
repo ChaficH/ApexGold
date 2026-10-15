@@ -99,10 +99,10 @@ trading:
   micro_budget_loss_cap_pct: 15.0      # Max loss % relative to budget for mitigation scratch (e.g. 15% of $2.56 = $0.38)
   max_mitigation_loss_r: 0.40          # Max floating R loss for early structural mitigation cut (saves 60-80% of SL)
 
-  # Institutional Planned Limits Engine:
+  # Institutional Planned Limits Engine (Disabled to prioritize immediate MARKET executions):
   limits:
-    enabled: true             # Enable institutional limit order calculations & staging
-    auto_place: true          # Auto-place limit orders on MT5 when score threshold is crossed in full_auto
+    enabled: false            # Disabled to prevent missed entries on pullbacks
+    auto_place: false         # Strictly false: execute confirmed signals at MARKET immediately
     min_score: 60             # Minimum confluence score required to place limit order
     min_distance_points: 0.50 # Minimum distance from current market price (points)
     max_distance_points: 4.50 # Maximum distance to place pending limit (points)

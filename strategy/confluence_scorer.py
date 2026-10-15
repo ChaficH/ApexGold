@@ -1385,28 +1385,11 @@ class ConfluenceScorer:
             regime = "ADAPTIVE_RUNNER"
 
         # -------------------------------------------------------------
-        # 5b. Smart Order Type Selection (MARKET vs LIMIT with Predictive Guard)
+        # 5b. Always Execute Confluence Signals at MARKET (No Waiting on Limits)
         # -------------------------------------------------------------
         order_type = "MARKET"
         limit_price = None
         invalidation_price = None
-
-        ema9_1m = TechnicalIndicators.ema(c_1m, 9)
-        ema9_1m_val = ema9_1m[-1] if len(ema9_1m) > 0 and not np.isnan(ema9_1m[-1]) else current_price
-        
-        # Limit Orders ONLY in WAVE_RUNNER mode when HTF is unanimously aligned and not near news/impulse
-        if is_gold and not is_impulse_active and not htf_diverged and sub_regime == "WAVE_RUNNER":
-            pullback_dist = abs(current_price - ema9_1m_val)
-            if direction == "BUY" and current_price > (ema9_1m_val + 0.40):
-                order_type = "BUY_LIMIT"
-                limit_price = round(ema9_1m_val + 0.10, 2)
-                invalidation_price = round(limit_price - 1.50, 2)
-                reasons.append(f"Smart BUY_LIMIT @ {limit_price:.2f} (EMA 9 pullback)")
-            elif direction == "SELL" and current_price < (ema9_1m_val - 0.40):
-                order_type = "SELL_LIMIT"
-                limit_price = round(ema9_1m_val - 0.10, 2)
-                invalidation_price = round(limit_price + 1.50, 2)
-                reasons.append(f"Smart SELL_LIMIT @ {limit_price:.2f} (EMA 9 pullback)")
 
 
         # Compute suggested SL and TP

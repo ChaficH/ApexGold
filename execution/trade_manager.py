@@ -856,9 +856,8 @@ class TradeManager:
 
 
         # 5. Smart Multi-Position Risk Guard (Pyramiding ONLY allowed for >= $150 balance with existing trade in solid profit)
-        if all_positions_count > 0:
-            if eff_balance < 150.0:
-                return False, f"Account balance (${eff_balance:.2f}) under $150 strictly limited to 1 active position."
+        if all_positions_count >= allowed_max:
+            return False, f"Maximum open positions reached ({all_positions_count}/{allowed_max}) for balance ${eff_balance:.2f}."
 
             for p in active_positions:
                 p_sym = p.symbol.upper()
@@ -928,13 +927,9 @@ class TradeManager:
             try:
                 account_info = await self.broker.get_account_info()
                 symbol_info = await self.broker.get_symbol_info(signal.symbol)
-                is_limit = getattr(signal, "order_type", "MARKET") in ["BUY_LIMIT", "SELL_LIMIT"]
-                if is_limit:
-                    order_type = OrderType.BUY_LIMIT if signal.direction == "BUY" else OrderType.SELL_LIMIT
-                    target_entry = signal.limit_price or signal.entry_price
-                else:
-                    order_type = OrderType.BUY if signal.direction == "BUY" else OrderType.SELL
-                    target_entry = signal.entry_price
+                # All bot trade signals execute immediately at MARKET to prevent missed runs
+                order_type = OrderType.BUY if signal.direction == "BUY" else OrderType.SELL
+                target_entry = signal.entry_price
 
                 # Volatility-Adaptive Stop Loss
                 is_gold = any(k in signal.symbol.upper() for k in ["XAU", "GOLD"])
