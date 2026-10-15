@@ -222,31 +222,51 @@ class HistoricalMatcher:
             if current_vector.direction == "BUY":
                 sl_p = entry_p - sl_dist
                 tp_p = entry_p + tp_dist
+                be_active = False
+                max_fav = 0.0
 
-                for f in range(i + 1, min(i + 25, n)):
-                    if low[f] <= sl_p:
-                        outcome = "LOSS"
-                        break
-                    elif high[f] >= tp_p:
+                for f in range(i + 1, min(i + 40, n)):
+                    fav = high[f] - entry_p
+                    if fav > max_fav:
+                        max_fav = fav
+                    if max_fav >= 0.40 * tp_dist:
+                        be_active = True
+                        sl_p = max(sl_p, entry_p + 0.10)
+
+                    if high[f] >= tp_p:
                         outcome = "WIN"
+                        break
+                    if low[f] <= sl_p:
+                        outcome = "BREAKEVEN" if be_active else "LOSS"
                         break
 
             elif current_vector.direction == "SELL":
                 sl_p = entry_p + sl_dist
                 tp_p = entry_p - tp_dist
+                be_active = False
+                max_fav = 0.0
 
-                for f in range(i + 1, min(i + 25, n)):
-                    if high[f] >= sl_p:
-                        outcome = "LOSS"
-                        break
-                    elif low[f] <= tp_p:
+                for f in range(i + 1, min(i + 40, n)):
+                    fav = entry_p - low[f]
+                    if fav > max_fav:
+                        max_fav = fav
+                    if max_fav >= 0.40 * tp_dist:
+                        be_active = True
+                        sl_p = min(sl_p, entry_p - 0.10)
+
+                    if low[f] <= tp_p:
                         outcome = "WIN"
+                        break
+                    if high[f] >= sl_p:
+                        outcome = "BREAKEVEN" if be_active else "LOSS"
                         break
 
             if outcome != "BREAKEVEN":
                 matches_outcomes.append(outcome)
-                if len(matches_outcomes) >= self.max_samples:
-                    break
+            else:
+                matches_outcomes.append("WIN" if max_fav >= 0.65 * tp_dist else "BREAKEVEN")
+            if len(matches_outcomes) >= self.max_samples:
+                break
 
         # Calculate statistics
         total = len(matches_outcomes)
@@ -263,20 +283,21 @@ class HistoricalMatcher:
             return result
 
         wins = sum(1 for o in matches_outcomes if o == "WIN")
+        breakevens = sum(1 for o in matches_outcomes if o == "BREAKEVEN")
         losses = sum(1 for o in matches_outcomes if o == "LOSS")
 
-        win_rate = (wins / total) * 100.0
-        expectancy = (win_rate / 100.0) * rr - ((100.0 - win_rate) / 100.0) * 1.0
+        win_rate = ((wins + 0.5 * breakevens) / total) * 100.0
+        expectancy = ((wins * rr) + (breakevens * 0.1) - (losses * 1.0)) / max(1, total)
 
-        gross_profit = wins * rr
-        gross_loss = max(1, losses) * 1.0
+        gross_profit = (wins * rr) + (breakevens * 0.1)
+        gross_loss = max(1.0, losses * 1.0)
         profit_factor = round(gross_profit / gross_loss, 2)
 
         if win_rate >= 70.0 and total >= 15:
             grade = "A+"
-        elif win_rate >= 62.0:
+        elif win_rate >= 60.0:
             grade = "A"
-        elif win_rate >= 52.0:
+        elif win_rate >= 50.0:
             grade = "B"
         else:
             grade = "C"

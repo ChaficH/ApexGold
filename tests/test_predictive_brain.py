@@ -300,3 +300,72 @@ def test_parkinson_volatility_classifier():
     assert metrics["parkinson_vol"] > 0.0
     assert "volatility_regime" in metrics
 
+
+def test_predictive_brain_momentum_continuation_passes_gate2():
+    """
+    Verify that an 82% candle position during an active bullish trend with strong order flow
+    qualifies as MOMENTUM CONTINUATION instead of being falsely blocked as a top-of-candle chase.
+    """
+    brain = ApexPredictiveBrain()
+    dfs = _generate_synthetic_dfs(trend="BULL")
+    
+    # Establish strong buyer delta in order flow
+    for _ in range(5):
+        brain.on_tick(2680.0, 2680.25)
+        brain.on_tick(2680.50, 2680.75)
+    
+    # Set price at ~82% of current 5m candle range
+    low_5m = float(dfs["5m"]["low"].iloc[-1])
+    high_5m = float(dfs["5m"]["high"].iloc[-1])
+    rng = high_5m - low_5m
+    bid_82 = low_5m + (0.82 * rng)
+    
+    state = brain.evaluate_market(
+        symbol="XAUUSD",
+        dfs=dfs,
+        current_bid=bid_82,
+        current_ask=bid_82 + 0.25,
+        spread=0.25,
+        now_ts=time.time(),
+    )
+    
+    # Verify Gate 2 status
+    gate_2 = [g for g in state["gates"] if g["name"] == "Value-Entry / Pullback Check"][0]
+    assert gate_2["passed"] is True
+    assert gate_2["status"] == "PASS"
+    assert "CONTINUATION" in gate_2["detail"] or "STRUCTURE" in gate_2["detail"] or "PULLBACK" in gate_2["detail"]
+    
+    # Verify mathematical edge gate
+    gate_5 = [g for g in state["gates"] if "Mathematical Edge" in g["name"]][0]
+    assert gate_5["passed"] is True
+    assert state["expected_value_r"] >= 0.20
+
+
+def test_predictive_brain_fast_scalp_allowed_during_pullback():
+    """Verify FAST_SCALP signals are permitted through filter_signal during pullback watch."""
+    brain = ApexPredictiveBrain()
+    dfs = _generate_synthetic_dfs(trend="BULL")
+    
+    # Force WAITING_FOR_PULLBACK state by setting price slightly extended without order flow boost
+    vwap_c = float(dfs["5m"]["close"].iloc[-1])
+    high_5m = float(dfs["5m"]["high"].iloc[-1])
+    
+    state = brain.evaluate_market(
+        symbol="XAUUSD",
+        dfs=dfs,
+        current_bid=high_5m - 0.02, # tip of candle
+        current_ask=high_5m + 0.23,
+        spread=0.25,
+        now_ts=time.time(),
+    )
+    
+    class FastScalpSignal:
+        direction = "BUY"
+        mode = "FAST_SCALP"
+        target_rr = 2.0
+    
+    allowed, reason = brain.filter_signal(FastScalpSignal())
+    # Fast scalp is allowed past the pullback gate (or evaluated by EV)
+    assert "extended in buy direction" not in reason.lower()
+
+

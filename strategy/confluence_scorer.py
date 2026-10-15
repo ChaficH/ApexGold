@@ -882,11 +882,11 @@ class ConfluenceScorer:
         dist_vwap = current_price - vwap_curr
 
         if not is_pre_news_aligned:
-            # Calibrated Anti-Chase: Strictly prevent buying extreme upper exhaustion wicks (> 0.82)
-            # or selling extreme lower exhaustion wicks (< 0.18).
-            # Allow clean trend continuation entries between 0.30 and 0.80 without hesitation!
-            max_chase_buy = 0.82 if not is_scalp_mode else 0.88
-            min_chase_sell = 0.18 if not is_scalp_mode else 0.12
+            # Calibrated Anti-Chase: Strictly prevent buying extreme upper exhaustion wicks (> 0.90 or >= 40% upper wick)
+            # or selling extreme lower exhaustion wicks (< 0.10 or >= 40% lower wick).
+            # Allow clean trend continuation entries between 0.20 and 0.88 with confidence!
+            max_chase_buy = 0.90 if not is_scalp_mode else 0.92
+            min_chase_sell = 0.10 if not is_scalp_mode else 0.08
 
             atr_bound = 2.50 if is_gold else 0.0015
             if df_15m is not None and len(df_15m) >= 15:
@@ -897,18 +897,23 @@ class ConfluenceScorer:
                 calc_atr = TechnicalIndicators.atr(df_5m["high"].values, df_5m["low"].values, df_5m["close"].values, 14)[-1]
                 if not np.isnan(calc_atr) and calc_atr > 0:
                     atr_bound = float(calc_atr)
-            overextended_vwap = max(3.20, 1.30 * atr_bound)
+            overextended_vwap = max(3.50, 1.40 * atr_bound)
+
+            c_5m_curr = float(df_5m["close"].iloc[-1])
+            o_5m_curr = float(df_5m["open"].iloc[-1])
+            upper_wick_5m = (high_5m_curr - max(c_5m_curr, o_5m_curr)) / range_5m
+            lower_wick_5m = (min(c_5m_curr, o_5m_curr) - low_5m_curr) / range_5m
 
             if direction == "BUY":
-                if candle_pos_5m > max_chase_buy and not is_demand_reversal:
-                    logger.debug(f"[{symbol} BUY] Blocked: Buying extreme top wick of 5m candle (pos: {candle_pos_5m:.2f} > {max_chase_buy:.2f}). Waiting for pullback.")
+                if (candle_pos_5m > max_chase_buy or (upper_wick_5m >= 0.40 and candle_pos_5m > 0.82)) and not is_demand_reversal:
+                    logger.debug(f"[{symbol} BUY] Blocked: Buying extreme top wick of 5m candle (pos: {candle_pos_5m:.2f}, wick: {upper_wick_5m:.2f}). Waiting for pullback.")
                     return None
                 if dist_vwap > overextended_vwap and stoch_5m.get("is_overbought", False) and not is_demand_reversal:
                     logger.debug(f"[{symbol} BUY] Blocked: Extended +{dist_vwap:.2f} pts above VWAP with StochRSI overbought. Waiting for mean reversion.")
                     return None
             else: # SELL
-                if candle_pos_5m < min_chase_sell and not is_supply_reversal:
-                    logger.debug(f"[{symbol} SELL] Blocked: Selling extreme bottom wick of 5m candle (pos: {candle_pos_5m:.2f} < {min_chase_sell:.2f}). Waiting for bounce.")
+                if (candle_pos_5m < min_chase_sell or (lower_wick_5m >= 0.40 and candle_pos_5m < 0.18)) and not is_supply_reversal:
+                    logger.debug(f"[{symbol} SELL] Blocked: Selling extreme bottom wick of 5m candle (pos: {candle_pos_5m:.2f}, wick: {lower_wick_5m:.2f}). Waiting for bounce.")
                     return None
                 if dist_vwap < -overextended_vwap and stoch_5m.get("is_oversold", False) and not is_supply_reversal:
                     logger.debug(f"[{symbol} SELL] Blocked: Extended {dist_vwap:.2f} pts below VWAP with StochRSI oversold. Waiting for mean reversion.")
