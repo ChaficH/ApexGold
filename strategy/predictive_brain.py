@@ -965,11 +965,36 @@ class ApexPredictiveBrain:
             hasattr(self, "experience_learner")
             and self.experience_learner
             and len(positions) == 0
-            and status in ["WAITING_FOR_PULLBACK", "HUNTING_SETUP", "WAITING_FOR_ALIGNMENT"]
         ):
             target_p = buy_target if dominant_dir == "BUY" else sell_target
             inval_p = buy_inval if dominant_dir == "BUY" else sell_inval
+            obs_ctx = {
+                "candle_pos_5m": candle_pos_5m,
+                "vwap_deviation": vwap_diff,
+                "stoch_rsi_k": stoch_k,
+                "kaufman_er": efficiency_ratio,
+                "r_squared": r_squared,
+                "order_flow_delta": float(ensemble_telemetry.delta_ratio_60s if ensemble_telemetry else 0.0),
+                "is_zone_reversal": 0.0,
+            }
             try:
+                # 1. Fast Scalp Micro-Hypothesis (90s horizon)
+                scalp_tgt = (current_bid + 1.60) if dominant_dir == "BUY" else (current_bid - 1.60)
+                scalp_inv = (current_bid - 1.10) if dominant_dir == "BUY" else (current_bid + 1.10)
+                self.experience_learner.record_shadow_candidate(
+                    symbol=symbol,
+                    direction=dominant_dir,
+                    reference_price=current_bid,
+                    target_price=scalp_tgt,
+                    invalidation_price=scalp_inv,
+                    target_rr=1.45,
+                    gate_block_reason=verdict_badge,
+                    context=obs_ctx,
+                    now=now,
+                    horizon_type="SCALP_M1",
+                    horizon_seconds=90.0,
+                )
+                # 2. Structural Wave / Pullback Hypothesis (360s horizon)
                 self.experience_learner.record_shadow_candidate(
                     symbol=symbol,
                     direction=dominant_dir,
@@ -978,16 +1003,10 @@ class ApexPredictiveBrain:
                     invalidation_price=inval_p,
                     target_rr=target_rr,
                     gate_block_reason=verdict_badge,
-                    context={
-                        "candle_pos_5m": candle_pos_5m,
-                        "vwap_deviation": vwap_diff,
-                        "stoch_rsi_k": stoch_k,
-                        "kaufman_er": efficiency_ratio,
-                        "r_squared": r_squared,
-                        "order_flow_delta": float(ensemble_telemetry.delta_ratio_60s if ensemble_telemetry else 0.0),
-                        "is_zone_reversal": 0.0,
-                    },
+                    context=obs_ctx,
                     now=now,
+                    horizon_type="SWING_PULLBACK",
+                    horizon_seconds=360.0,
                 )
             except Exception as e:
                 logger.debug(f"Observer setup record error: {e}")

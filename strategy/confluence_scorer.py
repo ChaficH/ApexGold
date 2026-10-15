@@ -553,14 +553,26 @@ class ConfluenceScorer:
                 opposing_lows = [sl["price"] for sl in swings_1h.get("lows", []) if sl["price"] < cur_p]
                 h1_open_room = (cur_p - max(opposing_lows) >= required_room) if opposing_lows else True
 
+        # AI Continual Learning Modulation:
+        # If observer has documented missed expansions, modulate aggressiveness and threshold to eliminate hesitation!
+        ai_hesitation_trim = 0
+        ai_boost_str = ""
+        if hasattr(self, "predictive_brain") and self.predictive_brain and hasattr(self.predictive_brain, "experience_learner") and self.predictive_brain.experience_learner:
+            obs_stats = self.predictive_brain.experience_learner.observer_stats
+            missed_count = obs_stats.get("missed_expansions_learned", 0)
+            if missed_count >= 2:
+                ai_hesitation_trim = min(4, 2 + (missed_count // 3))
+                ai_boost_str = f" | 🔭 AI Observer: -{ai_hesitation_trim} pts Hesitation Reduction ({missed_count} Expansions Learned)"
+
         # ----------------------------------------------------------------------
         # Sub-Regime 2: Institutional Wave Runner (55%-68% Aggressiveness)
         # Detected when 1H + 15m align, 15m ADX >= 22.0, and open room to run > 2.5R
         # ----------------------------------------------------------------------
         if h1_aligned and (m15_adx >= 22.0) and h1_open_room:
             dial_pct = 64.0 if m15_adx >= 25.0 else 58.0
-            threshold = 74
-            reason_str = f"Strong 1H/15m Trend Alignment (15m ADX {m15_adx:.1f} >= 22)"
+            threshold = max(62, 74 - ai_hesitation_trim)
+            dial_pct = min(88.0, dial_pct + (ai_hesitation_trim * 2.0))
+            reason_str = f"Strong 1H/15m Trend Alignment (15m ADX {m15_adx:.1f} >= 22){ai_boost_str}"
             pill_text = f"🧠 Auto-Brain: {dial_pct:.0f}% (Wave Runner: Trend & ADX {m15_adx:.0f} | Min: {threshold})"
             full_reason = f"Institutional Wave Runner Mode — {reason_str} | Threshold: {threshold}/100"
 
@@ -585,8 +597,9 @@ class ConfluenceScorer:
         # ----------------------------------------------------------------------
         vel_mult = tick_velocity if tick_velocity > 0 else 1.0
         dial_pct = 78.0 if vel_mult >= 1.5 else (74.0 if is_london_ny_active else 72.0)
-        threshold = 75
-        reason_str = f"High Velocity Flow inside Box ({'London/NY Active' if is_london_ny_active else 'Velocity Surge'})"
+        threshold = max(60, 75 - ai_hesitation_trim)
+        dial_pct = min(92.0, dial_pct + (ai_hesitation_trim * 2.0))
+        reason_str = f"High Velocity Flow inside Box ({'London/NY Active' if is_london_ny_active else 'Velocity Surge'}){ai_boost_str}"
         pill_text = f"🧠 Auto-Brain: {dial_pct:.0f}% (Fast Scalp: Flow Momentum | Min: {threshold})"
         full_reason = f"Fast Hit-and-Run Scalp Mode — {reason_str} | Threshold: {threshold}/100"
 
@@ -1460,6 +1473,48 @@ class ConfluenceScorer:
             else:
                 breakdown["htf_divergence"] = -25
                 reasons.append("Higher-Timeframe Trend Divergence (-25 Penalty)")
+
+        # -------------------------------------------------------------
+        # Online AI Continual Learning Integration (Pattern Synergy & Mistake Reflex)
+        # -------------------------------------------------------------
+        if hasattr(self, "predictive_brain") and self.predictive_brain and hasattr(self.predictive_brain, "experience_learner") and self.predictive_brain.experience_learner:
+            try:
+                eval_ctx = {
+                    "score": sum(breakdown.values()),
+                    "candle_pos_5m": float(candle_pos_5m),
+                    "vwap_deviation": float(dist_vwap),
+                    "stoch_rsi_k": float(stoch_5m.get("k", 50.0) if isinstance(stoch_5m, dict) else 50.0),
+                    "kaufman_er": float(self.predictive_brain.latest_evaluation.kaufman_er) if (self.predictive_brain.latest_evaluation) else 0.50,
+                    "r_squared": float(self.predictive_brain.latest_evaluation.r_squared) if (self.predictive_brain.latest_evaluation) else 0.50,
+                    "order_flow_delta": float(self.predictive_brain.ensemble_suite.order_flow_tracker.get_delta_ratio(60.0)) if (hasattr(self.predictive_brain, "ensemble_suite") and hasattr(self.predictive_brain.ensemble_suite, "order_flow_tracker")) else 0.0,
+                    "is_zone_reversal": 1.0 if is_zone_reversal else 0.0,
+                    "trend_align_1h": 1.0 if h1_ema50_aligned else -1.0,
+                    "trend_align_15m": 1.0 if m15_trend_aligned else -1.0,
+                    "news_bias_direction": self.auto_brain_state.get("news_bias", "NEUTRAL"),
+                    "news_confidence": float(self.auto_brain_state.get("news_confidence", 0.50)),
+                    "historical_pattern_wr": 55.0,
+                }
+                exp_eval = self.predictive_brain.experience_learner.evaluate_candidate(
+                    symbol=symbol,
+                    direction=direction,
+                    context=eval_ctx,
+                    atr=atr_15m_ref,
+                )
+                if exp_eval.is_vetoed:
+                    breakdown["ai_mistake_reflex"] = -25
+                    reasons.append(f"🛑 AI Mistake Reflex Veto: {exp_eval.reflex_note}")
+                elif exp_eval.max_success_similarity >= 0.72:
+                    syn_pts = int(round(exp_eval.synergy_bonus * 100))
+                    syn_pts = min(10, max(3, syn_pts))
+                    breakdown["ai_pattern_synergy"] = syn_pts
+                    reasons.append(f"AI Synergy Pattern Match ({int(exp_eval.similarity_to_success * 100)}% archetype) (+{syn_pts})")
+                elif exp_eval.max_mistake_similarity >= 0.70:
+                    pen_pts = int(round(exp_eval.mistake_penalty * 100))
+                    pen_pts = min(12, max(3, pen_pts))
+                    breakdown["ai_mistake_reflex"] = -pen_pts
+                    reasons.append(f"AI Mistake Reflex Penalty ({int(exp_eval.similarity_to_mistake * 100)}% trap) (-{pen_pts})")
+            except Exception as e:
+                logger.debug(f"AI experience learner evaluation error: {e}")
 
         # Total Confluence Score
         total_score = sum(breakdown.values())

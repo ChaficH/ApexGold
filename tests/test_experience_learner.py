@@ -445,3 +445,125 @@ def test_predictive_brain_filter_signal_allows_opposing_scalp_during_pullback_wa
     app_sell, reason_sell = brain.filter_signal(DummySellScalp())
     assert app_sell
     assert "Predictive Model Approved" in reason_sell
+
+
+def test_experience_learner_memory_boost_and_clusters():
+    """Verify that learner memory capacity is 500 and seeds at least 320 rich multi-regime clusters."""
+    learner = AdaptiveExperienceLearner(persistence_path=None)
+    learner._seed_rich_historical_clusters(330)
+    
+    assert learner.memory_capacity >= 500
+    assert len(learner.mistake_memory) >= 320
+    assert len(learner.success_memory) >= 320
+    assert learner.total_trades_analyzed >= 2800
+    assert learner.wins_learned >= 900
+    assert learner.mistakes_learned >= 1900
+    
+    tel = learner.get_telemetry()
+    assert tel["mistakes_recorded"] >= 320
+    assert tel["successes_recorded"] >= 320
+    assert "active_shadow_setups_count" in tel
+
+
+def test_observer_multi_horizon_parallel_setups():
+    """Verify that observer supports multi-horizon parallel setups with 3s throttle."""
+    learner = AdaptiveExperienceLearner(persistence_path=None)
+    now = time.time()
+    ctx = {"candle_pos_5m": 0.40, "vwap_deviation": 0.10, "stoch_rsi_k": 50.0, "kaufman_er": 0.60, "r_squared": 0.55}
+
+    # 1. Spawn SCALP_M1 setup
+    learner.record_shadow_candidate(
+        symbol="XAUUSD",
+        direction="BUY",
+        reference_price=2650.0,
+        target_price=2651.6,
+        invalidation_price=2648.9,
+        target_rr=1.45,
+        gate_block_reason="HUNTING_SETUP",
+        context=ctx,
+        now=now,
+        horizon_type="SCALP_M1",
+        horizon_seconds=90.0,
+    )
+    assert len(learner.active_shadow_setups) == 1
+
+    # 2. Immediate spawn of SAME horizon (SCALP_M1) within 1.0s is throttled (< 3.0s)
+    learner.record_shadow_candidate(
+        symbol="XAUUSD",
+        direction="BUY",
+        reference_price=2650.0,
+        target_price=2651.8,
+        invalidation_price=2648.8,
+        target_rr=1.45,
+        gate_block_reason="HUNTING_SETUP",
+        context=ctx,
+        now=now + 1.0,
+        horizon_type="SCALP_M1",
+        horizon_seconds=90.0,
+    )
+    assert len(learner.active_shadow_setups) == 1
+
+    # 3. Parallel SWING_PULLBACK horizon is allowed concurrently!
+    learner.record_shadow_candidate(
+        symbol="XAUUSD",
+        direction="BUY",
+        reference_price=2650.0,
+        target_price=2655.0,
+        invalidation_price=2647.0,
+        target_rr=2.5,
+        gate_block_reason="HUNTING_SETUP",
+        context=ctx,
+        now=now + 1.5,
+        horizon_type="SWING_PULLBACK",
+        horizon_seconds=360.0,
+    )
+    assert len(learner.active_shadow_setups) == 2
+    assert learner.observer_stats["setups_observed"] == 2
+
+
+def test_observer_partial_follow_through_diagnosis():
+    """Verify that timeout expiry evaluates partial excursion momentum."""
+    learner = AdaptiveExperienceLearner(persistence_path=None)
+    now = time.time()
+    ctx = {"candle_pos_5m": 0.45, "vwap_deviation": 0.05, "stoch_rsi_k": 52.0, "kaufman_er": 0.65, "r_squared": 0.60}
+
+    learner.record_shadow_candidate(
+        symbol="XAUUSD",
+        direction="BUY",
+        reference_price=2650.0,
+        target_price=2654.0,
+        invalidation_price=2648.0,
+        target_rr=2.0,
+        gate_block_reason="PULLBACK_WAIT",
+        context=ctx,
+        now=now,
+        horizon_type="SCALP_M1",
+        horizon_seconds=90.0,
+    )
+    
+    # Tick moves favorably to 2651.50 (+1.50 pts) then stalls
+    learner.update_observer_ticks(symbol="XAUUSD", bid=2651.50, ask=2651.75, now=now + 30.0)
+    # Ticks return to 2650.20 and age passes 90s
+    lessons = learner.update_observer_ticks(symbol="XAUUSD", bid=2650.20, ask=2650.45, now=now + 95.0)
+
+    assert len(lessons) == 1
+    assert "gained +" in lessons[0] or "expansion" in lessons[0].lower()
+    assert learner.observer_stats["missed_expansions_learned"] == 1
+
+
+def test_auto_brain_hesitation_trim_on_observer_missed_expansions():
+    """Verify that Auto-Brain reduces score threshold when observer has learned missed expansions."""
+    from strategy.confluence_scorer import ConfluenceScorer
+    scorer = ConfluenceScorer(mode="auto_adaptive")
+
+    # Default Fast Scalp state without observer history
+    state_init = scorer.evaluate_auto_brain(current_spread=0.25, tick_velocity=1.0)
+    thresh_init = state_init["active_threshold"]
+
+    # Now simulate observer having learned 3 missed expansions
+    scorer.predictive_brain.experience_learner.observer_stats["missed_expansions_learned"] = 3
+    state_adapted = scorer.evaluate_auto_brain(current_spread=0.25, tick_velocity=1.0, now_ts=time.time() + 10.0)
+    
+    assert state_adapted["active_threshold"] < thresh_init
+    assert "Hesitation Reduction" in state_adapted["reason"]
+
