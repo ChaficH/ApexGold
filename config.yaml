@@ -119,18 +119,18 @@ strategy:
     sniper: 82
 
   risk_reward:
-    tier_1_sniper: 2.5
-    tier_2_balanced: 1.8
-    tier_3_aggressive: 1.5
+    tier_1_sniper: 4.5
+    tier_2_balanced: 3.5
+    tier_3_aggressive: 2.8
 
   trade_management:
     breakeven_trigger_r:
       sniper: 1.0     # Move SL to BE at +1.0R
-      balanced: 0.8   # Move SL to BE at +0.8R
-      aggressive: 0.7 # Move SL to BE at +0.7R
+      balanced: 0.85  # Move SL to BE at +0.85R
+      aggressive: 0.80 # Move SL to BE at +0.80R
     breakeven_buffer_points: 3 # Pad BE slightly above entry to cover broker commission
-    trailing_trigger_r: 1.5    # Start trailing SL after +1.5R floating profit
-    trailing_step_r: 0.5       # Trail stop in 0.5R increments behind structure
+    trailing_trigger_r: 1.8    # Start trailing SL after +1.8R floating profit
+    trailing_step_r: 0.6       # Trail stop in 0.6R increments behind structure
 
   weights:
     h1_macro_bias: 20

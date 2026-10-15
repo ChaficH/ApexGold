@@ -555,9 +555,9 @@ class ConfluenceScorer:
                 "pill_text": pill_text,
                 "full_reason": full_reason,
                 "reason": reason_str,
-                "target_rr": 2.8,
-                "be_lock_r": 0.65,
-                "stall_exit_seconds": 120.0,
+                "target_rr": 4.5,
+                "be_lock_r": 0.85,
+                "stall_exit_seconds": 180.0,
                 "last_update": now,
             }
             return self.auto_brain_state
@@ -581,9 +581,9 @@ class ConfluenceScorer:
             "pill_text": pill_text,
             "full_reason": full_reason,
             "reason": reason_str,
-            "target_rr": 2.2,
-            "be_lock_r": 0.65,
-            "stall_exit_seconds": 60.0,
+            "target_rr": 3.2,
+            "be_lock_r": 0.80,
+            "stall_exit_seconds": 90.0,
             "last_update": now,
         }
         return self.auto_brain_state
@@ -1422,35 +1422,38 @@ class ConfluenceScorer:
         # Sub-regime and trade parameters
         if self.mode == "auto_adaptive":
             sub_regime = self.auto_brain_state.get("sub_regime", "WAVE_RUNNER")
-            target_rr = float(self.auto_brain_state.get("target_rr", 2.6))
-            be_lock_r = float(self.auto_brain_state.get("be_lock_r", 0.65))
-            stall_exit_seconds = float(self.auto_brain_state.get("stall_exit_seconds", 90.0))
+            target_rr = float(self.auto_brain_state.get("target_rr", 4.2))
+            be_lock_r = float(self.auto_brain_state.get("be_lock_r", 0.85))
+            stall_exit_seconds = float(self.auto_brain_state.get("stall_exit_seconds", 120.0))
         elif self.mode in ["hyper", "aggressive", "scalp", "scalping", "fast_scalp"]:
             sub_regime = "FAST_SCALP"
-            target_rr = 1.8 if self.mode in ["hyper", "scalp", "scalping", "fast_scalp"] else 2.2
-            be_lock_r = 0.50 if self.mode in ["hyper", "scalp", "scalping", "fast_scalp"] else 0.65
-            stall_exit_seconds = 45.0 if self.mode in ["hyper", "scalp", "scalping", "fast_scalp"] else 60.0
+            target_rr = 3.2 if self.mode in ["hyper", "scalp", "scalping", "fast_scalp"] else 3.8
+            be_lock_r = 0.80 if self.mode in ["hyper", "scalp", "scalping", "fast_scalp"] else 0.85
+            stall_exit_seconds = 60.0 if self.mode in ["hyper", "scalp", "scalping", "fast_scalp"] else 90.0
         elif self.mode == "cautious":
             sub_regime = "WAVE_RUNNER"
-            target_rr = 2.8
-            be_lock_r = 0.65
-            stall_exit_seconds = 120.0
+            target_rr = 4.8
+            be_lock_r = 0.85
+            stall_exit_seconds = 180.0
         elif self.mode == "manual":
             if self.aggressiveness_pct >= 70.0:
                 sub_regime = "FAST_SCALP"
-                target_rr = 1.8 if self.aggressiveness_pct >= 85.0 else 2.0
-                be_lock_r = 0.50 if self.aggressiveness_pct >= 85.0 else 0.60
-                stall_exit_seconds = 45.0 if self.aggressiveness_pct >= 85.0 else 60.0
+                target_rr = 3.0 if self.aggressiveness_pct >= 85.0 else 3.6
+                be_lock_r = 0.80 if self.aggressiveness_pct >= 85.0 else 0.85
+                stall_exit_seconds = 60.0 if self.aggressiveness_pct >= 85.0 else 90.0
             else:
                 sub_regime = "WAVE_RUNNER"
-                target_rr = 2.5
-                be_lock_r = 0.65
-                stall_exit_seconds = 90.0
+                target_rr = 4.2
+                be_lock_r = 0.85
+                stall_exit_seconds = 120.0
         else: # Standard
             sub_regime = "WAVE_RUNNER" if total_score >= 68 else "FAST_SCALP"
-            target_rr = 2.4
-            be_lock_r = 0.65
-            stall_exit_seconds = 90.0
+            target_rr = 4.0 if total_score >= 68 else 3.2
+            be_lock_r = 0.85
+            stall_exit_seconds = 120.0
+
+        if tier == "TIER_1_SNIPER":
+            target_rr = max(target_rr, 4.5)
 
         if sub_regime == "FAST_SCALP":
             regime = "ADAPTIVE_SCALP"

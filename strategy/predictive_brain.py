@@ -283,8 +283,8 @@ class ApexPredictiveBrain:
 
         p_win = round(self._sigmoid(logit), 3)
 
-        # Target reward-to-risk (adaptive based on trend strength)
-        target_rr = 2.2 if efficiency_ratio >= 0.55 else 1.6
+        # Target reward-to-risk (adaptive based on trend strength, aiming for high profits)
+        target_rr = 4.2 if efficiency_ratio >= 0.50 else 3.2
         spread_cost_r = (spread / 1.50) * 0.08  # Normalized spread impact
         
         # Mathematical EV in R-multiples: EV = P(win) * RR - (1 - P(win)) * 1.0 - Cost

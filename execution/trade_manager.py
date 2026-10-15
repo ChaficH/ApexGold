@@ -901,10 +901,10 @@ class TradeManager:
                 sl_distance=signal.risk_r_dist
             )
             total_projected_risk_pct = ((total_open_risk_usd + cand_risk) / eff_balance) * 100.0
-            if eff_balance <= 35.0 and total_open_risk_usd == 0.0:
-                pass  # Always permit single minimum lot entry on micro accounts
+            if eff_balance <= 100.0 and total_open_risk_usd == 0.0:
+                pass  # Always permit single minimum lot entry on micro/small accounts
             else:
-                allowed_max_risk = max(self.max_total_open_risk_pct, 45.0) if eff_balance <= 35.0 else self.max_total_open_risk_pct
+                allowed_max_risk = max(self.max_total_open_risk_pct, 45.0) if eff_balance <= 35.0 else (max(self.max_total_open_risk_pct, 20.0) if eff_balance <= 150.0 else self.max_total_open_risk_pct)
                 if total_projected_risk_pct > allowed_max_risk:
                     return False, f"Total open risk limit reached ({total_projected_risk_pct:.1f}% > {allowed_max_risk:.1f}% allowed)"
 
@@ -1312,11 +1312,11 @@ class TradeManager:
                             guaranteed_offset = 0.20 * pos.risk_r_dist
                             if pos.direction == "BUY":
                                 new_sl = round(pos.open_price + spread_buf + guaranteed_offset, 2 if is_gold else 5)
-                                new_tp = round(pos.open_price + (4.0 * pos.risk_r_dist), 2 if is_gold else 5)
+                                new_tp = round(pos.open_price + (5.0 * pos.risk_r_dist), 2 if is_gold else 5)
                                 is_tighter = (new_sl > pos.sl)
                             else:
                                 new_sl = round(pos.open_price - spread_buf - guaranteed_offset, 2 if is_gold else 5)
-                                new_tp = round(pos.open_price - (4.0 * pos.risk_r_dist), 2 if is_gold else 5)
+                                new_tp = round(pos.open_price - (5.0 * pos.risk_r_dist), 2 if is_gold else 5)
                                 is_tighter = (new_sl < pos.sl if pos.sl > 0 else True)
 
                             if is_tighter:
@@ -1329,7 +1329,7 @@ class TradeManager:
                                     pos.last_mod_time = time.time()
                                     logger.info(
                                         f"[PRE-NEWS FREE-ROLL LOCK] #{ticket} {pos.direction} locked SL to +0.20R profit floor ({new_sl}) "
-                                        f"and expanded TP to 4.0R ({new_tp}) before upcoming news!"
+                                        f"and expanded TP to 5.0R ({new_tp}) before upcoming news!"
                                     )
                                 else:
                                     logger.warning(f"[PRE-NEWS FREE-ROLL FAILED] Broker rejected modify for #{ticket}")
@@ -1409,7 +1409,8 @@ class TradeManager:
                     await self._evaluate_ratchet_floor(pos, floating_r, current_price)
 
                     # =============================================================
-                    # INTELLIGENT RULE 6: Fast Scalp Velocity Stall Exit
+                    # INTELLIGENT RULE 6: Fast Scalp Velocity Stall Profit Lock
+                    # Tightens SL to guaranteed profit floor instead of cutting runners short!
                     # =============================================================
                     if pos.sub_regime == "FAST_SCALP" and floating_r >= 1.50 and (now - pos.entry_time >= 90.0):
                         current_vel = self.news_reactor._latest_velocity or 0.0
@@ -1418,19 +1419,36 @@ class TradeManager:
                         if is_velocity_dead:
                             if pos.stall_start_time == 0.0:
                                 pos.stall_start_time = now
-                            elif now - pos.stall_start_time >= max(30.0, pos.stall_exit_seconds):
-                                stall_reason = f"Fast Scalp Stall Bank (+{floating_r:.2f}R)"
-                                logger.info(
-                                    f"[FAST SCALP STALL EXIT] Velocity stalled for {now - pos.stall_start_time:.1f}s (>=30s). "
-                                    f"Banking cash now at +{floating_r:.2f}R for #{ticket}!"
-                                )
-                                pos.is_closing = True
-                                pos.close_reason = stall_reason
-                                pos.close_trigger_price = current_price
-                                await self.broker.close_position(ticket)
-                                if getattr(self.broker, "_mt5_queue", None) is None:
-                                    await self._on_position_closed(pos, reason=stall_reason, current_price=current_price)
-                                continue
+                            elif now - pos.stall_start_time >= max(60.0, pos.stall_exit_seconds):
+                                # Rather than dumping the runner, tighten stop loss to lock +1.05R guaranteed cash!
+                                # This protects the gain while leaving the trade active to hit high TP (+3.5R - 6.0R+).
+                                is_gold = any(k in pos.symbol.upper() for k in ["XAU", "GOLD"])
+                                min_stall_floor = pos.risk_r_dist * 1.05
+                                target_sl = round(pos.open_price + min_stall_floor if pos.direction == "BUY" else pos.open_price - min_stall_floor, 2 if is_gold else 5)
+                                is_tighter = (pos.direction == "BUY" and target_sl > pos.sl) or (pos.direction == "SELL" and (pos.sl <= 0 or target_sl < pos.sl))
+                                if is_tighter:
+                                    ok = await self.broker.modify_position(pos.ticket, sl=target_sl, tp=pos.tp)
+                                    if ok:
+                                        pos.sl = target_sl
+                                        pos.last_mod_time = now
+                                        logger.info(
+                                            f"[FAST SCALP PROFIT LOCK] Velocity stalled at +{floating_r:.2f}R. "
+                                            f"Tightened SL to {target_sl:.2f} (Locking +1.05R profit floor) to let winner run to TP!"
+                                        )
+                                # Only if stalled for an extreme duration (>= 180s) and profit actively drops below +0.90R:
+                                if now - pos.stall_start_time >= 180.0 and floating_r < 0.90:
+                                    stall_reason = f"Fast Scalp Momentum Decay Bank (+{floating_r:.2f}R)"
+                                    logger.info(
+                                        f"[FAST SCALP MOMENTUM DECAY EXIT] Extended stall (>=180s) and profit decayed. "
+                                        f"Banking cash now at +{floating_r:.2f}R for #{ticket}!"
+                                    )
+                                    pos.is_closing = True
+                                    pos.close_reason = stall_reason
+                                    pos.close_trigger_price = current_price
+                                    await self.broker.close_position(ticket)
+                                    if getattr(self.broker, "_mt5_queue", None) is None:
+                                        await self._on_position_closed(pos, reason=stall_reason, current_price=current_price)
+                                    continue
                         else:
                             pos.stall_start_time = 0.0
 
@@ -1593,10 +1611,13 @@ class TradeManager:
             return
 
         current_target_r = abs(pos.tp - pos.open_price) / pos.risk_r_dist
-        # If we have reached >= 70% of current TP and target is under 6.0R:
-        if floating_r >= 0.70 * current_target_r and current_target_r < 6.0:
-            # Check 1m momentum
-            df_1m = await self.data_hub.get_dataframe(pos.symbol, "1m", count=3)
+        # If we have reached >= 60% of current TP or >= 1.50R, and target is under 10.0R:
+        if (floating_r >= 0.60 * current_target_r or floating_r >= 1.50) and current_target_r < 10.0:
+            # Check 1m and 5m momentum
+            df_1m = await self.data_hub.get_dataframe(pos.symbol, "1m", count=5)
+            df_5m = await self.data_hub.get_dataframe(pos.symbol, "5m", count=5)
+
+            is_trending_strong = False
             if df_1m is not None and len(df_1m) >= 2:
                 c1 = df_1m["close"].iloc[-1]
                 o1 = df_1m["open"].iloc[-1]
@@ -1604,48 +1625,58 @@ class TradeManager:
                 l1 = df_1m["low"].iloc[-1]
                 rng1 = max(0.01, h1 - l1)
 
-                is_trending_strong = False
                 if pos.direction == "BUY" and c1 > o1:
                     upper_wick = h1 - c1
-                    if upper_wick / rng1 < 0.35: # Clean candle with little opposing wick
+                    if upper_wick / rng1 < 0.40: # Clean bull candle with little opposing wick
                         is_trending_strong = True
                 elif pos.direction == "SELL" and c1 < o1:
                     lower_wick = c1 - l1
-                    if lower_wick / rng1 < 0.35:
+                    if lower_wick / rng1 < 0.40:
                         is_trending_strong = True
 
-                if is_trending_strong:
-                    # Expand TP by 1.2R to 1.5R
-                    new_target_r = round(current_target_r + 1.25, 1)
-                    is_gold = any(k in pos.symbol.upper() for k in ["XAU", "GOLD"])
-                    if pos.direction == "BUY":
-                        new_tp = round(pos.open_price + (pos.risk_r_dist * new_target_r), 2 if is_gold else 5)
-                    else:
-                        new_tp = round(pos.open_price - (pos.risk_r_dist * new_target_r), 2 if is_gold else 5)
+            # If 5m also supports trend direction, confirm expansion
+            if df_5m is not None and len(df_5m) >= 2:
+                c5 = df_5m["close"].iloc[-1]
+                o5 = df_5m["open"].iloc[-1]
+                if pos.direction == "BUY" and c5 > o5:
+                    is_trending_strong = True
+                elif pos.direction == "SELL" and c5 < o5:
+                    is_trending_strong = True
 
-                    if new_tp != pos.tp:
-                        old_tp = pos.tp
-                        ok = await self.broker.modify_position(pos.ticket, sl=pos.sl, tp=new_tp)
-                        if ok:
-                            pos.tp = new_tp
-                            pos.current_regime = "ADAPTIVE_RUNNER"
-                            pos.last_mod_time = time.time()
-                            logger.info(
-                                f"[DYNAMIC TP EXPANSION] #{pos.ticket} surging strongly (+{floating_r:.2f}R)! "
-                                f"Extended TP from {old_tp:.2f} to {new_tp:.2f} (+{new_target_r:.1f}R) to capture maximum profit!"
-                            )
-                        else:
-                            logger.warning(f"[DYNAMIC TP EXPANSION FAILED] Broker rejected TP modify to {new_tp} for #{pos.ticket}")
+            if is_trending_strong:
+                # Expand TP by 1.5R to 2.0R to capture high profits
+                expansion_step = 2.0 if current_target_r >= 4.0 else 1.5
+                new_target_r = round(min(10.0, current_target_r + expansion_step), 1)
+                is_gold = any(k in pos.symbol.upper() for k in ["XAU", "GOLD"])
+                if pos.direction == "BUY":
+                    new_tp = round(pos.open_price + (pos.risk_r_dist * new_target_r), 2 if is_gold else 5)
+                else:
+                    new_tp = round(pos.open_price - (pos.risk_r_dist * new_target_r), 2 if is_gold else 5)
+
+                if new_tp != pos.tp:
+                    old_tp = pos.tp
+                    ok = await self.broker.modify_position(pos.ticket, sl=pos.sl, tp=new_tp)
+                    if ok:
+                        pos.tp = new_tp
+                        pos.current_regime = "ADAPTIVE_RUNNER"
+                        pos.last_mod_time = time.time()
+                        logger.info(
+                            f"[DYNAMIC TP EXPANSION] #{pos.ticket} surging strongly (+{floating_r:.2f}R)! "
+                            f"Extended TP from {old_tp:.2f} to {new_tp:.2f} (+{new_target_r:.1f}R) to capture maximum profit!"
+                        )
+                    else:
+                        logger.warning(f"[DYNAMIC TP EXPANSION FAILED] Broker rejected TP modify to {new_tp} for #{pos.ticket}")
 
     async def _evaluate_ratchet_floor(self, pos: ManagedPosition, floating_r: float, current_price: float) -> None:
         """
         Enforce One-Way Ratchet Floor on Broker Stop Loss:
-        - Allows trade full room to breathe until reaching healthy profit!
-        - +0.65R+ -> Breakeven (Entry + Spread Buffer)
+        - Allows trade ample room to breathe during early stage pullbacks.
+        - +0.80R+ -> Breakeven (Entry + Spread Buffer)
         - +1.00R+ -> Lock +0.45R Guaranteed Profit Floor
         - +1.50R+ -> Lock +0.85R Guaranteed Profit Floor
         - +2.00R+ -> Lock +1.35R Guaranteed Profit Floor
-        - +2.50R+ -> Volatility-Adaptive Trailing behind price structure
+        - +2.50R+ -> Volatility-Adaptive Structural Trailing behind price
+        - +4.00R+ -> High-Profit Institutional Runner Trailing (Tight protection behind price)
         """
         is_gold = any(k in pos.symbol.upper() for k in ["XAU", "GOLD"])
         spread_buf = 0.25 if is_gold else 0.0002
@@ -1653,8 +1684,8 @@ class TradeManager:
 
         candidate_stage = pos.ratchet_stage
 
-        # Stage 1: Breakeven Lock at +0.65R (or higher depending on strategy regime)
-        trigger_be = max(0.65, pos.be_lock_r)
+        # Stage 1: Breakeven Lock at +0.80R+ (gives trade full breathing room)
+        trigger_be = max(0.80, pos.be_lock_r)
         if pos.ratchet_stage < 1 and floating_r >= trigger_be:
             candidate_stage = 1
             if pos.direction == "BUY":
@@ -1689,18 +1720,33 @@ class TradeManager:
             else:
                 new_sl = round(pos.open_price - lock_dist, 2 if is_gold else 5)
 
-        # Stage 5: Dynamic Structural Trailing at +2.50R+
-        elif floating_r >= 2.50:
+        # Stage 5: Dynamic Structural Trailing at +2.50R to +4.00R
+        elif floating_r >= 2.50 and floating_r < 4.00:
             candidate_stage = 5
             trail_dist = pos.risk_r_dist * 0.85
+            min_lock = pos.risk_r_dist * 1.60
             if pos.direction == "BUY":
-                candidate_sl = round(current_price - trail_dist, 2 if is_gold else 5)
+                candidate_sl = max(pos.open_price + min_lock, round(current_price - trail_dist, 2 if is_gold else 5))
                 if candidate_sl > pos.sl:
-                    new_sl = candidate_sl
+                    new_sl = round(candidate_sl, 2 if is_gold else 5)
             else:
-                candidate_sl = round(current_price + trail_dist, 2 if is_gold else 5)
+                candidate_sl = min(pos.open_price - min_lock, round(current_price + trail_dist, 2 if is_gold else 5))
                 if pos.sl <= 0 or candidate_sl < pos.sl:
-                    new_sl = candidate_sl
+                    new_sl = round(candidate_sl, 2 if is_gold else 5)
+
+        # Stage 6: High-Profit Institutional Runner Trailing (+4.00R+)
+        elif floating_r >= 4.00:
+            candidate_stage = 6
+            trail_dist = pos.risk_r_dist * 0.70
+            min_lock = pos.risk_r_dist * 2.50  # Guarantee at least +2.50R profit!
+            if pos.direction == "BUY":
+                candidate_sl = max(pos.open_price + min_lock, round(current_price - trail_dist, 2 if is_gold else 5))
+                if candidate_sl > pos.sl:
+                    new_sl = round(candidate_sl, 2 if is_gold else 5)
+            else:
+                candidate_sl = min(pos.open_price - min_lock, round(current_price + trail_dist, 2 if is_gold else 5))
+                if pos.sl <= 0 or candidate_sl < pos.sl:
+                    new_sl = round(candidate_sl, 2 if is_gold else 5)
 
         if new_sl is not None:
             # Enforce protective stop: NEVER loosen an existing stop loss!
