@@ -10,10 +10,13 @@ Verifies:
 import os
 import numpy as np
 import pytest
-from strategy.v2.meta_labeler import MetaLabelerFilter, FEATURE_SCHEMA
+from strategy.v2.meta_labeler import MetaLabelerFilter, FEATURE_SCHEMA, HAS_LIGHTGBM
 
 
 def test_meta_labeler_loads_and_predicts():
+    if not HAS_LIGHTGBM:
+        pytest.skip("lightgbm not installed in environment")
+
     model_path = "models/metalabeler_v1.txt"
     if not os.path.exists(model_path):
         pytest.skip("Model artifact not yet trained")
