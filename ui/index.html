@@ -513,8 +513,8 @@
             </div>
           </div>
 
-          <!-- Quantitative Predictor Gauges (5 Grid Cards) -->
-          <div class="grid grid-cols-2 md:grid-cols-5 gap-1.5 font-mono text-[11px]">
+          <!-- Quantitative Predictor Gauges (6 Grid Cards) -->
+          <div class="grid grid-cols-2 md:grid-cols-6 gap-1.5 font-mono text-[11px]">
             <!-- Card 1: Expected Value (EV) -->
             <div class="bg-[#11131A] p-2 rounded-sm border border-[#1E2028] flex flex-col justify-between">
               <span class="text-zinc-500 text-[9px] uppercase tracking-wider">Expected Value (EV)</span>
@@ -565,6 +565,16 @@
                 <div class="flex justify-between"><span class="text-zinc-500">OFI Delta:</span> <span id="brain-ensemble-ofi" class="text-zinc-200 tabular-nums font-semibold">0.00</span></div>
               </div>
               <span id="brain-ensemble-vol" class="text-[9px] text-zinc-400 truncate">Vol: NORMAL</span>
+            </div>
+
+            <!-- Card 6: Continual Experience Learner -->
+            <div class="bg-[#11131A] p-2 rounded-sm border border-[#1E2028] flex flex-col justify-between">
+              <span class="text-zinc-500 text-[9px] uppercase tracking-wider">Experience Learner</span>
+              <div class="text-[10px] mt-0.5 space-y-0.5">
+                <div class="flex justify-between"><span class="text-zinc-500">Studied:</span> <span id="brain-learner-trades" class="text-zinc-200 tabular-nums font-semibold">0 Trades</span></div>
+                <div class="flex justify-between"><span class="text-zinc-500">Reflex:</span> <span id="brain-learner-status" class="text-emerald-400 font-semibold">ACTIVE</span></div>
+              </div>
+              <span id="brain-learner-clusters" class="text-[9px] text-zinc-400 truncate">Priors Locked &bull; L2</span>
             </div>
           </div>
 
@@ -2139,6 +2149,30 @@
         if (ensVolEl) {
           const fvgText = ens.active_fvg_type ? ` | ${ens.active_fvg_type} FVG` : '';
           ensVolEl.innerText = `Vol: ${ens.volatility_regime || 'NORMAL'}${fvgText}`;
+        }
+      }
+
+      // Card 6: Continual Experience Learner DOM sync
+      const exp = pb.experience;
+      const expTradesEl = document.getElementById('brain-learner-trades');
+      const expStatusEl = document.getElementById('brain-learner-status');
+      const expClustersEl = document.getElementById('brain-learner-clusters');
+      if (exp) {
+        if (expTradesEl) {
+          expTradesEl.innerText = `${exp.trades_analyzed || 0} Trades (${exp.winning_trades || 0}W/${exp.losing_trades || 0}L)`;
+        }
+        if (expStatusEl) {
+          const mist = exp.mistakes_recorded || 0;
+          if (mist > 0) {
+            expStatusEl.innerText = `${mist} MISTAKE CLUSTERS`;
+            expStatusEl.className = 'text-amber-400 font-semibold text-[9px] truncate';
+          } else {
+            expStatusEl.innerText = 'ADAPTIVE REFLEX';
+            expStatusEl.className = 'text-emerald-400 font-semibold text-[9px] truncate';
+          }
+        }
+        if (expClustersEl) {
+          expClustersEl.innerText = exp.last_lesson ? exp.last_lesson.slice(0, 32) + '...' : 'Priors Locked • L2';
         }
       }
 

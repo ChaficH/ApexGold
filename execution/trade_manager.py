@@ -14,7 +14,7 @@ Monitors open positions every 250ms to enforce:
 """
 
 import asyncio
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from datetime import datetime, timezone, timedelta
 import logging
 import time
@@ -73,6 +73,7 @@ class ManagedPosition:
     exit_evaluation: str = "HOLD_AND_EXPAND"     # "HOLD_AND_EXPAND", "TIGHTEN_AND_PROTECT", "HARVEST_PROFIT_NOW"
     exit_verdict_detail: str = "Market structure intact. Holding for expansion."
     peak_r_giveback_pct: float = 0.0
+    entry_context: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -1006,6 +1007,21 @@ class TradeManager:
                         eff_bal = account_info.balance if account_info else 100.0
                         active_be_r = 0.35 if (is_gold and eff_bal < 50.0) else signal.be_lock_r
 
+                        entry_ctx = {
+                            "candle_pos_5m": getattr(signal, "candle_pos_5m", 0.5),
+                            "vwap_deviation": getattr(signal, "vwap_deviation", 0.0),
+                            "stoch_rsi_k": getattr(signal, "stoch_rsi_k", 50.0),
+                            "kaufman_er": getattr(signal, "kaufman_er", 0.5),
+                            "r_squared": getattr(signal, "r_squared", 0.5),
+                            "order_flow_delta": getattr(signal, "order_flow_delta", 0.0),
+                            "is_zone_reversal": 1.0 if getattr(signal, "is_zone_reversal", False) else 0.0,
+                            "trend_1h": getattr(signal, "trend_1h", "NEUTRAL"),
+                            "trend_15m": getattr(signal, "trend_15m", "NEUTRAL"),
+                            "atr": getattr(signal, "atr", 2.5),
+                            "mode": getattr(signal, "mode", ""),
+                            "tier": getattr(signal, "tier", ""),
+                        }
+
                         # Register position for sub-second Chameleon adaptive management
                         managed = ManagedPosition(
                             ticket=int(res.ticket),
@@ -1024,6 +1040,7 @@ class TradeManager:
                             stall_exit_seconds=signal.stall_exit_seconds,
                             highest_r_reached=0.0,
                             entry_velocity=getattr(self.news_reactor, "_latest_velocity", 1.0) or 1.0,
+                            entry_context=entry_ctx,
                         )
                         async with self._lock:
                             self._managed_positions[managed.ticket] = managed
@@ -1050,6 +1067,7 @@ class TradeManager:
                             sub_regime=signal.sub_regime,
                             be_lock_r=signal.be_lock_r,
                             stall_exit_seconds=signal.stall_exit_seconds,
+                            entry_context=entry_ctx if 'entry_ctx' in locals() else {},
                         )
                         async with self._lock:
                             self._managed_positions[fallback_managed.ticket] = fallback_managed
@@ -2061,6 +2079,26 @@ class TradeManager:
                 )
             except Exception as e:
                 logger.error(f"Error persisting trade to history store: {e}")
+
+        # Feed trade outcome into the Continual Experience Learner
+        try:
+            if hasattr(self, "scorer") and self.scorer and hasattr(self.scorer, "predictive_brain") and self.scorer.predictive_brain:
+                ctx_dict = getattr(pos, "entry_context", {}) or {}
+                lesson = self.scorer.predictive_brain.learn_from_trade(
+                    ticket=ticket_int,
+                    symbol=pos.symbol,
+                    direction=pos.direction,
+                    open_price=pos.open_price,
+                    close_price=close_p,
+                    pnl_usd=pnl,
+                    pnl_r=pnl_r,
+                    close_reason=reason,
+                    context=ctx_dict,
+                )
+                if lesson:
+                    logger.info(f"[EXPERIENCE LEARNER] Trade #{ticket_int} recorded: {lesson}")
+        except Exception as learn_err:
+            logger.warning(f"Failed to record trade in Experience Learner: {learn_err}")
 
         acc = await self.broker.get_account_info()
         logger.info(

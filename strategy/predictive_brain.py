@@ -35,6 +35,7 @@ import pandas as pd
 
 from engine.indicators import TechnicalIndicators
 from strategy.ensemble_models import EnsembleQuantSuite, EnsembleTelemetry
+from strategy.experience_learner import AdaptiveExperienceLearner
 from strategy.v2.meta_labeler import MetaLabelerFilter
 
 logger = logging.getLogger("ApexGold.PredictiveBrain")
@@ -76,6 +77,7 @@ class PredictiveEvaluation:
     target_zone: Dict[str, Any]
     candle_pos_5m: float = 0.5
     ensemble: Optional[Dict[str, Any]] = None
+    experience: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -96,6 +98,34 @@ class ApexPredictiveBrain:
         self._cached_state: Dict[str, Any] = {}
         self.ensemble_suite = EnsembleQuantSuite()
         self.meta_labeler = MetaLabelerFilter(model_path="models/metalabeler_v1.txt", probability_threshold=0.52)
+        self.experience_learner = AdaptiveExperienceLearner()
+
+    def learn_from_trade(
+        self,
+        ticket: int,
+        symbol: str,
+        direction: str,
+        open_price: float,
+        close_price: float,
+        pnl_usd: float,
+        pnl_r: float,
+        close_reason: str,
+        context: Dict[str, Any],
+    ) -> str:
+        """Process finalized trade through the online experience learner."""
+        if hasattr(self, "experience_learner") and self.experience_learner:
+            return self.experience_learner.record_trade_outcome(
+                ticket=ticket,
+                symbol=symbol,
+                direction=direction,
+                open_price=open_price,
+                close_price=close_price,
+                pnl_usd=pnl_usd,
+                pnl_r=pnl_r,
+                close_reason=close_reason,
+                context=context,
+            )
+        return ""
 
     def on_tick(self, bid: float, ask: float, now_ts: Optional[float] = None) -> None:
         """Register live tick into the ensemble suite."""
@@ -369,6 +399,29 @@ class ApexPredictiveBrain:
             elif dominant_dir == "SELL" and is_bias_bull:
                 logit -= 0.35  # Opposing order flow/liquidity structure
 
+        # Factor 4b: Online Continual Experience Learner (Adaptive Mistake Reflex & Pattern Synergy)
+        exp_eval = None
+        exp_telemetry = None
+        if hasattr(self, "experience_learner") and self.experience_learner:
+            eval_ctx = {
+                "candle_pos_5m": candle_pos_5m,
+                "vwap_deviation": vwap_diff,
+                "stoch_rsi_k": stoch_k,
+                "kaufman_er": efficiency_ratio,
+                "r_squared": r_squared,
+                "order_flow_delta": float(ensemble_telemetry.delta_ratio_60s if ensemble_telemetry else 0.0),
+                "is_zone_reversal": 0.0,
+            }
+            exp_eval = self.experience_learner.evaluate_candidate(
+                symbol=symbol,
+                direction=dominant_dir,
+                context=eval_ctx,
+                atr=atr_5m,
+            )
+            # Damping or boosting based on learned experience
+            logit += (exp_eval.synergy_bonus * 0.35) - (exp_eval.mistake_penalty * 0.50)
+            exp_telemetry = self.experience_learner.get_telemetry()
+
         raw_p_win = self._sigmoid(logit)
 
         # Factor 5: Meta-Labeler ML Filter Blending (Secondary Causal ML model)
@@ -514,6 +567,28 @@ class ApexPredictiveBrain:
             "passed": ensemble_pass,
         })
 
+        # Gate 7: Online Continual Experience Reflex & Mistake Guard
+        exp_pass = True
+        exp_detail = "Experience Learner confirms setup parameters."
+        if exp_eval:
+            if exp_eval.veto:
+                exp_pass = False
+                exp_detail = f"MISTAKE PATTERN VETO: {exp_eval.veto_reason}"
+            elif exp_eval.mistake_penalty > 0.05:
+                exp_detail = f"Reflex Caution: Setup has {exp_eval.mistake_penalty*100:.1f}% similarity to past losing trade. Adjusted EV."
+            elif exp_eval.synergy_bonus > 0.05:
+                exp_detail = f"Pattern Synergy: Setup matches historical winning pattern (+{exp_eval.synergy_bonus*100:.1f}% bonus)."
+            else:
+                telemetry = exp_telemetry or {}
+                exp_detail = f"Online Learner Active: {telemetry.get('trades_analyzed', 0)} trades studied (Priors preserved, L2 regularized)."
+
+        gates.append({
+            "name": "Online Experience Reflex",
+            "status": "PASS" if exp_pass else "BLOCKED",
+            "detail": exp_detail,
+            "passed": exp_pass,
+        })
+
         # ----------------------------------------------------------------------
         # 9. Verdict, State & Narrative Chain-of-Thought Generation
         # ----------------------------------------------------------------------
@@ -533,6 +608,9 @@ class ApexPredictiveBrain:
         elif not ensemble_pass:
             status = "WAITING_FOR_ALIGNMENT"
             verdict_badge = f"WAITING FOR ORDER FLOW CONSENSUS ({ensemble_telemetry.ensemble_bias if ensemble_telemetry else 'OFI'} OPPOSES)"
+        elif not exp_pass:
+            status = "WAITING_FOR_ALIGNMENT"
+            verdict_badge = "MISTAKE REFLEX GUARD (AVOIDING REPEAT LOSS)"
         elif not value_pass:
             status = "WAITING_FOR_PULLBACK"
             verdict_badge = f"WAITING FOR PULLBACK ({dominant_dir} EXTENDED)"
@@ -593,6 +671,8 @@ class ApexPredictiveBrain:
             is_chasing_top=is_chasing_top,
             is_chasing_bottom=is_chasing_bottom,
             active_positions=positions,
+            exp_info=exp_telemetry,
+            exp_eval=exp_eval,
         )
 
         eval_record = PredictiveEvaluation(
@@ -622,6 +702,7 @@ class ApexPredictiveBrain:
             narrative=narrative,
             target_zone=target_zone,
             ensemble=ensemble_telemetry.to_dict() if ensemble_telemetry else None,
+            experience=exp_telemetry,
         )
 
         self.latest_evaluation = eval_record
@@ -672,6 +753,8 @@ class ApexPredictiveBrain:
         is_chasing_top: bool = False,
         is_chasing_bottom: bool = False,
         active_positions: Optional[List[Any]] = None,
+        exp_info: Optional[Dict[str, Any]] = None,
+        exp_eval: Optional[Any] = None,
     ) -> str:
         """Construct a precise, institutional narrative explaining the bot's live thoughts."""
         candle_pct = int(round(candle_pos_5m * 100))
@@ -681,6 +764,24 @@ class ApexPredictiveBrain:
             f"• Valuation: Spot {current_bid:.2f} vs 5m VWAP {vwap_val:.2f} ({vwap_diff:+.2f} pts) | 5m Candle Pos: {candle_pct}% | 5m StochRSI: {stoch_k:.1f}",
             f"• Edge Metrics: P(Win) = {p_win * 100:.1f}% (Quant Calibrated) | Expected Value = {expected_value_r:+.2f}R",
         ]
+
+        if exp_info:
+            trades_analyzed = exp_info.get("trades_analyzed", 0)
+            wins = exp_info.get("winning_trades", 0)
+            losses = exp_info.get("losing_trades", 0)
+            mistakes = exp_info.get("mistakes_recorded", 0)
+            successes = exp_info.get("successes_recorded", 0)
+            lesson = exp_info.get("last_lesson", "Institutional prior weights active. Awaiting closed trade data to refine reflexes.")
+
+            lines.append("────────────────────────────────────────")
+            lines.append("🧠 CONTINUAL EXPERIENCE LEARNER (ONLINE MEMORY):")
+            lines.append(f"• Analyzed: {trades_analyzed} Trades ({wins}W / {losses}L) | Mistake Clusters: {mistakes} | Success Signatures: {successes}")
+            lines.append(f"• Latest Institutional Reflection: \"{lesson}\"")
+            if exp_eval and getattr(exp_eval, "mistake_penalty", 0.0) > 0.03:
+                lines.append(f"⚠️ Active Mistake Reflex: -{exp_eval.mistake_penalty*100:.1f}% confidence damping applied (matches past failure vector)")
+            elif exp_eval and getattr(exp_eval, "synergy_bonus", 0.0) > 0.03:
+                lines.append(f"✨ Synergy Reinforcement: +{exp_eval.synergy_bonus*100:.1f}% confidence boost (matches institutional winning setup)")
+            lines.append("────────────────────────────────────────")
 
         if active_positions:
             lines.append("────────────────────────────────────────")
@@ -825,8 +926,32 @@ class ApexPredictiveBrain:
             return False, f"Predictive Model Veto: Price is extended in {dominant_dir} direction. Waiting for pullback (EV: {ev:+.2f}R < +0.25R)"
 
         # Anti-counter-trend veto: if macro direction is strong (>= 65%) opposing the signal
+        # Allow ONLY if it is a confirmed supply/demand zone reversal, tier 1 sniper, or scalp setup
         if (sig_dir == "BUY" and self.latest_evaluation.p_bear >= 0.65) or (sig_dir == "SELL" and self.latest_evaluation.p_bull >= 0.65):
-            return False, f"Predictive Model Veto: Signal direction {sig_dir} directly conflicts with dominant macro trend"
+            is_zone_rev = getattr(signal, "is_zone_reversal", False)
+            is_scalp = getattr(signal, "mode", "") == "FAST_SCALP" or getattr(signal, "tier", "") == "TIER_1_SNIPER"
+            if not (is_zone_rev or is_scalp):
+                return False, f"Predictive Model Veto: Signal direction {sig_dir} directly conflicts with dominant macro trend"
+
+        # Online Experience Reflex & Mistake Guard
+        if hasattr(self, "experience_learner") and self.experience_learner:
+            eval_ctx = {
+                "candle_pos_5m": getattr(signal, "candle_pos_5m", self.latest_evaluation.candle_pos_5m),
+                "vwap_deviation": getattr(signal, "vwap_deviation", self.latest_evaluation.vwap_deviation),
+                "stoch_rsi_k": getattr(signal, "stoch_rsi_k", self.latest_evaluation.stoch_rsi_k),
+                "kaufman_er": getattr(signal, "kaufman_er", self.latest_evaluation.kaufman_er),
+                "r_squared": getattr(signal, "r_squared", self.latest_evaluation.r_squared),
+                "order_flow_delta": getattr(signal, "order_flow_delta", 0.0),
+                "is_zone_reversal": 1.0 if getattr(signal, "is_zone_reversal", False) else 0.0,
+            }
+            exp_cand = self.experience_learner.evaluate_candidate(
+                symbol=getattr(signal, "symbol", self.latest_evaluation.symbol),
+                direction=sig_dir,
+                context=eval_ctx,
+                atr=getattr(signal, "atr", 2.5),
+            )
+            if exp_cand.veto:
+                return False, f"Predictive Model Experience Learner Veto: {exp_cand.veto_reason}"
 
         if ev < 0.20 or p_win < 0.55:
             return False, f"Predictive Model Veto: Sub-optimal expected value (EV: {ev:+.2f}R, P_win: {p_win*100:.1f}%)"

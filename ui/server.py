@@ -325,6 +325,15 @@ async def get_predictive_brain():
     return {}
 
 
+@app.get("/api/experience_learner")
+async def get_experience_learner():
+    """Return real-time online learning experience, weights, and mistake memory."""
+    if ctx.scorer and hasattr(ctx.scorer, "predictive_brain") and ctx.scorer.predictive_brain:
+        if hasattr(ctx.scorer.predictive_brain, "experience_learner") and ctx.scorer.predictive_brain.experience_learner:
+            return ctx.scorer.predictive_brain.experience_learner.get_telemetry()
+    return {}
+
+
 @app.get("/api/news")
 async def get_news_state():
     """Return comprehensive timezone-aware economic calendar and breaking headlines."""

@@ -107,6 +107,17 @@ class ConfluenceSignal:
     pre_news_trajectory_confidence: float = 0.0
     predictive_ev: float = 0.0
     predictive_p_win: float = 0.0
+    is_zone_reversal: bool = False
+    vwap_deviation: float = 0.0
+    candle_pos_5m: float = 0.50
+    stoch_rsi_k: float = 50.0
+    kaufman_er: float = 0.50
+    r_squared: float = 0.50
+    order_flow_delta: float = 0.0
+    trend_1h: str = "NEUTRAL"
+    trend_15m: str = "NEUTRAL"
+    atr: float = 2.0
+    mode: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -764,16 +775,20 @@ class ConfluenceScorer:
         h1_trend = tf_trends.get("1H", "NEUTRAL")
         m15_trend = tf_trends.get("15m", "NEUTRAL")
 
+        is_scalp_mode = (self.mode in ["hyper", "scalp", "fast_scalp"] or self.auto_brain_state.get("sub_regime") == "FAST_SCALP")
+
         if h1_trend == "BULL" and m15_trend == "BULL" and direction == "SELL":
-            logger.debug(f"[{symbol} SELL] BLOCKED: 1H & 15m Macro Trend is unanimously BULLISH. Strictly no selling into an institutional uptrend!")
-            return None
+            if not is_supply_reversal and not (is_scalp_mode and (is_red_1m or is_star_1m)):
+                logger.debug(f"[{symbol} SELL] BLOCKED: 1H & 15m Macro Trend is unanimously BULLISH. Strictly no selling into an institutional uptrend without supply reversal or scalp trigger!")
+                return None
 
         if h1_trend == "BEAR" and m15_trend == "BEAR" and direction == "BUY":
-            logger.debug(f"[{symbol} BUY] BLOCKED: 1H & 15m Macro Trend is unanimously BEARISH. Strictly no buying into an institutional downtrend!")
-            return None
+            if not is_demand_reversal and not (is_scalp_mode and (is_green_1m or is_hammer_1m)):
+                logger.debug(f"[{symbol} BUY] BLOCKED: 1H & 15m Macro Trend is unanimously BEARISH. Strictly no buying into an institutional downtrend without demand reversal or scalp trigger!")
+                return None
 
         htf_conflicted = (h1_trend != "NEUTRAL" and m15_trend != "NEUTRAL" and h1_trend != m15_trend)
-        if htf_conflicted and not is_zone_reversal and not is_pre_news_aligned and not is_impulse_active:
+        if htf_conflicted and not is_zone_reversal and not is_pre_news_aligned and not is_impulse_active and not is_scalp_mode:
             logger.debug(f"[{symbol} {direction}] BLOCKED: 1H ({h1_trend}) and 15m ({m15_trend}) trends are in conflict. Standing aside until key zone extreme is reached.")
             return None
 
@@ -786,10 +801,10 @@ class ConfluenceScorer:
             df_5m["high"], df_5m["low"], df_5m["close"], period=10, multiplier=2.5
         )
         if st_5m.get("valid"):
-            if direction == "BUY" and st_5m.get("is_bear") and not is_demand_reversal:
+            if direction == "BUY" and st_5m.get("is_bear") and not is_demand_reversal and not is_scalp_mode:
                 logger.debug(f"[{symbol} BUY] Blocked: 5m SuperTrend is BEAR ({st_5m.get('line')}).")
                 return None
-            if direction == "SELL" and st_5m.get("is_bull") and not is_supply_reversal:
+            if direction == "SELL" and st_5m.get("is_bull") and not is_supply_reversal and not is_scalp_mode:
                 logger.debug(f"[{symbol} SELL] Blocked: 5m SuperTrend is BULL ({st_5m.get('line')}).")
                 return None
 
@@ -799,7 +814,7 @@ class ConfluenceScorer:
             st_15m = TechnicalIndicators.calculate_supertrend(
                 df_15m["high"], df_15m["low"], df_15m["close"], period=10, multiplier=2.5
             )
-            if st_15m.get("valid") and not is_impulse_active and not is_zone_reversal:
+            if st_15m.get("valid") and not is_impulse_active and not is_zone_reversal and not is_scalp_mode:
                 if direction == "BUY" and st_15m.get("is_bear"):
                     logger.debug(f"[{symbol} BUY] Blocked: 15m SuperTrend is BEAR ({st_15m.get('line')}).")
                     return None
@@ -1565,6 +1580,16 @@ class ConfluenceScorer:
             invalidation_price=invalidation_price,
             is_pre_news_trajectory=is_pre_news_active,
             pre_news_trajectory_confidence=float(self.auto_brain_state.get("news_confidence", 0.0)) if is_pre_news_active else 0.0,
+            is_zone_reversal=bool(is_zone_reversal),
+            vwap_deviation=round(dist_vwap, 2),
+            candle_pos_5m=round(candle_pos_5m, 2),
+            stoch_rsi_k=round(stoch_5m.get("k", 50.0), 1) if isinstance(stoch_5m, dict) else 50.0,
+            kaufman_er=float(self.predictive_brain.latest_evaluation.kaufman_er) if (hasattr(self, "predictive_brain") and self.predictive_brain and self.predictive_brain.latest_evaluation) else 0.50,
+            r_squared=float(self.predictive_brain.latest_evaluation.r_squared) if (hasattr(self, "predictive_brain") and self.predictive_brain and self.predictive_brain.latest_evaluation) else 0.50,
+            order_flow_delta=float(self.predictive_brain.ensemble_suite.order_flow_tracker.get_delta_ratio(60.0)) if (hasattr(self, "predictive_brain") and self.predictive_brain and hasattr(self.predictive_brain, "ensemble_suite") and hasattr(self.predictive_brain.ensemble_suite, "order_flow_tracker")) else 0.0,
+            trend_1h=h1_trend,
+            trend_15m=m15_trend,
+            atr=round(atr_15m_ref, 2),
         )
 
     def calculate_planned_limits(
