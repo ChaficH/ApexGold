@@ -105,6 +105,8 @@ class ConfluenceSignal:
     historical_edge: Optional[Dict[str, Any]] = None
     is_pre_news_trajectory: bool = False
     pre_news_trajectory_confidence: float = 0.0
+    predictive_ev: float = 0.0
+    predictive_p_win: float = 0.0
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -653,12 +655,20 @@ class ConfluenceScorer:
             if not approved:
                 logger.info(f"[{symbol} BUY] Blocked by Predictive Model: {p_reason}")
                 buy_signal = None
+            else:
+                if self.predictive_brain.latest_evaluation:
+                    buy_signal.predictive_ev = self.predictive_brain.latest_evaluation.expected_value_r
+                    buy_signal.predictive_p_win = self.predictive_brain.latest_evaluation.p_win
 
         if sell_signal and hasattr(self, "predictive_brain") and self.predictive_brain:
             approved, p_reason = self.predictive_brain.filter_signal(sell_signal)
             if not approved:
                 logger.info(f"[{symbol} SELL] Blocked by Predictive Model: {p_reason}")
                 sell_signal = None
+            else:
+                if self.predictive_brain.latest_evaluation:
+                    sell_signal.predictive_ev = self.predictive_brain.latest_evaluation.expected_value_r
+                    sell_signal.predictive_p_win = self.predictive_brain.latest_evaluation.p_win
 
         return SignalResult(buy_signal, sell_signal)
 

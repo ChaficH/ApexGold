@@ -904,7 +904,7 @@ class TradeManager:
             if eff_balance <= 100.0 and total_open_risk_usd == 0.0:
                 pass  # Always permit single minimum lot entry on micro/small accounts
             else:
-                allowed_max_risk = max(self.max_total_open_risk_pct, 45.0) if eff_balance <= 35.0 else (max(self.max_total_open_risk_pct, 20.0) if eff_balance <= 150.0 else self.max_total_open_risk_pct)
+                allowed_max_risk = max(self.max_total_open_risk_pct, 45.0) if eff_balance <= 35.0 else (max(self.max_total_open_risk_pct, 30.0) if eff_balance <= 150.0 else self.max_total_open_risk_pct)
                 if total_projected_risk_pct > allowed_max_risk:
                     return False, f"Total open risk limit reached ({total_projected_risk_pct:.1f}% > {allowed_max_risk:.1f}% allowed)"
 
@@ -947,7 +947,7 @@ class TradeManager:
                 )
                 padded_sl_dist = abs(target_entry - padded_sl)
 
-                # Calculate exact lot size with recalculated padded risk distance
+                # Calculate exact lot size with recalculated padded risk distance and predictive brain conviction
                 lot_size, risk_details = self.risk_engine.calculate_lot_size(
                     symbol_info=symbol_info,
                     account_info=account_info,
@@ -955,6 +955,8 @@ class TradeManager:
                     confidence_tier=getattr(signal, "tier", None),
                     score=getattr(signal, "score", None),
                     consecutive_losses=self._consecutive_losses,
+                    ev_r=getattr(signal, "predictive_ev", None),
+                    p_win=getattr(signal, "predictive_p_win", None),
                 )
 
                 if not risk_details.get("has_margin", False) or lot_size <= 0.0:

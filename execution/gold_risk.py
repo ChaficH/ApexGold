@@ -52,14 +52,14 @@ class GoldRiskEngine:
         },
         "aggressive": {
             "name": "Aggressive",
-            "base_risk_pct": 6.0,
-            "max_risk_pct": 15.0,
+            "base_risk_pct": 10.0,
+            "max_risk_pct": 25.0,
             "small_account_max_risk_pct": 45.0,  # Explicit allowance for small ($10-$20) test accounts
             "max_open_positions": 2,
             "confidence_multipliers": {
-                "TIER_1_SNIPER": 1.35,
-                "TIER_2_BALANCED": 1.10,
-                "TIER_3_AGGRESSIVE": 0.90,
+                "TIER_1_SNIPER": 1.50,
+                "TIER_2_BALANCED": 1.25,
+                "TIER_3_AGGRESSIVE": 1.00,
                 "NONE": 0.85,
             },
             "max_lot_cap": 1.00,
@@ -227,11 +227,13 @@ class GoldRiskEngine:
         confidence_tier: Optional[str] = None,
         score: Optional[int] = None,
         consecutive_losses: int = 0,
+        ev_r: Optional[float] = None,
+        p_win: Optional[float] = None,
     ) -> Tuple[float, Dict[str, Any]]:
         """
         Compute precise lot size so maximum loss equals configured risk budget.
         Adapts to account balance, risk profiles (conservative/balanced/aggressive),
-        confidence tiers (Tier 1 Sniper vs Balanced), and consecutive loss streak.
+        confidence tiers (Tier 1 Sniper vs Balanced), predictive model EV, and consecutive loss streak.
         Rejects trades when minimum lot size exceeds permitted risk.
         Never automatically increases risk above the configured risk budget.
         Rejects invalid broker metadata (non-positive contract_size, point, or ask).
@@ -260,6 +262,11 @@ class GoldRiskEngine:
 
             if tier_key and tier_key in prof["confidence_multipliers"]:
                 conf_mult = prof["confidence_multipliers"][tier_key]
+
+            # Predictive Model Conviction Sizing (Kelly-Informed Booster)
+            if ev_r is not None and ev_r >= 0.30 and p_win is not None and p_win >= 0.58:
+                edge_boost = min(1.30, 1.0 + (ev_r * 0.35))
+                conf_mult = round(conf_mult * edge_boost, 2)
 
             # Losing Streak Throttle
             streak_mult = 1.0
@@ -391,6 +398,9 @@ class GoldRiskEngine:
         # Enforce profile max_lot_cap if specified
         if "max_lot_cap" in prof and prof["max_lot_cap"] > 0:
             lot = min(lot, prof["max_lot_cap"])
+        # Micro account safety clamp: max 0.08 lot for accounts <= $150
+        if effective_budget <= 150.0:
+            lot = min(lot, 0.08)
         lot = round(lot, 2)
 
         # Final rounding re-verification

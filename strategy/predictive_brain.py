@@ -262,23 +262,27 @@ class ApexPredictiveBrain:
         logit += (efficiency_ratio - 0.40) * 0.80
         logit += (r_squared - 0.40) * 0.60
 
-        # Factor 3: Anti-Chasing / Value Entry Penalty
-        # Buying when price is overextended above VWAP or StochRSI > 70 has lower win probability!
-        is_overbought = (stoch_k > 70.0 and vwap_diff > 1.20)
-        is_oversold = (stoch_k < 30.0 and vwap_diff < -1.20)
+        # Factor 3: Anti-Chasing / Value Entry Penalty (ATR-Normalized)
+        atr_5m_arr = TechnicalIndicators.atr(h_5m, l_5m, c_5m, 14)
+        atr_5m = float(atr_5m_arr[-1]) if (atr_5m_arr is not None and len(atr_5m_arr) > 0 and not np.isnan(atr_5m_arr[-1])) else 2.50
+        overextended_dist = max(2.80, 1.5 * atr_5m)
+
+        # Genuinely overbought / oversold at extreme exhaustion wicks
+        is_overbought = (stoch_k > 80.0 and vwap_diff > overextended_dist) or (stoch_k > 88.0 and vwap_diff > 2.0)
+        is_oversold = (stoch_k < 20.0 and vwap_diff < -overextended_dist) or (stoch_k < 12.0 and vwap_diff < -2.0)
 
         pullback_ready = False
         if dominant_dir == "BUY":
             if is_overbought:
                 logit -= 0.85  # Chasing at tops
-            elif 20.0 <= stoch_k <= 55.0 and -1.0 <= vwap_diff <= 0.80:
-                logit += 0.45  # Buying the dip/pullback in bull trend!
+            elif (20.0 <= stoch_k <= 65.0 and -1.5 * atr_5m <= vwap_diff <= 1.2 * atr_5m) or (efficiency_ratio >= 0.50 and stoch_k <= 75.0):
+                logit += 0.45  # Buying the dip/consolidation in bull trend!
                 pullback_ready = True
         elif dominant_dir == "SELL":
             if is_oversold:
                 logit -= 0.85  # Chasing at bottoms
-            elif 45.0 <= stoch_k <= 80.0 and -0.80 <= vwap_diff <= 1.0:
-                logit += 0.45  # Selling the rally in bear trend!
+            elif (35.0 <= stoch_k <= 80.0 and -1.2 * atr_5m <= vwap_diff <= 1.5 * atr_5m) or (efficiency_ratio >= 0.50 and stoch_k >= 25.0):
+                logit += 0.45  # Selling the rally/consolidation in bear trend!
                 pullback_ready = True
 
         p_win = round(self._sigmoid(logit), 3)
@@ -399,21 +403,29 @@ class ApexPredictiveBrain:
             status = "QUALIFIED_TRADE"
             verdict_badge = f"SETUP QUALIFIED ({dominant_dir} EV: {expected_value_r:+.2f}R)"
 
-        # Target entry zone calculation
+        # Target entry zone calculation using 5m EMA9 and EMA20 for realistic pullback zones
+        ema9_arr = TechnicalIndicators.ema(c_5m, 9)
+        ema9_val = float(ema9_arr[-1]) if (ema9_arr is not None and len(ema9_arr) > 0 and not np.isnan(ema9_arr[-1])) else vwap_val
+        ema20_arr = TechnicalIndicators.ema(c_5m, 20)
+        ema20_val = float(ema20_arr[-1]) if (ema20_arr is not None and len(ema20_arr) > 0 and not np.isnan(ema20_arr[-1])) else vwap_val
+
+        zone_low = min(ema9_val, ema20_val)
+        zone_high = max(ema9_val, ema20_val)
+
         if dominant_dir == "BUY":
             target_zone = {
                 "direction": "BUY",
-                "optimal_entry_min": round(vwap_val - 0.80, 2),
-                "optimal_entry_max": round(vwap_val + 0.30, 2),
-                "invalidation_level": round(vwap_val - 3.50, 2),
+                "optimal_entry_min": round(zone_low - (0.30 * atr_5m), 2),
+                "optimal_entry_max": round(zone_high + (0.20 * atr_5m), 2),
+                "invalidation_level": round(zone_low - (1.50 * atr_5m), 2),
                 "target_objective": round(current_bid + (target_rr * 3.50), 2),
             }
         else:
             target_zone = {
                 "direction": "SELL",
-                "optimal_entry_min": round(vwap_val - 0.30, 2),
-                "optimal_entry_max": round(vwap_val + 0.80, 2),
-                "invalidation_level": round(vwap_val + 3.50, 2),
+                "optimal_entry_min": round(zone_low - (0.20 * atr_5m), 2),
+                "optimal_entry_max": round(zone_high + (0.30 * atr_5m), 2),
+                "invalidation_level": round(zone_high + (1.50 * atr_5m), 2),
                 "target_objective": round(current_bid - (target_rr * 3.50), 2),
             }
 
@@ -616,10 +628,15 @@ class ApexPredictiveBrain:
         ev = self.latest_evaluation.expected_value_r
         p_win = self.latest_evaluation.p_win
         dominant_dir = "BUY" if self.latest_evaluation.p_bull >= self.latest_evaluation.p_bear else "SELL"
+        sig_dir = getattr(signal, "direction", dominant_dir)
 
         # Anti-chasing veto
         if self.latest_evaluation.status == "WAITING_FOR_PULLBACK":
             return False, f"Predictive Model Veto: Price is extended in {dominant_dir} direction. Waiting for pullback (EV: {ev:+.2f}R < +0.25R)"
+
+        # Anti-counter-trend veto: if macro direction is strong (>= 65%) opposing the signal
+        if (sig_dir == "BUY" and self.latest_evaluation.p_bear >= 0.65) or (sig_dir == "SELL" and self.latest_evaluation.p_bull >= 0.65):
+            return False, f"Predictive Model Veto: Signal direction {sig_dir} directly conflicts with dominant macro trend"
 
         if ev < 0.20 or p_win < 0.55:
             return False, f"Predictive Model Veto: Sub-optimal expected value (EV: {ev:+.2f}R, P_win: {p_win*100:.1f}%)"

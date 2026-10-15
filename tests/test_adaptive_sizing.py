@@ -280,3 +280,34 @@ def test_daily_reset_clears_pause_until():
     assert tm.is_paused() is False
 
 
+def test_predictive_ev_higher_lot_scaling_on_micro_account():
+    """Verify that an account with $92.76 balance and aggressive profile safely scales into higher lots (0.03 - 0.04 lots) for high EV setups."""
+    risk_engine = GoldRiskEngine(
+        account_type="micro",
+        budget_usd=92.76,
+        risk_per_trade_pct=10.0,
+        risk_profile="aggressive",
+    )
+    sym = create_gold_symbol(contract_size=100.0)
+    acc = create_account(balance=92.76, leverage=1000)
+
+    # High conviction Tier 1 Sniper with EV = +0.55R, P_win = 0.62
+    lot, details = risk_engine.calculate_lot_size(
+        symbol_info=sym,
+        account_info=acc,
+        sl_distance=3.20,
+        confidence_tier="TIER_1_SNIPER",
+        ev_r=0.55,
+        p_win=0.62,
+    )
+
+    # 10% base * 1.50 tier * 1.19 edge boost = 17.85% ($16.55 risk)
+    # $16.55 / (3.20 * 100 + 25) = $16.55 / $345 = 0.0479 -> 0.04 lots!
+    assert lot >= 0.03
+    assert lot <= 0.06
+    assert details["has_margin"] is True
+    assert details["actual_monetary_risk"] <= details["risk_amount"]
+    assert details["margin_required"] <= acc.free_margin
+
+
+
