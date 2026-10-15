@@ -703,10 +703,10 @@ async def test_predictive_breakeven_scratch_on_reversal():
         open_price=2700.00,
         sl=2697.50,
         tp=2706.00,
-        entry_time=now - 25.0, # 25s hold
+        entry_time=now - 100.0, # 100s hold (>= 90s min hold)
         risk_r_dist=2.50,
-        highest_r_reached=0.25,
-        profit=0.25,
+        highest_r_reached=0.45, # reached substantial profit
+        profit=0.20,
     )
 
     # 1m and 5m Bearish DataFrames
@@ -731,12 +731,13 @@ async def test_predictive_breakeven_scratch_on_reversal():
         news_reactor=MagicMock(_latest_velocity=1.0),
         risk_engine=MagicMock(base_budget_usd=10.0),
         predictive_scratch_enabled=True,
+        min_hold_time_seconds=90.0,
     )
 
     should_exit, reason = await tm._check_market_flip(
         pos=pos,
-        floating_r=0.10,
-        current_price=2700.25,
+        floating_r=0.08,
+        current_price=2700.20,
         now=now,
     )
 
@@ -746,26 +747,26 @@ async def test_predictive_breakeven_scratch_on_reversal():
 
 
 @pytest.mark.anyio
-async def test_predictive_early_mitigation_cut_relative_to_budget():
-    """Verify that a small floating loss (-0.20R) cuts early when market structure invalidates, saving full SL."""
+async def test_trade_waits_it_out_and_does_not_close_early_on_noise():
+    """Verify that trades wait it out (>= 90s hold time) and NEVER open and close directly on noise."""
     from unittest.mock import MagicMock, AsyncMock
     import pandas as pd
     from execution.trade_manager import ManagedPosition
 
     now = time.time()
-    # Micro-budget account ($2.56 balance)
+    # Trade open for only 15 seconds
     pos = ManagedPosition(
         ticket=8882,
         symbol="XAUUSD",
         direction="BUY",
         volume=0.01,
         open_price=2700.00,
-        sl=2697.50,  # 1.0R = $2.50 risk (98% of $2.56 balance!)
+        sl=2697.50,
         tp=2706.00,
-        entry_time=now - 12.0, # 12s hold
+        entry_time=now - 15.0, # 15s hold (< 90s)
         risk_r_dist=2.50,
         highest_r_reached=0.0,
-        profit=-0.35, # floating loss -$0.35
+        profit=-0.50, # floating loss
     )
 
     bear_prices = [2702.0 - i * 0.25 for i in range(30)]
@@ -781,28 +782,84 @@ async def test_predictive_early_mitigation_cut_relative_to_budget():
     mock_hub.get_dataframe = AsyncMock(return_value=df_bear)
 
     mock_broker = MagicMock()
-    mock_broker.get_account_info = AsyncMock(return_value=AccountInfo(balance=2.56, equity=2.21, margin=0.0, free_margin=2.21, currency="USD", leverage=1000))
+    mock_broker.get_account_info = AsyncMock(return_value=AccountInfo(balance=5.60, equity=5.10, margin=0.0, free_margin=5.10, currency="USD", leverage=1000))
 
     tm = TradeManager(
         broker=mock_broker,
         data_hub=mock_hub,
         news_reactor=MagicMock(_latest_velocity=1.0),
-        risk_engine=MagicMock(base_budget_usd=2.56),
+        risk_engine=MagicMock(base_budget_usd=5.60),
         predictive_scratch_enabled=True,
-        micro_budget_loss_cap_pct=15.0, # 15% of $2.56 = $0.38
-        max_mitigation_loss_r=0.40,
+        min_hold_time_seconds=90.0,
     )
 
     should_exit, reason = await tm._check_market_flip(
         pos=pos,
-        floating_r=-0.20,
-        current_price=2699.50,
+        floating_r=-0.25,
+        current_price=2699.37,
+        now=now,
+    )
+
+    # Must wait it out! NEVER close directly
+    assert should_exit is False
+    assert reason == ""
+
+
+@pytest.mark.anyio
+async def test_high_certainty_deep_invalidation_closes_when_sure_to_lose():
+    """Verify that deep loss (-0.75R) after >= 90s with confirmed 5m SuperTrend break closes early to save SL."""
+    from unittest.mock import MagicMock, AsyncMock
+    import pandas as pd
+    from execution.trade_manager import ManagedPosition
+
+    now = time.time()
+    pos = ManagedPosition(
+        ticket=8884,
+        symbol="XAUUSD",
+        direction="BUY",
+        volume=0.01,
+        open_price=2700.00,
+        sl=2697.50,
+        tp=2706.00,
+        entry_time=now - 120.0, # 120s hold (>= 90s)
+        risk_r_dist=2.50,
+        highest_r_reached=0.0,
+        profit=-1.87,
+    )
+
+    bear_prices = [2702.0 - i * 0.35 for i in range(30)]
+    df_bear = pd.DataFrame({
+        "open": [p + 0.1 for p in bear_prices],
+        "high": [p + 0.25 for p in bear_prices],
+        "low": [p - 0.25 for p in bear_prices],
+        "close": [p - 0.1 for p in bear_prices],
+        "volume": [100.0] * 30,
+    })
+
+    mock_hub = MagicMock()
+    mock_hub.get_dataframe = AsyncMock(return_value=df_bear)
+
+    mock_broker = MagicMock()
+    mock_broker.get_account_info = AsyncMock(return_value=AccountInfo(balance=5.60, equity=3.73, margin=0.0, free_margin=3.73, currency="USD", leverage=1000))
+
+    tm = TradeManager(
+        broker=mock_broker,
+        data_hub=mock_hub,
+        news_reactor=MagicMock(_latest_velocity=1.0),
+        risk_engine=MagicMock(base_budget_usd=5.60),
+        predictive_scratch_enabled=True,
+        min_hold_time_seconds=90.0,
+    )
+
+    should_exit, reason = await tm._check_market_flip(
+        pos=pos,
+        floating_r=-0.75,
+        current_price=2698.12,
         now=now,
     )
 
     assert should_exit is True
-    assert "Predictive Invalidation: Early Mitigation Cut" in reason
-    assert "budget limit" in reason
+    assert "Confirmed Invalidation: 5m SuperTrend Bearish Break" in reason
 
 
 @pytest.mark.anyio
@@ -821,7 +878,7 @@ async def test_predictive_does_not_cut_healthy_runners():
         open_price=2700.00,
         sl=2697.50,
         tp=2706.00,
-        entry_time=now - 45.0,
+        entry_time=now - 120.0,
         risk_r_dist=2.50,
         highest_r_reached=0.85,
         profit=2.00,

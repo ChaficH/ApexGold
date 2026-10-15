@@ -97,6 +97,7 @@ class TradeManager:
         predictive_scratch_enabled: bool = True,
         micro_budget_loss_cap_pct: float = 15.0,
         max_mitigation_loss_r: float = 0.40,
+        min_hold_time_seconds: float = 90.0,
         scorer: Optional[Any] = None,
     ):
         self.broker = broker
@@ -116,6 +117,7 @@ class TradeManager:
         self.predictive_scratch_enabled = bool(predictive_scratch_enabled)
         self.micro_budget_loss_cap_pct = float(micro_budget_loss_cap_pct)
         self.max_mitigation_loss_r = float(max_mitigation_loss_r)
+        self.min_hold_time_seconds = float(min_hold_time_seconds)
         self.scorer = scorer
         self.magic_number: int = 15555
 
@@ -975,57 +977,35 @@ class TradeManager:
 
                 if res.success and res.ticket is not None:
                     try:
-                        if is_limit:
-                            from brokers.base import LimitOrder
-                            lo = LimitOrder(
-                                ticket=int(res.ticket),
-                                symbol=signal.symbol,
-                                order_type=order_type.value,
-                                price=target_entry,
-                                volume=lot_size,
-                                sl=padded_sl,
-                                tp=signal.suggested_tp,
-                                created_time=time.time(),
-                                timeout_seconds=75.0,
-                                invalidation_price=signal.invalidation_price or 0.0,
-                                comment=order_comment,
-                            )
-                            async with self._lock:
-                                self._pending_limit_orders[lo.ticket] = lo
-                            logger.info(
-                                f"[SMART LIMIT ORDER PLACED] #{lo.ticket} {order_type.value} {lot_size} {signal.symbol} "
-                                f"@ {target_entry:.2f} | Invalidation Guard: {lo.invalidation_price:.2f} | SL: {padded_sl:.2f} | TP: {signal.suggested_tp:.2f}"
-                            )
-                        else:
-                            eff_bal = account_info.balance if account_info else 100.0
-                            active_be_r = 0.35 if (is_gold and eff_bal < 50.0) else signal.be_lock_r
+                        eff_bal = account_info.balance if account_info else 100.0
+                        active_be_r = 0.35 if (is_gold and eff_bal < 50.0) else signal.be_lock_r
 
-                            # Register position for sub-second Chameleon adaptive management
-                            managed = ManagedPosition(
-                                ticket=int(res.ticket),
-                                symbol=signal.symbol,
-                                direction=signal.direction,
-                                volume=res.volume if res.volume > 0 else lot_size,
-                                open_price=res.price if res.price > 0 else target_entry,
-                                sl=padded_sl,
-                                tp=signal.suggested_tp,
-                                entry_time=time.time(),
-                                risk_r_dist=padded_sl_dist,
-                                initial_regime=signal.regime,
-                                current_regime=signal.regime,
-                                sub_regime=signal.sub_regime,
-                                be_lock_r=active_be_r,
-                                stall_exit_seconds=signal.stall_exit_seconds,
-                                highest_r_reached=0.0,
-                                entry_velocity=getattr(self.news_reactor, "_latest_velocity", 1.0) or 1.0,
-                            )
-                            async with self._lock:
-                                self._managed_positions[managed.ticket] = managed
+                        # Register position for sub-second Chameleon adaptive management
+                        managed = ManagedPosition(
+                            ticket=int(res.ticket),
+                            symbol=signal.symbol,
+                            direction=signal.direction,
+                            volume=res.volume if res.volume > 0 else lot_size,
+                            open_price=res.price if res.price > 0 else target_entry,
+                            sl=padded_sl,
+                            tp=signal.suggested_tp,
+                            entry_time=time.time(),
+                            risk_r_dist=padded_sl_dist,
+                            initial_regime=signal.regime,
+                            current_regime=signal.regime,
+                            sub_regime=signal.sub_regime,
+                            be_lock_r=active_be_r,
+                            stall_exit_seconds=signal.stall_exit_seconds,
+                            highest_r_reached=0.0,
+                            entry_velocity=getattr(self.news_reactor, "_latest_velocity", 1.0) or 1.0,
+                        )
+                        async with self._lock:
+                            self._managed_positions[managed.ticket] = managed
 
-                            logger.info(
-                                f"[ADAPTIVE TRADE INITIATED] #{managed.ticket} {signal.direction} {lot_size} {signal.symbol} "
-                                f"@ {res.price:.2f} | Sub-Regime: {signal.sub_regime} -> {signal.regime} | Risk: {padded_sl_dist:.2f} | TP: {signal.suggested_tp:.2f}"
-                            )
+                        logger.info(
+                            f"[ADAPTIVE TRADE INITIATED] #{managed.ticket} {signal.direction} {lot_size} {signal.symbol} "
+                            f"@ {res.price:.2f} | Sub-Regime: {signal.sub_regime} -> {signal.regime} | Risk: {padded_sl_dist:.2f} | TP: {signal.suggested_tp:.2f}"
+                        )
                     except Exception as reg_err:
                         logger.critical(f"Critical: Failed to enroll position #{res.ticket} into management: {reg_err}", exc_info=True)
                         # Emergency fallback: always ensure basic ManagedPosition is registered
@@ -1478,17 +1458,18 @@ class TradeManager:
         3. Asymmetric Deep Invalidation: If trade reaches <= -0.50R with severe adverse shock or SuperTrend break,
            cut before full -1.0R / -2.0R SL.
         """
-        # 1. Grace Period: Allow 5.0s for broker execution and initial bid/ask spread settlement
+        # 1. Enforce minimum hold time: wait it out, never open and close trades directly!
         hold_time = now - pos.entry_time
-        if hold_time < 5.0:
+        min_hold = getattr(self, "min_hold_time_seconds", 90.0)
+        if hold_time < min_hold:
             return False, ""
 
         if not getattr(self, "predictive_scratch_enabled", True):
-            # Fallback to minimal legacy check if disabled
-            if hold_time < 60.0 or floating_r > -0.65:
+            # Fallback check if predictive scratch disabled
+            if floating_r > -0.75:
                 return False, ""
 
-        # 2. Extract Account Equity & Budget Limits for Sizing Protection
+        # 2. Extract Account Equity & Calculate Floating USD
         eff_balance = 100.0
         if hasattr(self.broker, "get_account_info"):
             try:
@@ -1502,7 +1483,6 @@ class TradeManager:
         elif eff_balance == 100.0 and hasattr(self, "risk_engine") and getattr(self.risk_engine, "base_budget_usd", 0.0) > 0:
             eff_balance = self.risk_engine.base_budget_usd
 
-        # Calculate floating USD profit / loss
         is_gold = any(k in pos.symbol.upper() for k in ["XAU", "GOLD"])
         lot_mult = 100.0 if is_gold else 100000.0
         if hasattr(pos, "profit") and pos.profit != 0.0:
@@ -1510,10 +1490,6 @@ class TradeManager:
         else:
             price_diff = (current_price - pos.open_price) if pos.direction == "BUY" else (pos.open_price - current_price)
             floating_usd = price_diff * pos.volume * lot_mult
-
-        # Budget-relative loss allowance for early mitigation scratch
-        micro_cap_pct = getattr(self, "micro_budget_loss_cap_pct", 15.0)
-        max_budget_scratch_loss_usd = max(0.20, eff_balance * (micro_cap_pct / 100.0))
 
         # 3. Multi-Timeframe Technical & Market Studies
         dfs: Dict[str, Any] = {}
@@ -1547,161 +1523,58 @@ class TradeManager:
             except Exception:
                 pass
 
-        # Check 1m Structure & Candle Impulse
+        # Check 1m Structure
         df_1m = dfs.get("1m")
-        st_1m = {}
-        is_1m_adverse_candle = False
-        struct_invalidated = False
         c1 = current_price
-        if df_1m is not None and len(df_1m) >= 6:
-            try:
-                st_1m = TechnicalIndicators.calculate_supertrend(
-                    df_1m["high"], df_1m["low"], df_1m["close"], period=10, multiplier=2.0
-                )
-            except Exception:
-                pass
-
-            try:
-                struct = TechnicalIndicators.detect_market_structure(
-                    df_1m["high"], df_1m["low"], df_1m["close"], window=2
-                )
-                if pos.direction == "BUY" and (struct.get("bos_bear") or struct.get("choch_bear") or struct.get("is_bearish")):
-                    struct_invalidated = True
-                elif pos.direction == "SELL" and (struct.get("bos_bull") or struct.get("choch_bull") or struct.get("is_bullish")):
-                    struct_invalidated = True
-            except Exception:
-                pass
-
+        if df_1m is not None and len(df_1m) > 0:
             c1 = float(df_1m["close"].iloc[-1])
-            o1 = float(df_1m["open"].iloc[-1])
-            h1 = float(df_1m["high"].iloc[-1])
-            l1 = float(df_1m["low"].iloc[-1])
-            rng1 = max(0.01, h1 - l1)
-            if pos.direction == "BUY":
-                if (o1 - c1) > 0 and ((o1 - c1) / rng1) > 0.60 and c1 < pos.open_price:
-                    is_1m_adverse_candle = True
-            else:
-                if (c1 - o1) > 0 and ((c1 - o1) / rng1) > 0.60 and c1 > pos.open_price:
-                    is_1m_adverse_candle = True
 
         # Check Velocity Shock
         vel = getattr(self.news_reactor, "_latest_velocity", 1.0) or 1.0
-        velocity_shock = (vel >= 2.8 * max(0.5, pos.entry_velocity))
 
-        # Check Opposing Scorer Bias (if available)
-        opposing_scorer_alert = False
-        scorer_inst = getattr(self, "scorer", None)
-        if not scorer_inst:
-            try:
-                from ui.server import ctx as server_ctx
-                scorer_inst = getattr(server_ctx, "scorer", None)
-            except Exception:
-                scorer_inst = None
-
-        if scorer_inst and "1m" in dfs and "5m" in dfs:
-            try:
-                opposing_dir = "SELL" if pos.direction == "BUY" else "BUY"
-                opp_sig = scorer_inst.evaluate(
-                    symbol=pos.symbol,
-                    dfs=dfs,
-                    regime=pos.current_regime,
-                    current_price=current_price,
-                    direction_override=opposing_dir,
-                )
-                if opp_sig and getattr(opp_sig, "score", 0) >= 75:
-                    opposing_scorer_alert = True
-            except Exception:
-                pass
-
-        # 4. Synthesize Market Invalidation Signals
-        is_adverse_setup = False
-        adverse_reasons = []
-
-        if pos.direction == "BUY":
-            if trend_1m == "BEAR" and trend_5m == "BEAR":
-                is_adverse_setup = True
-                adverse_reasons.append("1m & 5m Trend Bearish")
-            elif st_5m.get("valid") and st_5m.get("is_bear"):
-                is_adverse_setup = True
-                adverse_reasons.append("5m SuperTrend Bearish Break")
-            elif (st_1m.get("valid") and st_1m.get("is_bear")) and (trend_1m == "BEAR" or is_1m_adverse_candle):
-                is_adverse_setup = True
-                adverse_reasons.append("1m SuperTrend & Momentum Breakdown")
-            elif struct_invalidated and (is_1m_adverse_candle or trend_1m == "BEAR"):
-                is_adverse_setup = True
-                adverse_reasons.append("1m Structure Bearish BOS/CHoCH")
-            elif opposing_scorer_alert:
-                is_adverse_setup = True
-                adverse_reasons.append("Opposing Confluence Signal (Score >= 75)")
-            elif velocity_shock:
-                if df_1m is not None and len(df_1m) > 0 and c1 < pos.open_price:
-                    is_adverse_setup = True
-                    adverse_reasons.append(f"Adverse Velocity Shock ({vel:.1f}x)")
-                elif df_1m is None:
-                    is_adverse_setup = True
-                    adverse_reasons.append(f"Adverse Velocity Shock ({vel:.1f}x)")
-
-        elif pos.direction == "SELL":
-            if trend_1m == "BULL" and trend_5m == "BULL":
-                is_adverse_setup = True
-                adverse_reasons.append("1m & 5m Trend Bullish")
-            elif st_5m.get("valid") and st_5m.get("is_bull"):
-                is_adverse_setup = True
-                adverse_reasons.append("5m SuperTrend Bullish Break")
-            elif (st_1m.get("valid") and st_1m.get("is_bull")) and (trend_1m == "BULL" or is_1m_adverse_candle):
-                is_adverse_setup = True
-                adverse_reasons.append("1m SuperTrend & Momentum Breakdown")
-            elif struct_invalidated and (is_1m_adverse_candle or trend_1m == "BULL"):
-                is_adverse_setup = True
-                adverse_reasons.append("1m Structure Bullish BOS/CHoCH")
-            elif opposing_scorer_alert:
-                is_adverse_setup = True
-                adverse_reasons.append("Opposing Confluence Signal (Score >= 75)")
-            elif velocity_shock:
-                if df_1m is not None and len(df_1m) > 0 and c1 > pos.open_price:
-                    is_adverse_setup = True
-                    adverse_reasons.append(f"Adverse Velocity Shock ({vel:.1f}x)")
-                elif df_1m is None:
-                    is_adverse_setup = True
-                    adverse_reasons.append(f"Adverse Velocity Shock ({vel:.1f}x)")
-
-        reason_str = ", ".join(adverse_reasons) if adverse_reasons else "Adverse Momentum Invalidation"
-
-        # 5. Evaluate Decision Rules:
-
+        # 4. Decision Rules:
         # CASE A: Breakeven Scratch (Protecting Capital on Fading / Reversing Trades)
-        # If trade was in profit (highest_r >= 0.15R) or is currently hovering near breakeven/slight profit
-        # (floating_r >= -0.05R and floating_usd >= -0.10) and market study shows trade is reversing against us:
+        # If trade reached substantial profit (highest_r >= 0.40R) and has now pulled back
+        # to near entry (-0.05R <= floating_r <= 0.15R) with adverse momentum:
         can_scratch_be = (
-            (floating_r >= 0.05 or floating_usd >= 0.05) or
-            (pos.highest_r_reached >= 0.15 and floating_r >= -0.08) or
-            (hold_time >= 15.0 and -0.08 <= floating_r <= 0.30)
+            pos.highest_r_reached >= 0.40 and
+            -0.05 <= floating_r <= 0.15
         )
-        if can_scratch_be and is_adverse_setup:
-            pnl_note = f"+${floating_usd:.2f}" if floating_usd >= 0 else f"-${abs(floating_usd):.2f}"
-            return True, f"Predictive Invalidation: Breakeven Scratch ({reason_str} | {floating_r:+.2f}R, {pnl_note})"
+        if can_scratch_be:
+            is_reversal = False
+            rev_reasons = []
+            if pos.direction == "BUY":
+                if trend_1m == "BEAR" and trend_5m == "BEAR":
+                    is_reversal = True
+                    rev_reasons.append("1m & 5m Trend Bearish")
+                elif st_5m.get("valid") and st_5m.get("is_bear"):
+                    is_reversal = True
+                    rev_reasons.append("5m SuperTrend Bearish Break")
+            else:
+                if trend_1m == "BULL" and trend_5m == "BULL":
+                    is_reversal = True
+                    rev_reasons.append("1m & 5m Trend Bullish")
+                elif st_5m.get("valid") and st_5m.get("is_bull"):
+                    is_reversal = True
+                    rev_reasons.append("5m SuperTrend Bullish Break")
 
-        # CASE B: Early Mitigation Cut (Budget-Scaled Scratch Loss)
-        # If trade is floating slightly negative (-0.08R to -0.40R) and dollar loss is within small budget cap
-        # (e.g. <= 15% of account balance / <= $0.38 on micro account) and structure breaks against us:
-        can_mitigate_early = (
-            (-self.max_mitigation_loss_r <= floating_r < -0.08) and
-            (abs(floating_usd) <= max_budget_scratch_loss_usd or floating_r >= -0.35) and
-            (hold_time >= 8.0)
-        )
-        if can_mitigate_early and is_adverse_setup:
-            return True, f"Predictive Invalidation: Early Mitigation Cut ({reason_str} | {floating_r:+.2f}R, loss -${abs(floating_usd):.2f} <= budget limit ${max_budget_scratch_loss_usd:.2f})"
+            if is_reversal:
+                pnl_note = f"+${floating_usd:.2f}" if floating_usd >= 0 else f"-${abs(floating_usd):.2f}"
+                return True, f"Predictive Invalidation: Breakeven Scratch ({', '.join(rev_reasons)} | {floating_r:+.2f}R, {pnl_note})"
 
-        # CASE C: Asymmetric Deep Invalidation
-        # When trade is further underwater (floating_r <= -0.50R), cut if 5m SuperTrend breaks or severe shock
-        if floating_r <= -0.50:
+        # CASE B: High-Certainty Adverse Invalidation (Only close when 100% sure it will lose full SL)
+        # Position is deep in drawdown (floating_r <= -0.70R) AND higher timeframe / shock confirms invalidation:
+        if floating_r <= -0.70:
             if st_5m.get("valid"):
                 if pos.direction == "BUY" and st_5m.get("is_bear"):
-                    return True, f"Adverse 5m SuperTrend Bearish Break: Early Invalidation ({floating_r:.2f}R)"
+                    return True, f"Confirmed Invalidation: 5m SuperTrend Bearish Break ({floating_r:.2f}R)"
                 elif pos.direction == "SELL" and st_5m.get("is_bull"):
-                    return True, f"Adverse 5m SuperTrend Bullish Break: Early Invalidation ({floating_r:.2f}R)"
+                    return True, f"Confirmed Invalidation: 5m SuperTrend Bullish Break ({floating_r:.2f}R)"
             if vel >= 3.5 * max(0.5, pos.entry_velocity):
-                return True, f"Severe Opposing Velocity Shock ({vel:.1f}x): Early Invalidation ({floating_r:.2f}R)"
+                if pos.direction == "BUY" and c1 < pos.open_price:
+                    return True, f"Confirmed Invalidation: Severe Adverse Velocity Shock ({vel:.1f}x | {floating_r:.2f}R)"
+                elif pos.direction == "SELL" and c1 > pos.open_price:
+                    return True, f"Confirmed Invalidation: Severe Adverse Velocity Shock ({vel:.1f}x | {floating_r:.2f}R)"
 
         return False, ""
 
