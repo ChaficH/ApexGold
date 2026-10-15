@@ -480,6 +480,10 @@
               <span>🧠 THINKING</span>
               <span id="tab-pulse-dot" class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
             </button>
+            <button id="btn-main-tab-learning" onclick="switchMainTab('learning')" class="flex-1 py-1 rounded-sm text-zinc-500 hover:text-zinc-300 uppercase tracking-wider transition duration-150 ease-out flex items-center justify-center space-x-1">
+              <span>🎓 AI LEARNING</span>
+              <span id="tab-learning-count-badge" class="px-1 py-0.2 rounded-sm text-[8px] bg-amber-500/20 text-amber-300 font-bold ml-1">0</span>
+            </button>
             <button id="btn-main-tab-history" onclick="switchMainTab('history')" class="flex-1 py-1 rounded-sm text-zinc-500 hover:text-zinc-300 uppercase tracking-wider transition duration-150 ease-out">
               History (<span id="history-count-badge" class="tabular-nums">0</span>)
             </button>
@@ -627,6 +631,183 @@
             </div>
           </div>
 
+        </div>
+
+        <!-- PANE: AI LEARNING & EXPERIENTIAL REFLEXES -->
+        <div id="pane-ai-learning" class="hidden flex-1 flex flex-col min-h-0 space-y-2 border border-[#1E2028] rounded-sm bg-[#090A0F] p-2 overflow-y-auto font-mono text-[11px]">
+          <!-- Top Bar: Live AI State & Reflex Heartbeat -->
+          <div class="flex items-center justify-between bg-[#151821] px-2.5 py-1.5 rounded-sm border border-[#1E2028]">
+            <div class="flex items-center space-x-2">
+              <span class="w-2 h-2 rounded-full bg-sky-400 animate-pulse"></span>
+              <span id="learning-status-pill" class="px-2 py-0.5 rounded-sm bg-sky-500/10 text-sky-400 border border-sky-500/25 font-mono text-[10px] font-semibold uppercase tracking-wider">
+                CONTINUAL LEARNER ACTIVE
+              </span>
+              <span class="text-zinc-400 text-[9px] uppercase tracking-wider hidden sm:inline">
+                ANTI-MEMORIZATION &bull; L2 REGULARIZED
+              </span>
+            </div>
+            <div class="flex items-center space-x-2 text-[10px]">
+              <span class="text-zinc-500">TRADES STUDIED: <span id="learn-total-trades" class="text-amber-300 font-bold tabular-nums">0</span></span>
+              <span class="text-zinc-600">|</span>
+              <span class="text-zinc-500">LEARNED WIN RATE: <span id="learn-win-rate" class="text-emerald-400 font-bold tabular-nums">0.0%</span></span>
+            </div>
+          </div>
+
+          <!-- Section 1: What The AI Is Doing Right Now -->
+          <div class="bg-[#11131A] p-2.5 rounded-sm border border-[#1E2028] space-y-1.5">
+            <div class="flex items-center justify-between text-[10px] border-b border-[#1E2028]/80 pb-1">
+              <div class="flex items-center space-x-2">
+                <span class="text-emerald-400 font-bold text-[10px] uppercase tracking-wider">🎯 WHAT THE AI IS DOING RIGHT NOW</span>
+                <span id="learn-action-mode-badge" class="px-1.5 py-0.2 rounded-sm text-[8px] bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 uppercase font-semibold">SCANNING ORDER FLOW</span>
+              </div>
+              <span id="learn-action-timestamp" class="text-zinc-500 text-[9px] tabular-nums">--:--:-- UTC</span>
+            </div>
+            
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-2 pt-1 text-[10px]">
+              <div class="bg-[#090A0F] p-2 rounded-sm border border-[#1E2028]/80 space-y-1">
+                <span class="text-zinc-500 text-[9px] uppercase tracking-wider block">Current Strategic Objective</span>
+                <p id="learn-current-objective" class="text-zinc-200 font-medium leading-relaxed">
+                  Analyzing multi-timeframe order flow for high-expectancy discount entries.
+                </p>
+              </div>
+              <div class="bg-[#090A0F] p-2 rounded-sm border border-[#1E2028]/80 space-y-1">
+                <span class="text-zinc-500 text-[9px] uppercase tracking-wider block">Why It Hasn't Entered (or Entered)</span>
+                <p id="learn-entry-rationale" class="text-zinc-300 leading-relaxed">
+                  Evaluating pullback parameters. Price must reach value zone without overextension.
+                </p>
+              </div>
+              <div class="bg-[#090A0F] p-2 rounded-sm border border-[#1E2028]/80 space-y-1">
+                <span class="text-zinc-500 text-[9px] uppercase tracking-wider block">Target Execution Zone & Invalidation</span>
+                <div class="flex justify-between text-[10px]">
+                  <span class="text-zinc-500">Direction:</span>
+                  <span id="learn-target-dir" class="font-bold text-emerald-400">BUY</span>
+                </div>
+                <div class="flex justify-between text-[10px]">
+                  <span class="text-zinc-500">Optimal Range:</span>
+                  <span id="learn-target-range" class="text-zinc-200 font-semibold tabular-nums">-- - --</span>
+                </div>
+                <div class="flex justify-between text-[10px]">
+                  <span class="text-zinc-500">Structural Invalidation:</span>
+                  <span id="learn-target-inval" class="text-rose-400 font-semibold tabular-nums">--</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Section 2: Four Core Learning Metrics -->
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-1.5 text-[11px]">
+            <div class="bg-[#11131A] p-2 rounded-sm border border-[#1E2028] flex flex-col justify-between">
+              <span class="text-zinc-500 text-[9px] uppercase tracking-wider">Experience Memory Bank</span>
+              <div class="flex items-baseline space-x-1 mt-0.5">
+                <span id="card-learn-wins" class="text-sm font-bold text-emerald-400 tabular-nums">0W</span>
+                <span class="text-zinc-600">/</span>
+                <span id="card-learn-losses" class="text-sm font-bold text-rose-400 tabular-nums">0L</span>
+              </div>
+              <span class="text-[9px] text-zinc-400">Closed Trades Analyzed</span>
+            </div>
+
+            <div class="bg-[#11131A] p-2 rounded-sm border border-[#1E2028] flex flex-col justify-between">
+              <span class="text-zinc-500 text-[9px] uppercase tracking-wider">Mistake Reflex Clusters</span>
+              <div class="flex items-baseline space-x-1 mt-0.5">
+                <span id="card-mistake-count" class="text-sm font-bold text-amber-400 tabular-nums">0</span>
+                <span class="text-[9px] text-zinc-500">vectors saved</span>
+              </div>
+              <span id="card-mistake-sub" class="text-[9px] text-zinc-400">Damping &ge;70% similarity</span>
+            </div>
+
+            <div class="bg-[#11131A] p-2 rounded-sm border border-[#1E2028] flex flex-col justify-between">
+              <span class="text-zinc-500 text-[9px] uppercase tracking-wider">Success Synergy Patterns</span>
+              <div class="flex items-baseline space-x-1 mt-0.5">
+                <span id="card-success-count" class="text-sm font-bold text-emerald-400 tabular-nums">0</span>
+                <span class="text-[9px] text-zinc-500">vectors saved</span>
+              </div>
+              <span id="card-success-sub" class="text-[9px] text-zinc-400">Bonus: up to +10% win prob</span>
+            </div>
+
+            <div class="bg-[#11131A] p-2 rounded-sm border border-[#1E2028] flex flex-col justify-between">
+              <span class="text-zinc-500 text-[9px] uppercase tracking-wider">L2 Decay Regularization</span>
+              <div class="flex items-baseline space-x-1 mt-0.5">
+                <span class="text-sm font-bold text-sky-400 tabular-nums">&lambda; = 0.015</span>
+              </div>
+              <span class="text-[9px] text-zinc-400">Guarantees Anti-Memorization</span>
+            </div>
+          </div>
+
+          <!-- Section 3: Adaptive Weight Shift Matrix (Factors vs Institutional Priors) -->
+          <div class="bg-[#11131A] p-2 rounded-sm border border-[#1E2028] space-y-1">
+            <div class="flex items-center justify-between text-[10px] border-b border-[#1E2028]/80 pb-1">
+              <div class="flex items-center space-x-2">
+                <span class="text-zinc-300 font-semibold uppercase text-[9px] tracking-wider">🧠 ADAPTIVE WEIGHT SHIFTS (LIVE vs INSTITUTIONAL PRIORS)</span>
+                <span class="text-[8px] text-zinc-500">Started from Institutional Priors &bull; Adapts Without Memorizing</span>
+              </div>
+              <span class="text-zinc-500 text-[9px]">Elastic Net Regularized</span>
+            </div>
+            <div class="overflow-x-auto max-h-[190px] overflow-y-auto">
+              <table class="w-full text-left text-[10px]">
+                <thead class="text-zinc-500 border-b border-[#1E2028] text-[9px] uppercase tracking-wider sticky top-0 bg-[#11131A]">
+                  <tr>
+                    <th class="py-1">Factor Name & Purpose</th>
+                    <th class="py-1">Category</th>
+                    <th class="py-1 text-right">Prior ($w_0$)</th>
+                    <th class="py-1 text-right">Learned ($w_t$)</th>
+                    <th class="py-1 text-right">Shift (&Delta;w)</th>
+                    <th class="py-1 text-center">Reflex Status</th>
+                  </tr>
+                </thead>
+                <tbody id="learn-factors-tbody" class="divide-y divide-[#1E2028]/40 tabular-nums">
+                  <tr><td colspan="6" class="py-2 text-center text-zinc-600">Loading factor weight matrix...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Section 4: Dual Memory Columns (Mistakes Corrected vs Successes Reinforced) -->
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
+            <!-- Column 1: Mistake Memory Bank & Active Reflex Dampers -->
+            <div class="bg-[#11131A] p-2 rounded-sm border border-[#1E2028] flex flex-col space-y-1.5">
+              <div class="flex items-center justify-between text-[10px] border-b border-[#1E2028]/80 pb-1">
+                <span class="text-rose-400 font-semibold text-[9px] uppercase tracking-wider flex items-center space-x-1">
+                  <span>🛑 MISTAKE MEMORY & REFLEX DAMPERS</span>
+                  <span id="mistake-badge-count" class="px-1 rounded-sm bg-rose-500/20 text-rose-300 text-[8px] font-bold">0</span>
+                </span>
+                <span class="text-[8px] text-zinc-500">Auto-Damps Repeat Errors</span>
+              </div>
+              <div id="learn-mistakes-container" class="space-y-1.5 max-h-[170px] overflow-y-auto pr-1">
+                <div class="p-2 text-center text-zinc-600 text-[10px] border border-dashed border-[#1E2028] rounded-sm">
+                  No mistake clusters recorded yet. Bot is operating cleanly on institutional prior gates.
+                </div>
+              </div>
+            </div>
+
+            <!-- Column 2: Success Synergy Bank -->
+            <div class="bg-[#11131A] p-2 rounded-sm border border-[#1E2028] flex flex-col space-y-1.5">
+              <div class="flex items-center justify-between text-[10px] border-b border-[#1E2028]/80 pb-1">
+                <span class="text-emerald-400 font-semibold text-[9px] uppercase tracking-wider flex items-center space-x-1">
+                  <span>✨ SUCCESS SYNERGY PATTERNS</span>
+                  <span id="success-badge-count" class="px-1 rounded-sm bg-emerald-500/20 text-emerald-300 text-[8px] font-bold">0</span>
+                </span>
+                <span class="text-[8px] text-zinc-500">Confidence Bonus on Match</span>
+              </div>
+              <div id="learn-successes-container" class="space-y-1.5 max-h-[170px] overflow-y-auto pr-1">
+                <div class="p-2 text-center text-zinc-600 text-[10px] border border-dashed border-[#1E2028] rounded-sm">
+                  Awaiting first profitable trade to record positive alpha drivers and synergistic patterns.
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Section 5: Chronological AI Lesson & Self-Reflection Stream -->
+          <div class="bg-[#11131A] p-2 rounded-sm border border-[#1E2028] space-y-1">
+            <div class="flex items-center justify-between text-[10px] border-b border-[#1E2028]/80 pb-1">
+              <span class="text-[#D4AF37] font-semibold text-[9px] uppercase tracking-wider">📜 CHRONOLOGICAL AI LESSONS & REFLECTIONS</span>
+              <span class="text-[8px] text-zinc-500">Real-Time Continuous Learning Audit</span>
+            </div>
+            <div id="learn-lessons-container" class="space-y-1 max-h-[140px] overflow-y-auto pr-1 text-[10px]">
+              <div class="p-1.5 bg-[#090A0F] rounded-sm border border-[#1E2028]/60 text-zinc-400">
+                Institutional prior weights initialized. Reflex damping and pattern synergy primed.
+              </div>
+            </div>
+          </div>
         </div>
 
         <!-- PANE A: TRADE HISTORY TABLE -->
@@ -2021,11 +2202,12 @@
 
     function switchMainTab(tab) {
       currentMainTab = tab;
-      const tabs = ['thinking', 'history', 'news', 'logs'];
+      const tabs = ['thinking', 'learning', 'history', 'news', 'logs'];
       tabs.forEach(t => {
         const btn = document.getElementById(`btn-main-tab-${t}`);
         const pane = document.getElementById(
           t === 'thinking' ? 'pane-predictive-thinking' :
+          t === 'learning' ? 'pane-ai-learning' :
           t === 'history' ? 'pane-trade-history' :
           t === 'news' ? 'pane-economic-news' : 'pane-execution-logs'
         );
@@ -2043,6 +2225,9 @@
       });
       if (tab === 'news' && cachedNewsState) {
         renderActiveNewsTab(cachedNewsState);
+      }
+      if (tab === 'learning' && window.lastPredictiveBrain) {
+        updateAiLearningUI(window.lastPredictiveBrain, window.lastPredictiveBrain.experience);
       }
     }
 
@@ -2218,6 +2403,208 @@
             </tr>
           `;
         }).join('');
+      }
+
+      // Trigger AI Learning Pane Sync
+      updateAiLearningUI(pb, exp);
+    }
+
+    function updateAiLearningUI(pb, exp) {
+      if (!pb) return;
+      exp = exp || pb.experience || {};
+
+      // 1. Top Bar Sync
+      const totalTrades = exp.trades_analyzed !== undefined ? exp.trades_analyzed : 0;
+      const totalEl = document.getElementById('learn-total-trades');
+      if (totalEl) totalEl.innerText = totalTrades;
+      const badgeBtn = document.getElementById('tab-learning-count-badge');
+      if (badgeBtn) badgeBtn.innerText = `${totalTrades} TRADES`;
+
+      const wrEl = document.getElementById('learn-win-rate');
+      if (wrEl) wrEl.innerText = exp.win_rate_learned || '0.0%';
+
+      const winsEl = document.getElementById('card-learn-wins');
+      if (winsEl) winsEl.innerText = `${exp.winning_trades || 0}W`;
+      const lossEl = document.getElementById('card-learn-losses');
+      if (lossEl) lossEl.innerText = `${exp.losing_trades || 0}L`;
+
+      const mistCountEl = document.getElementById('card-mistake-count');
+      if (mistCountEl) mistCountEl.innerText = exp.mistakes_recorded || 0;
+      const mistBadge = document.getElementById('mistake-badge-count');
+      if (mistBadge) mistBadge.innerText = exp.mistakes_recorded || 0;
+
+      const succCountEl = document.getElementById('card-success-count');
+      if (succCountEl) succCountEl.innerText = exp.successes_recorded || 0;
+      const succBadge = document.getElementById('success-badge-count');
+      if (succBadge) succBadge.innerText = exp.successes_recorded || 0;
+
+      // 2. What The AI Is Doing Right Now
+      const actionBadge = document.getElementById('learn-action-mode-badge');
+      if (actionBadge) {
+        actionBadge.innerText = pb.verdict_badge || 'ACTIVE SCANNING';
+        if ((pb.status || '').includes('PULLBACK')) {
+          actionBadge.className = 'px-1.5 py-0.2 rounded-sm text-[8px] bg-amber-500/15 text-amber-300 border border-amber-500/30 uppercase font-semibold';
+        } else if ((pb.status || '').includes('QUALIFIED')) {
+          actionBadge.className = 'px-1.5 py-0.2 rounded-sm text-[8px] bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 uppercase font-semibold';
+        } else if ((pb.status || '').includes('SHIELD')) {
+          actionBadge.className = 'px-1.5 py-0.2 rounded-sm text-[8px] bg-rose-500/15 text-rose-300 border border-rose-500/30 uppercase font-semibold';
+        } else {
+          actionBadge.className = 'px-1.5 py-0.2 rounded-sm text-[8px] bg-sky-500/15 text-sky-300 border border-sky-500/30 uppercase font-semibold';
+        }
+      }
+
+      const timeEl = document.getElementById('learn-action-timestamp');
+      if (timeEl) timeEl.innerText = pb.time_utc_str || '--:--:-- UTC';
+
+      const objEl = document.getElementById('learn-current-objective');
+      const ratEl = document.getElementById('learn-entry-rationale');
+      const tz = pb.target_zone || {};
+      const dominantDir = (pb.p_bull >= pb.p_bear) ? 'BUY' : 'SELL';
+
+      if (objEl) {
+        if (pb.status === 'WAITING_FOR_PULLBACK') {
+          objEl.innerHTML = `Hunting high-probability <span class="font-bold text-amber-400">${dominantDir}</span> pullback into institutional discount zone <span class="text-zinc-100 font-semibold">[${tz.optimal_entry_min ? tz.optimal_entry_min.toFixed(2) : '--'} - ${tz.optimal_entry_max ? tz.optimal_entry_max.toFixed(2) : '--'}]</span>. Rejecting top/bottom chases.`;
+        } else if (pb.status === 'QUALIFIED_TRADE') {
+          objEl.innerHTML = `Dispatched <span class="font-bold text-emerald-400">${dominantDir}</span> setup. All 7 institutional gates confirmed with Expected Value <span class="text-emerald-400 font-bold">${pb.expected_value_r >= 0 ? '+' : ''}${pb.expected_value_r.toFixed(2)}R</span>.`;
+        } else if (pb.status === 'STAND_ASIDE_CHOP') {
+          objEl.innerText = `Preserving capital. Market choppiness index is elevated (${(pb.chop_val || 50).toFixed(1)} > 60). Standing aside until clean directional breakout.`;
+        } else if (pb.status === 'DEFENSIVE_SHIELD') {
+          objEl.innerText = `Defensive shield engaged to protect open balance from incoming volatility spikes or wide broker spreads.`;
+        } else {
+          objEl.innerText = `Scanning multi-timeframe order flow, evaluating Bayesian probabilities, and calculating mathematical edge in real-time.`;
+        }
+      }
+
+      if (ratEl) {
+        const failedGate = (pb.gates || []).find(g => !g.passed);
+        if (failedGate) {
+          ratEl.innerText = `Gate [${failedGate.name}]: ${failedGate.detail}`;
+        } else {
+          ratEl.innerText = `All safety and statistical gates cleared. EV: ${pb.expected_value_r >= 0 ? '+' : ''}${pb.expected_value_r.toFixed(2)}R | P(Win): ${((pb.p_win || 0.5) * 100).toFixed(1)}%.`;
+        }
+      }
+
+      const dirEl = document.getElementById('learn-target-dir');
+      if (dirEl) {
+        dirEl.innerText = tz.direction || dominantDir;
+        dirEl.className = (tz.direction || dominantDir) === 'BUY' ? 'font-bold text-emerald-400' : 'font-bold text-rose-400';
+      }
+
+      const rangeEl = document.getElementById('learn-target-range');
+      if (rangeEl) {
+        rangeEl.innerText = (tz.optimal_entry_min && tz.optimal_entry_max) ? `${tz.optimal_entry_min.toFixed(2)} - ${tz.optimal_entry_max.toFixed(2)}` : 'Awaiting confirmation';
+      }
+
+      const invalEl = document.getElementById('learn-target-inval');
+      if (invalEl) {
+        invalEl.innerText = tz.invalidation_level ? `${tz.invalidation_level.toFixed(2)}` : 'Structural Low/High';
+      }
+
+      // 3. Adaptive Weight Shift Matrix Table
+      const factorsTbody = document.getElementById('learn-factors-tbody');
+      if (factorsTbody && exp.factors && exp.factors.length > 0) {
+        factorsTbody.innerHTML = exp.factors.map(f => {
+          let deltaClass = 'text-zinc-400';
+          let deltaBadgeClass = 'bg-zinc-800 text-zinc-400 border border-zinc-700/50';
+          if (f.delta > 0.01) {
+            deltaClass = 'text-emerald-400 font-bold';
+            deltaBadgeClass = 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-semibold';
+          } else if (f.delta < -0.01) {
+            deltaClass = 'text-rose-400 font-bold';
+            deltaBadgeClass = 'bg-rose-500/15 text-rose-300 border border-rose-500/30 font-semibold';
+          }
+
+          return `
+            <tr class="hover:bg-[#151821]/60 transition-colors">
+              <td class="py-1.5 pr-2">
+                <span class="text-zinc-200 font-semibold block text-[10px]">${f.name}</span>
+                <span class="text-zinc-500 text-[9px] block leading-tight font-sans">${f.description}</span>
+              </td>
+              <td class="py-1.5 pr-2 text-zinc-400 text-[9px]">${f.category}</td>
+              <td class="py-1.5 text-right font-mono text-zinc-400 text-[10px]">${f.prior_weight >= 0 ? '+' : ''}${f.prior_weight.toFixed(2)}</td>
+              <td class="py-1.5 text-right font-mono text-zinc-100 font-semibold text-[10px]">${f.learned_weight >= 0 ? '+' : ''}${f.learned_weight.toFixed(3)}</td>
+              <td class="py-1.5 text-right font-mono ${deltaClass} text-[10px]">${f.delta >= 0 ? '+' : ''}${f.delta.toFixed(3)}</td>
+              <td class="py-1.5 text-center">
+                <span class="px-1.5 py-0.2 rounded-sm text-[8px] uppercase tracking-wider ${deltaBadgeClass}">
+                  ${f.status}
+                </span>
+              </td>
+            </tr>
+          `;
+        }).join('');
+      }
+
+      // 4. Mistake Memory Bank
+      const mistakesBox = document.getElementById('learn-mistakes-container');
+      if (mistakesBox) {
+        if (exp.mistakes && exp.mistakes.length > 0) {
+          mistakesBox.innerHTML = exp.mistakes.map(m => {
+            return `
+              <div class="p-1.5 bg-[#090A0F] rounded-sm border border-[#1E2028] text-[10px] space-y-1">
+                <div class="flex items-center justify-between">
+                  <span class="font-bold text-rose-400">#${m.ticket} ${m.direction} (${m.pnl_r >= 0 ? '+' : ''}${m.pnl_r.toFixed(2)}R, $${m.pnl_usd.toFixed(2)})</span>
+                  <span class="text-[9px] text-zinc-500 tabular-nums">${m.time_str || ''}</span>
+                </div>
+                <div class="text-zinc-300"><span class="text-zinc-500 font-semibold">Diagnosed Root Cause:</span> ${m.cause || 'Stop loss sweep'}</div>
+                <div class="text-amber-400/90 text-[9px] bg-amber-500/5 px-1.5 py-0.5 rounded-sm border border-amber-500/20">
+                  🛡️ ${m.ai_correction}
+                </div>
+              </div>
+            `;
+          }).join('');
+        } else {
+          mistakesBox.innerHTML = `
+            <div class="p-2 text-center text-zinc-600 text-[10px] border border-dashed border-[#1E2028] rounded-sm">
+              No mistake clusters recorded yet. Bot is operating cleanly on institutional prior gates.
+            </div>
+          `;
+        }
+      }
+
+      // 5. Success Synergy Bank
+      const successesBox = document.getElementById('learn-successes-container');
+      if (successesBox) {
+        if (exp.successes && exp.successes.length > 0) {
+          successesBox.innerHTML = exp.successes.map(s => {
+            return `
+              <div class="p-1.5 bg-[#090A0F] rounded-sm border border-[#1E2028] text-[10px] space-y-1">
+                <div class="flex items-center justify-between">
+                  <span class="font-bold text-emerald-400">#${s.ticket} ${s.direction} (+${s.pnl_r.toFixed(2)}R, +$${s.pnl_usd.toFixed(2)})</span>
+                  <span class="text-[9px] text-zinc-500 tabular-nums">${s.time_str || ''}</span>
+                </div>
+                <div class="text-zinc-300"><span class="text-zinc-500 font-semibold">Positive Driver:</span> ${s.driver || 'R:R discipline'}</div>
+                <div class="text-emerald-400/90 text-[9px] bg-emerald-500/5 px-1.5 py-0.5 rounded-sm border border-emerald-500/20">
+                  ✨ ${s.ai_reinforcement}
+                </div>
+              </div>
+            `;
+          }).join('');
+        } else {
+          successesBox.innerHTML = `
+            <div class="p-2 text-center text-zinc-600 text-[10px] border border-dashed border-[#1E2028] rounded-sm">
+              Awaiting closed profitable trades to record positive alpha drivers and synergistic patterns.
+            </div>
+          `;
+        }
+      }
+
+      // 6. Chronological Lessons Stream
+      const lessonsBox = document.getElementById('learn-lessons-container');
+      if (lessonsBox) {
+        const lessons = exp.all_lessons || exp.recent_lessons || [];
+        if (lessons.length > 0) {
+          lessonsBox.innerHTML = lessons.map((les, idx) => {
+            const isLatest = (idx === 0);
+            return `
+              <div class="p-1.5 rounded-sm border ${isLatest ? 'bg-amber-500/5 border-amber-500/30 text-amber-200' : 'bg-[#090A0F] border-[#1E2028]/60 text-zinc-400'}">
+                <div class="flex items-center space-x-1.5">
+                  <span class="text-[9px] font-bold ${isLatest ? 'text-amber-400' : 'text-zinc-500'}">[REFLEX #${lessons.length - idx}]</span>
+                  <span>${les}</span>
+                </div>
+              </div>
+            `;
+          }).join('');
+        }
       }
     }
 

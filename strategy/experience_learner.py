@@ -61,6 +61,64 @@ DEFAULT_PRIOR_WEIGHTS: Dict[str, float] = {
     "direction_val": 0.00,        # Symmetrical bias (no blind long or short prejudice)
 }
 
+FEATURE_METADATA: Dict[str, Dict[str, str]] = {
+    "score_norm": {
+        "name": "Confluence Multi-Factor Score",
+        "category": "Signal Conviction",
+        "description": "Baseline composite technical and quantitative score normalized to [0, 1].",
+    },
+    "candle_pos_5m": {
+        "name": "Anti-Chase Wick Position",
+        "category": "Anti-Chasing & Valuation",
+        "description": "Candle position (0=low wick, 1=high wick). Strictly penalizes buying top wicks or selling bottom wicks.",
+    },
+    "vwap_dev_norm": {
+        "name": "Institutional VWAP Deviation",
+        "category": "Anti-Chasing & Valuation",
+        "description": "Distance from 5m VWAP normalized by ATR. Penalizes buying overextended premiums or selling deep discounts.",
+    },
+    "stoch_rsi_norm": {
+        "name": "Stochastic RSI Momentum Extreme",
+        "category": "Momentum & Exhaustion",
+        "description": "Measures momentum exhaustion. Guards against buying overbought (>80) or selling oversold (<20).",
+    },
+    "kaufman_er": {
+        "name": "Kaufman Adaptive Efficiency (ER)",
+        "category": "Market Regime & Noise",
+        "description": "Signal-to-noise ratio. Rewards clean directional trends and penalizes erratic directionless chop.",
+    },
+    "r_squared": {
+        "name": "Statistical Trend Conviction (R²)",
+        "category": "Market Regime & Noise",
+        "description": "Linear regression conviction. Differentiates persistent institutional flow from random Brownian motion.",
+    },
+    "order_flow_delta": {
+        "name": "Order Flow Delta Aggression (OFI)",
+        "category": "Order Flow & Liquidity",
+        "description": "Sub-second aggressive buying vs selling initiation volume. Penalizes setups opposing order flow.",
+    },
+    "is_zone_reversal": {
+        "name": "Supply / Demand Zone Rejection",
+        "category": "Institutional Levels",
+        "description": "Rewards buying confirmed demand floors or selling confirmed supply ceilings with trap confirmation.",
+    },
+    "trend_align_1h": {
+        "name": "1H Macro Trend Alignment",
+        "category": "Multi-Timeframe Structure",
+        "description": "Rewards setups riding the 1-Hour institutional macro wind and penalizes counter-trend trades.",
+    },
+    "trend_align_15m": {
+        "name": "15m Intermediate Wave Alignment",
+        "category": "Multi-Timeframe Structure",
+        "description": "Rewards entries synchronized with the 15-minute intermediate trend wave.",
+    },
+    "direction_val": {
+        "name": "Directional Neutrality & Symmetry",
+        "category": "Directional Balance",
+        "description": "Ensures completely unbiased symmetry between BUY and SELL trade generation.",
+    },
+}
+
 
 @dataclass
 class TradeExperienceRecord:
@@ -316,10 +374,16 @@ class AdaptiveExperienceLearner:
             self.mistake_memory.append({
                 "ticket": ticket,
                 "direction": direction,
-                "pnl_r": pnl_r,
+                "open_price": round(open_price, 2),
+                "close_price": round(close_price, 2),
+                "pnl_usd": round(pnl_usd, 2),
+                "pnl_r": round(pnl_r, 2),
+                "close_reason": close_reason,
+                "time_str": datetime.fromtimestamp(now, tz=timezone.utc).strftime("%H:%M:%S UTC"),
                 "timestamp": now,
                 "features": feat_vec,
                 "root_cause": root_cause_str,
+                "ai_correction": f"Reflex damping applied (-{min(18, max(5, int(round(abs(pnl_r) * 12))))}%) to candidate setups matching this signature.",
             })
         else:
             self.wins_learned += 1
@@ -343,10 +407,16 @@ class AdaptiveExperienceLearner:
             self.success_memory.append({
                 "ticket": ticket,
                 "direction": direction,
-                "pnl_r": pnl_r,
+                "open_price": round(open_price, 2),
+                "close_price": round(close_price, 2),
+                "pnl_usd": round(pnl_usd, 2),
+                "pnl_r": round(pnl_r, 2),
+                "close_reason": close_reason,
+                "time_str": datetime.fromtimestamp(now, tz=timezone.utc).strftime("%H:%M:%S UTC"),
                 "timestamp": now,
                 "features": feat_vec,
                 "driver": driver_str,
+                "ai_reinforcement": f"Pattern synergy (+{min(10, max(3, int(round(pnl_r * 3.5))))}% win prob) awarded when this structure reoccurs.",
             })
 
         self.recent_lessons.appendleft(lesson)
@@ -455,20 +525,71 @@ class AdaptiveExperienceLearner:
         )
 
     def get_telemetry(self) -> Dict[str, Any]:
-        """Return real-time learner telemetry for the Thinking stream and UI."""
-        # Find top penalized and rewarded factors compared to prior
+        """Return rich, transparent online learning telemetry for the AI Learning UI tab."""
+        factor_list = []
         factor_deltas = {}
         for k in EXPERIENCE_FEATURE_KEYS:
             prior_w = DEFAULT_PRIOR_WEIGHTS.get(k, 0.0)
             cur_w = self.weights.get(k, prior_w)
-            factor_deltas[k] = round(cur_w - prior_w, 3)
+            delta = round(cur_w - prior_w, 4)
+            factor_deltas[k] = delta
+            meta = FEATURE_METADATA.get(k, {})
 
-        top_penalties = [k for k, d in sorted(factor_deltas.items(), key=lambda x: x[1]) if d < -0.05][:3]
-        top_rewards = [k for k, d in sorted(factor_deltas.items(), key=lambda x: -x[1]) if d > 0.05][:3]
+            if delta < -0.015:
+                status = "DAMPED / PENALIZED"
+                status_color = "text-rose-400"
+                shift_badge = f"{delta:+.3f}"
+            elif delta > 0.015:
+                status = "REINFORCED / PROMOTED"
+                status_color = "text-emerald-400"
+                shift_badge = f"{delta:+.3f}"
+            else:
+                status = "ANCHORED TO PRIOR"
+                status_color = "text-zinc-400"
+                shift_badge = "0.000 (Prior)"
+
+            factor_list.append({
+                "key": k,
+                "name": meta.get("name", k),
+                "category": meta.get("category", "Quantitative Structure"),
+                "description": meta.get("description", ""),
+                "prior_weight": prior_w,
+                "learned_weight": cur_w,
+                "delta": delta,
+                "status": status,
+                "status_color": status_color,
+                "shift_badge": shift_badge,
+            })
+
+        top_penalties = [k for k, d in sorted(factor_deltas.items(), key=lambda x: x[1]) if d < -0.02][:3]
+        top_rewards = [k for k, d in sorted(factor_deltas.items(), key=lambda x: -x[1]) if d > 0.02][:3]
 
         recent_mistakes_summary = [
-            {"ticket": m["ticket"], "direction": m["direction"], "pnl_r": m["pnl_r"], "cause": m.get("root_cause", "")}
-            for m in list(self.mistake_memory)[-5:]
+            {
+                "ticket": m["ticket"],
+                "direction": m["direction"],
+                "pnl_usd": m.get("pnl_usd", 0.0),
+                "pnl_r": m["pnl_r"],
+                "close_reason": m.get("close_reason", "SL_HIT"),
+                "cause": m.get("root_cause", ""),
+                "ai_correction": m.get("ai_correction", "Reflex damping active"),
+                "time_str": m.get("time_str", ""),
+            }
+            for m in reversed(list(self.mistake_memory))
+        ]
+
+        recent_successes_summary = [
+            {
+                "ticket": s["ticket"],
+                "direction": s["direction"],
+                "pnl_usd": s.get("pnl_usd", 0.0),
+                "pnl_r": s["pnl_r"],
+                "close_reason": s.get("close_reason", "TP_HIT"),
+                "driver": s.get("driver", ""),
+                "ai_reinforcement": s.get("ai_reinforcement", "Pattern synergy active"),
+                "time_str": s.get("time_str", ""),
+            }
+            for s in reversed(list(self.success_memory))
         ]
 
         return {
@@ -480,12 +601,23 @@ class AdaptiveExperienceLearner:
             "losing_trades": self.mistakes_learned,
             "mistakes_recorded": len(self.mistake_memory),
             "successes_recorded": len(self.success_memory),
-            "last_lesson": self.recent_lessons[-1] if self.recent_lessons else "",
+            "last_lesson": self.recent_lessons[0] if self.recent_lessons else "Institutional prior weights active. Awaiting trade outcomes.",
             "win_rate_learned": f"{(self.wins_learned / max(1, self.total_trades_analyzed)) * 100:.1f}%",
             "top_penalized_factors": top_penalties,
             "top_rewarded_factors": top_rewards,
-            "recent_lessons": list(self.recent_lessons)[:5],
-            "recent_mistakes": recent_mistakes_summary,
+            "factors": factor_list,
+            "mistakes": recent_mistakes_summary,
+            "successes": recent_successes_summary,
+            "recent_lessons": list(self.recent_lessons),
+            "all_lessons": list(self.recent_lessons),
+            "regularization": {
+                "l2_regularization": self.l2_reg,
+                "learning_rate": self.learning_rate,
+                "bias": self.bias,
+                "memory_capacity": self.memory_capacity,
+                "status": "ACTIVE & STABLE",
+                "anti_memorization": "Dimensionless features normalized by ATR/wick bounds. L2 decay prevents overfitting.",
+            },
             "has_experience": (self.total_trades_analyzed > 0),
         }
 

@@ -54,6 +54,8 @@ data/*.db-shm
 data/*.sqlite
 data/*.sqlite3
 !data/.gitkeep
+models/online_experience_learner.json
+
 
 # Research data
 data/research/
