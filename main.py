@@ -420,6 +420,7 @@ async def lifespan(app_instance):
         predictive_scratch_enabled=trading_cfg.get("predictive_scratch_enabled", True),
         micro_budget_loss_cap_pct=float(trading_cfg.get("micro_budget_loss_cap_pct", 15.0)),
         max_mitigation_loss_r=float(trading_cfg.get("max_mitigation_loss_r", 0.40)),
+        circuit_breaker_enabled=trading_cfg.get("circuit_breaker_enabled", False),
     )
     await trade_manager.start()
     ctx.trade_manager = trade_manager

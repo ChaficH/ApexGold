@@ -1050,4 +1050,93 @@ def test_anti_chasing_overbought_blocks_buying_peak():
     assert res_buy is None
 
 
+@pytest.mark.anyio
+async def test_circuit_breaker_disabled_keeps_trading_always_enabled(sample_signal):
+    """
+    Verify that when circuit_breaker_enabled=False:
+    1. Severe drawdown or multiple consecutive losses NEVER pause or trip trading.
+    2. is_paused() returns False.
+    3. is_circuit_breaker_tripped() returns (False, "").
+    4. can_execute_signal() and can_open_manual_trade() remain permanently enabled.
+    5. pause_trading() does not halt trading.
+    """
+    from unittest.mock import MagicMock, AsyncMock
+    crashed_account = AccountInfo(
+        balance=20.0,
+        equity=20.0,
+        margin=0.0,
+        free_margin=20.0,
+        currency="USD",
+        leverage=500,
+    )
+    mock_broker = MagicMock()
+    mock_broker.get_account_info = AsyncMock(return_value=crashed_account)
+    mock_broker.get_open_positions = AsyncMock(return_value=[])
+    mock_broker.get_pending_orders = AsyncMock(return_value=[])
+    mock_broker.get_symbol_info = AsyncMock(return_value=SymbolInfo(
+        symbol="XAUUSD",
+        bid=2650.00,
+        ask=2650.25,
+        point=0.01,
+        digits=2,
+        spread=0.25,
+        contract_size=100.0,
+        tick_size=0.01,
+        tick_value=1.0,
+        volume_min=0.01,
+        volume_max=100.0,
+        volume_step=0.01,
+    ))
+    mock_broker.get_tick = AsyncMock(return_value=Tick(symbol="XAUUSD", bid=2650.00, ask=2650.25, time=time.time()))
+
+    mock_risk = GoldRiskEngine(budget_usd=20.0)
+    mock_news = MagicMock()
+    mock_news.can_open_baseline_trade.return_value = (True, "OK")
+
+    tm = TradeManager(
+        broker=mock_broker,
+        data_hub=MagicMock(),
+        news_reactor=mock_news,
+        risk_engine=mock_risk,
+        max_daily_losses=3,
+        max_consecutive_losses=2,
+        max_daily_drawdown_pct=25.0,
+        circuit_breaker_enabled=False,
+    )
+    # Simulate heavy daily drawdown (started at $100, now at $20 = 80% drawdown) and 5 consecutive losses
+    tm._start_of_day_balance = 100.0
+    tm._daily_realized_pnl = -80.0
+    tm._daily_losses_count = 5
+    tm._consecutive_losses = 5
+
+    # 1. Verification of pause and tripped state
+    assert tm.is_paused() is False
+    cb_tripped, cb_reason = tm.is_circuit_breaker_tripped()
+    assert cb_tripped is False
+    assert cb_reason == ""
+
+    # 2. Attempt manual trade - must succeed and not be blocked by circuit breaker
+    can_manual, manual_reason = await tm.can_open_manual_trade("XAUUSD", "BUY", 0.01)
+    assert can_manual is True
+    assert manual_reason == "OK"
+
+    # 3. Attempt signal execution - must succeed and not be blocked
+    can_signal, signal_reason = await tm.can_execute_signal(sample_signal)
+    assert can_signal is True
+    assert "approved" in signal_reason.lower() or signal_reason == "OK"
+
+    # 4. Attempting to pause trading is ignored when circuit breaker is disabled
+    tm.pause_trading(minutes=30)
+    assert tm.is_paused() is False
+    assert tm._pause_until == 0.0
+
+    # 5. Daily status reports circuit_breaker_enabled: False
+    status = tm.get_daily_status()
+    assert status["circuit_breaker_enabled"] is False
+    assert status["is_paused"] is False
+    assert status["pause_seconds_left"] == 0
+    assert status["post_loss_cooldown_seconds_left"] == 0
+
+
+
 

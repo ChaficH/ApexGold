@@ -89,11 +89,13 @@ trading:
   compounding_enabled: true # Automatically scales budget as balance grows
 
   # Risk Guards & Circuit Breakers:
-  max_open_positions: 1     # Single high-conviction position at a time to prevent double-dipping exposure
-  max_daily_losses: 0       # 0 = disabled (no daily loss limit)
-  max_daily_drawdown_pct: 25.0
-  correlation_guard: true   # Block opposing/redundant USD exposure across pairs
-  post_loss_buffer_seconds: 12.0       # Fast broker settlement buffer (not a 2m/5m freeze)
+  circuit_breaker_enabled: false       # Completely disables circuit breaker - trading is always enabled
+  max_open_positions: 1                # Single high-conviction position at a time to prevent double-dipping exposure
+  max_daily_losses: 0                  # 0 = disabled (no daily loss limit)
+  max_consecutive_losses: 0            # 0 = disabled (no consecutive loss pause)
+  max_daily_drawdown_pct: 0.0          # 0.0 = disabled (no daily drawdown cutoff)
+  correlation_guard: true              # Block opposing/redundant USD exposure across pairs
+  post_loss_buffer_seconds: 0.0        # Cooldown buffer disabled
   anti_revenge_window_seconds: 45.0    # Structural window preventing repeating same losing trade at same level
   predictive_scratch_enabled: true     # Closes trades at breakeven when market reverses or cuts early with tiny budget scratch
   micro_budget_loss_cap_pct: 15.0      # Max loss % relative to budget for mitigation scratch (e.g. 15% of $2.56 = $0.38)
