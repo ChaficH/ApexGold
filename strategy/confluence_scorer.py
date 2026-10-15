@@ -513,7 +513,7 @@ class ConfluenceScorer:
         # ----------------------------------------------------------------------
         if h1_aligned and (m15_adx >= 22.0) and h1_open_room:
             dial_pct = 64.0 if m15_adx >= 25.0 else 58.0
-            threshold = 66
+            threshold = 74
             reason_str = f"Strong 1H/15m Trend Alignment (15m ADX {m15_adx:.1f} >= 22)"
             pill_text = f"🧠 Auto-Brain: {dial_pct:.0f}% (Wave Runner: Trend & ADX {m15_adx:.0f} | Min: {threshold})"
             full_reason = f"Institutional Wave Runner Mode — {reason_str} | Threshold: {threshold}/100"
@@ -539,7 +539,7 @@ class ConfluenceScorer:
         # ----------------------------------------------------------------------
         vel_mult = tick_velocity if tick_velocity > 0 else 1.0
         dial_pct = 78.0 if vel_mult >= 1.5 else (74.0 if is_london_ny_active else 72.0)
-        threshold = 64
+        threshold = 75
         reason_str = f"High Velocity Flow inside Box ({'London/NY Active' if is_london_ny_active else 'Velocity Surge'})"
         pill_text = f"🧠 Auto-Brain: {dial_pct:.0f}% (Fast Scalp: Flow Momentum | Min: {threshold})"
         full_reason = f"Fast Hit-and-Run Scalp Mode — {reason_str} | Threshold: {threshold}/100"
@@ -685,7 +685,6 @@ class ConfluenceScorer:
 
         # STRICT INSTITUTIONAL ZONE BOUND PROTECTION:
         # Never sell into a Demand/Support Zone, never buy into a Supply/Resistance Zone!
-        # (Exception: High-confidence Zone A Pre-News Trajectory or post-news impulse momentum)
         is_pre_news_aligned = (
             self.auto_brain_state.get("sub_regime") == "PRE_NEWS_TRAJECTORY" and
             self.auto_brain_state.get("trajectory_bias") == direction and
@@ -699,33 +698,52 @@ class ConfluenceScorer:
             return None
 
         # =============================================================
-        # PROVEN SYSTEMIC HARD FILTERS: Eliminate False Trend Knife-Catching
+        # 1. NON-NEGOTIABLE HIGHER-TIMEFRAME (HTF) DIRECTIONAL ALIGNMENT
+        # Institutional Rule #1: Trade strictly WITH the macro wind.
+        # - If 1H is BULL and 15m is BULL -> ONLY BUY. Selling is strictly blocked.
+        # - If 1H is BEAR and 15m is BEAR -> ONLY SELL. Buying is strictly blocked.
+        # - If 1H != 15m (Conflicted/Chop) -> Stand aside unless confirmed Zone Extreme Reversal.
+        # =============================================================
+        tf_trends = TechnicalIndicators.get_4tf_trends(dfs)
+        h1_trend = tf_trends.get("1H", "NEUTRAL")
+        m15_trend = tf_trends.get("15m", "NEUTRAL")
+
+        if h1_trend == "BULL" and m15_trend == "BULL" and direction == "SELL":
+            logger.debug(f"[{symbol} SELL] BLOCKED: 1H & 15m Macro Trend is unanimously BULLISH. Strictly no selling into an institutional uptrend!")
+            return None
+
+        if h1_trend == "BEAR" and m15_trend == "BEAR" and direction == "BUY":
+            logger.debug(f"[{symbol} BUY] BLOCKED: 1H & 15m Macro Trend is unanimously BEARISH. Strictly no buying into an institutional downtrend!")
+            return None
+
+        htf_conflicted = (h1_trend != "NEUTRAL" and m15_trend != "NEUTRAL" and h1_trend != m15_trend)
+        if htf_conflicted and not is_zone_reversal and not is_pre_news_aligned and not is_impulse_active:
+            logger.debug(f"[{symbol} {direction}] BLOCKED: 1H ({h1_trend}) and 15m ({m15_trend}) trends are in conflict. Standing aside until key zone extreme is reached.")
+            return None
+
+        # =============================================================
+        # 2. PROVEN SYSTEMIC HARD FILTERS: Eliminate False Trend Knife-Catching
         # =============================================================
 
-        active_aggressiveness = self.get_active_aggressiveness_pct()
-        is_aggressive_scalp = (active_aggressiveness >= 72.0) or (self.mode in ["aggressive", "hyper"])
-
-        # 1. Battle-Tested 5m SuperTrend Directional Gate
-        # Strictly blocks trend-following trades opposing SuperTrend, but ALLOWS confirmed zone reversals or confirmed 1m pullbacks in aggressive mode!
+        # A. Battle-Tested 5m SuperTrend Directional Gate
         st_5m = TechnicalIndicators.calculate_supertrend(
             df_5m["high"], df_5m["low"], df_5m["close"], period=10, multiplier=2.5
         )
         if st_5m.get("valid"):
-            if direction == "BUY" and st_5m.get("is_bear") and not is_demand_reversal and not (is_aggressive_scalp and (is_green_1m or is_hammer_1m)):
+            if direction == "BUY" and st_5m.get("is_bear") and not is_demand_reversal:
                 logger.debug(f"[{symbol} BUY] Blocked: 5m SuperTrend is BEAR ({st_5m.get('line')}).")
                 return None
-            if direction == "SELL" and st_5m.get("is_bull") and not is_supply_reversal and not (is_aggressive_scalp and (is_red_1m or is_star_1m)):
+            if direction == "SELL" and st_5m.get("is_bull") and not is_supply_reversal:
                 logger.debug(f"[{symbol} SELL] Blocked: 5m SuperTrend is BULL ({st_5m.get('line')}).")
                 return None
 
-        # 2. 15m SuperTrend Macro Trend Gate
-        # In aggressive scalp mode (>=72%), allow pullbacks rather than dropping the trade
+        # B. 15m SuperTrend Macro Trend Gate
         st_15m = {"valid": False, "is_bull": False, "is_bear": False}
         if df_15m is not None and len(df_15m) >= 20:
             st_15m = TechnicalIndicators.calculate_supertrend(
                 df_15m["high"], df_15m["low"], df_15m["close"], period=10, multiplier=2.5
             )
-            if st_15m.get("valid") and not is_impulse_active and not is_zone_reversal and not is_aggressive_scalp:
+            if st_15m.get("valid") and not is_impulse_active and not is_zone_reversal:
                 if direction == "BUY" and st_15m.get("is_bear"):
                     logger.debug(f"[{symbol} BUY] Blocked: 15m SuperTrend is BEAR ({st_15m.get('line')}).")
                     return None
@@ -733,17 +751,38 @@ class ConfluenceScorer:
                     logger.debug(f"[{symbol} SELL] Blocked: 15m SuperTrend is BULL ({st_15m.get('line')}).")
                     return None
 
-        # 3. Stochastic RSI Momentum Exhaustion Gate (ta.momentum.StochRSIIndicator)
+        # C. Stochastic RSI Momentum Exhaustion Gate (Never buy overbought, never sell oversold!)
         stoch_5m = TechnicalIndicators.calculate_stoch_rsi(df_5m["close"])
-        if stoch_5m.get("valid") and not is_impulse_active and not is_pre_news_aligned and not is_aggressive_scalp:
+        if stoch_5m.get("valid") and not is_impulse_active and not is_pre_news_aligned:
             if direction == "BUY" and stoch_5m.get("is_overbought"):
-                logger.debug(f"[{symbol} BUY] Blocked: 5m StochRSI Overbought (K={stoch_5m.get('k'):.1f} > 80).")
+                logger.debug(f"[{symbol} BUY] Blocked: 5m StochRSI Overbought (K={stoch_5m.get('k'):.1f} > 80). Waiting for pullback to value.")
                 return None
             if direction == "SELL" and stoch_5m.get("is_oversold"):
-                logger.debug(f"[{symbol} SELL] Blocked: 5m StochRSI Oversold (K={stoch_5m.get('k'):.1f} < 20).")
+                logger.debug(f"[{symbol} SELL] Blocked: 5m StochRSI Oversold (K={stoch_5m.get('k'):.1f} < 20). Waiting for bounce to resistance.")
                 return None
 
-        # 4. Immediate 1m Execution Candle Gate
+        # D. Statistical Z-Score Exhaustion Gate (Never buy at extreme standard deviation tops or sell bottoms)
+        zscore_data = TechnicalIndicators.calculate_zscore(df_5m["close"].values, window=20)
+        if zscore_data.get("valid") and not is_impulse_active and not is_pre_news_aligned:
+            if direction == "BUY" and zscore_data.get("is_extreme_overbought"):
+                logger.debug(f"[{symbol} BUY] Blocked: Statistical Z-Score Overbought (+{zscore_data['zscore']:.1f}σ). Never buy the top!")
+                return None
+            if direction == "SELL" and zscore_data.get("is_extreme_oversold"):
+                logger.debug(f"[{symbol} SELL] Blocked: Statistical Z-Score Oversold ({zscore_data['zscore']:.1f}σ). Never sell the bottom!")
+                return None
+
+        # E. 5m RSI Extended Filter (Anti-FOMO)
+        rsi_5m_arr = TechnicalIndicators.rsi(df_5m["close"].values, 14)
+        rsi_5m_val = float(rsi_5m_arr[-1]) if len(rsi_5m_arr) > 0 and not np.isnan(rsi_5m_arr[-1]) else 50.0
+        if not is_impulse_active and not is_pre_news_aligned:
+            if direction == "BUY" and rsi_5m_val > 68.0:
+                logger.debug(f"[{symbol} BUY] Blocked: 5m RSI Overextended ({rsi_5m_val:.1f} > 68). Wait for pullback to value.")
+                return None
+            if direction == "SELL" and rsi_5m_val < 32.0:
+                logger.debug(f"[{symbol} SELL] Blocked: 5m RSI Overextended ({rsi_5m_val:.1f} < 32). Wait for bounce to resistance.")
+                return None
+
+        # F. Immediate 1m Execution Candle Gate
         # Prevent selling into active bullish expansion candles or buying into red dumping candles
         if direction == "BUY":
             if not is_green_1m and not is_hammer_1m and not is_impulse_active:
@@ -754,7 +793,7 @@ class ConfluenceScorer:
                 logger.debug(f"[{symbol} SELL] Blocked: 1m candle is green without shooting star rejection.")
                 return None
 
-        # 5. Institutional Liquidity Trap & False Breakout Gate
+        # G. Institutional Liquidity Trap & False Breakout Gate
         # Strictly prevent buying the top of a bull trap or selling the bottom of a bear trap
         if traps.get("valid"):
             if direction == "BUY" and traps.get("is_bull_trap"):
@@ -1265,14 +1304,11 @@ class ConfluenceScorer:
         # -------------------------------------------------------------
         # Institutional Multi-Timeframe Trend Confluence Filter
         # -------------------------------------------------------------
-        # 1. HARD COUNTER-TREND GATE: Never take a trade opposing BOTH 1H and 15m trends UNLESS it's a confirmed Zone Reversal or Aggressive Scalp!
+        # 1. HARD COUNTER-TREND GATE: Never take a trade opposing BOTH 1H and 15m trends UNLESS it's a confirmed Zone Reversal!
         if not h1_ema50_aligned and not m15_trend_aligned:
             if is_zone_reversal:
                 breakdown["htf_divergence"] = -8
                 reasons.append("Institutional Zone Reversal (Bypassed HTF Divergence) (-8)")
-            elif is_aggressive_scalp:
-                breakdown["htf_divergence"] = -15
-                reasons.append("Aggressive Scalp Pullback (Bypassed HTF Hard Gate) (-15)")
             else:
                 logger.debug(f"[{symbol} {direction}] Filtered: Hard counter-trend opposing both 1H and 15m HTF.")
                 return None
@@ -1283,16 +1319,13 @@ class ConfluenceScorer:
             if is_zone_reversal:
                 breakdown["htf_divergence"] = -5
                 reasons.append("Zone Reversal Divergence Offset (-5)")
-            elif is_aggressive_scalp:
-                breakdown["htf_divergence"] = -12
-                reasons.append("Aggressive Mode HTF Divergence Offset (-12)")
             else:
                 breakdown["htf_divergence"] = -25
                 reasons.append("Higher-Timeframe Trend Divergence (-25 Penalty)")
 
         # Total Confluence Score
         total_score = sum(breakdown.values())
-        if htf_diverged and not is_zone_reversal and not is_aggressive_scalp:
+        if htf_diverged and not is_zone_reversal:
             # Strictly cap total score at 68 when HTF is not unanimous (NO SNIPER ALLOWED)
             total_score = min(total_score, 68)
         total_score = min(100, max(0, total_score))
@@ -1318,10 +1351,10 @@ class ConfluenceScorer:
         is_gold = any(k in symbol.upper() for k in ["XAU", "GOLD"])
         if is_demand_reversal and zones.get("valid"):
             # Set SL safely below the Demand Floor
-            raw_sl_dist = max(current_price - (zones["demand_floor"] - (0.50 if is_gold else 0.0005)), 2.20 if is_gold else 0.0015)
+            raw_sl_dist = max(current_price - (zones["demand_floor"] - (0.50 if is_gold else 0.0005)), 2.50 if is_gold else 0.0015)
         elif is_supply_reversal and zones.get("valid"):
             # Set SL safely above the Supply Ceiling
-            raw_sl_dist = max((zones["supply_ceiling"] + (0.50 if is_gold else 0.0005)) - current_price, 2.20 if is_gold else 0.0015)
+            raw_sl_dist = max((zones["supply_ceiling"] + (0.50 if is_gold else 0.0005)) - current_price, 2.50 if is_gold else 0.0015)
         elif df_5m is not None and len(df_5m) >= 5:
             atr_5m = TechnicalIndicators.atr(df_5m["high"].values, df_5m["low"].values, df_5m["close"].values, 14)[-1]
             atr_buffer = (atr_5m * 1.5) if (not np.isnan(atr_5m) and atr_5m > 0) else (2.80 if is_gold else 0.0020)
@@ -1340,8 +1373,8 @@ class ConfluenceScorer:
                 raw_sl_dist = (recent_high + (0.40 if is_gold else 0.0004)) - current_price
 
         is_small_acc = getattr(self, "account_balance", None) is not None and self.account_balance <= 35.0
-        min_sl = 1.80 if (is_gold and is_small_acc) else (2.20 if is_gold else 0.0015)
-        max_sl = 2.60 if (is_gold and is_small_acc) else (3.20 if is_gold else 0.0035)
+        min_sl = 2.50 if (is_gold and is_small_acc) else (2.80 if is_gold else 0.0015)
+        max_sl = 3.80 if (is_gold and is_small_acc) else (4.50 if is_gold else 0.0035)
         risk_r_dist = float(np.clip(raw_sl_dist, min_sl, max_sl))
 
         # Sub-regime and trade parameters

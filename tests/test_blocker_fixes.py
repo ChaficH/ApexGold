@@ -989,4 +989,65 @@ async def test_margin_feasibility_on_micro_account():
     assert "Short by $1.65" in details_fail["warning"]
 
 
+def test_institutional_macro_trend_locks_direction():
+    """Verify that when 1H and 15m are unanimously Bullish, SELL signals are 100% blocked, and vice versa."""
+    from strategy.confluence_scorer import ConfluenceScorer
+    import pandas as pd
+
+    scorer = ConfluenceScorer(mode="auto_adaptive")
+
+    # Construct strong Bullish DataFrames (1H, 15m, 5m, 1m)
+    prices_bull = [2600.0 + (i * 0.5) for i in range(40)]
+    df_bull = pd.DataFrame({
+        "open": [p - 0.2 for p in prices_bull],
+        "high": [p + 0.5 for p in prices_bull],
+        "low": [p - 0.3 for p in prices_bull],
+        "close": prices_bull,
+        "volume": [200.0] * 40,
+    })
+    dfs_bull = {"1H": df_bull, "15m": df_bull, "5m": df_bull, "1m": df_bull}
+
+    # SELL direction must be completely blocked in a 1H/15m Bull trend!
+    res_sell = scorer._evaluate_direction("XAUUSD", "SELL", dfs_bull, current_price=2620.0, is_impulse_active=False, utc_timestamp=time.time())
+    assert res_sell is None
+
+    # Construct strong Bearish DataFrames (1H, 15m, 5m, 1m)
+    prices_bear = [2620.0 - (i * 0.5) for i in range(40)]
+    df_bear = pd.DataFrame({
+        "open": [p + 0.2 for p in prices_bear],
+        "high": [p + 0.3 for p in prices_bear],
+        "low": [p - 0.5 for p in prices_bear],
+        "close": prices_bear,
+        "volume": [200.0] * 40,
+    })
+    dfs_bear = {"1H": df_bear, "15m": df_bear, "5m": df_bear, "1m": df_bear}
+
+    # BUY direction must be completely blocked in a 1H/15m Bear trend!
+    res_buy = scorer._evaluate_direction("XAUUSD", "BUY", dfs_bear, current_price=2600.0, is_impulse_active=False, utc_timestamp=time.time())
+    assert res_buy is None
+
+
+def test_anti_chasing_overbought_blocks_buying_peak():
+    """Verify that when 5m is overbought (StochRSI K > 80), BUY signals are blocked to avoid buying the top."""
+    from strategy.confluence_scorer import ConfluenceScorer
+    import pandas as pd
+
+    scorer = ConfluenceScorer(mode="auto_adaptive")
+
+    # Steep upward prices causing extreme overbought StochRSI
+    prices_steep = [2600.0 + (i * 1.5) for i in range(30)]
+    df_overbought = pd.DataFrame({
+        "open": [p - 0.5 for p in prices_steep],
+        "high": [p + 0.5 for p in prices_steep],
+        "low": [p - 0.6 for p in prices_steep],
+        "close": prices_steep,
+        "volume": [200.0] * 30,
+    })
+    dfs = {"1H": df_overbought, "15m": df_overbought, "5m": df_overbought, "1m": df_overbought}
+
+    res_buy = scorer._evaluate_direction("XAUUSD", "BUY", dfs, current_price=2645.0, is_impulse_active=False, utc_timestamp=time.time())
+    # Must be blocked by overbought exhaustion gate!
+    assert res_buy is None
+
+
 
