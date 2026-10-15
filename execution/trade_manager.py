@@ -20,6 +20,8 @@ import logging
 import time
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+import numpy as np
+
 from brokers.base import (
     AbstractBrokerAdapter,
     OrderResult,
@@ -67,6 +69,10 @@ class ManagedPosition:
     is_freeroll_locked: bool = False
     is_closing: bool = False
     close_trigger_price: float = 0.0
+    r_multiple: float = 0.0
+    exit_evaluation: str = "HOLD_AND_EXPAND"     # "HOLD_AND_EXPAND", "TIGHTEN_AND_PROTECT", "HARVEST_PROFIT_NOW"
+    exit_verdict_detail: str = "Market structure intact. Holding for expansion."
+    peak_r_giveback_pct: float = 0.0
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -1255,6 +1261,7 @@ class TradeManager:
                         live_p = broker_pos_map[ticket]
 
                     current_price = live_p.current_price
+                    pos.current_price = current_price
                     pos.profit = getattr(live_p, "profit", 0.0)
 
                     # Compute floating R-multiple
@@ -1264,9 +1271,15 @@ class TradeManager:
                         floating_dist = pos.open_price - current_price
 
                     floating_r = floating_dist / max(pos.risk_r_dist, 0.01)
+                    pos.r_multiple = round(floating_r, 2)
 
                     if floating_r > pos.highest_r_reached:
                         pos.highest_r_reached = round(floating_r, 2)
+
+                    if pos.highest_r_reached > 0.0:
+                        pos.peak_r_giveback_pct = round(max(0.0, (pos.highest_r_reached - floating_r) / pos.highest_r_reached * 100.0), 1)
+                    else:
+                        pos.peak_r_giveback_pct = 0.0
 
                     # If position is already in-flight closing, don't execute additional rules
                     if getattr(pos, "is_closing", False):
@@ -1478,15 +1491,19 @@ class TradeManager:
         3. Asymmetric Deep Invalidation: If trade reaches <= -0.50R with severe adverse shock or SuperTrend break,
            cut before full -1.0R / -2.0R SL.
         """
-        # 1. Enforce minimum hold time: wait it out, never open and close trades directly!
+        # 1. Enforce minimum hold time: wait it out, never open and close trades directly on noise!
         hold_time = now - pos.entry_time
         min_hold = getattr(self, "min_hold_time_seconds", 90.0)
-        if hold_time < min_hold:
+        if hold_time < min_hold and floating_r < 0.40 and pos.highest_r_reached < 0.70:
+            pos.exit_evaluation = "HOLD_AND_EXPAND"
+            pos.exit_verdict_detail = f"Trade stabilizing ({int(hold_time)}s / {int(min_hold)}s min hold). Allowing setup to breathe."
             return False, ""
 
         if not getattr(self, "predictive_scratch_enabled", True):
             # Fallback check if predictive scratch disabled
             if floating_r > -0.75:
+                pos.exit_evaluation = "HOLD_AND_EXPAND"
+                pos.exit_verdict_detail = "Predictive scratch disabled; holding position."
                 return False, ""
 
         # 2. Extract Account Equity & Calculate Floating USD
@@ -1543,19 +1560,164 @@ class TradeManager:
             except Exception:
                 pass
 
-        # Check 1m Structure
+        # Check 5m VWAP
+        vwap_val = 0.0
+        if df_5m is not None and len(df_5m) >= 5:
+            try:
+                vwap_res = TechnicalIndicators.calculate_vwap_and_distance(df_5m)
+                vwap_val = float(vwap_res.get("vwap", 0.0))
+            except Exception:
+                pass
+
+        # Check 5m StochRSI
+        stoch_val = 50.0
+        if df_5m is not None and len(df_5m) >= 15:
+            try:
+                stoch_res = TechnicalIndicators.calculate_stoch_rsi(df_5m["close"], 14, 3, 3)
+                if isinstance(stoch_res, dict):
+                    stoch_val = float(stoch_res.get("k", 50.0))
+            except Exception:
+                pass
+
+        # Check 5m Candle metrics
+        c5, o5, h5, l5 = current_price, current_price, current_price, current_price
+        upper_wick_5m, lower_wick_5m = 0.0, 0.0
+        if df_5m is not None and len(df_5m) > 0:
+            c5 = float(df_5m["close"].iloc[-1])
+            o5 = float(df_5m["open"].iloc[-1])
+            h5 = float(df_5m["high"].iloc[-1])
+            l5 = float(df_5m["low"].iloc[-1])
+            rng5 = max(0.01, h5 - l5)
+            upper_wick_5m = (h5 - max(o5, c5)) / rng5
+            lower_wick_5m = (min(o5, c5) - l5) / rng5
+
+        # Check 1m Structure & Candle metrics
         df_1m = dfs.get("1m")
-        c1 = current_price
+        c1, o1, h1, l1 = current_price, current_price, current_price, current_price
+        upper_wick_1m, lower_wick_1m = 0.0, 0.0
         if df_1m is not None and len(df_1m) > 0:
             c1 = float(df_1m["close"].iloc[-1])
+            o1 = float(df_1m["open"].iloc[-1])
+            h1 = float(df_1m["high"].iloc[-1])
+            l1 = float(df_1m["low"].iloc[-1])
+            rng1 = max(0.01, h1 - l1)
+            upper_wick_1m = (h1 - max(o1, c1)) / rng1
+            lower_wick_1m = (min(o1, c1) - l1) / rng1
 
         # Check Velocity Shock
         vel = getattr(self.news_reactor, "_latest_velocity", 1.0) or 1.0
 
+        # Check Order Flow / OFI Delta from Scorer / PredictiveBrain
+        ofi_delta = 0.0
+        if hasattr(self, "scorer") and self.scorer:
+            pb = getattr(self.scorer, "predictive_brain", None)
+            if pb and hasattr(pb, "latest_evaluation") and pb.latest_evaluation:
+                ens = getattr(pb.latest_evaluation, "ensemble", None)
+                if isinstance(ens, dict):
+                    ofi_delta = float(ens.get("delta_ratio_60s", 0.0))
+
+        pnl_note = f"+${floating_usd:.2f}" if floating_usd >= 0 else f"-${abs(floating_usd):.2f}"
+
         # 4. Decision Rules:
-        # CASE A: Breakeven Scratch (Protecting Capital on Fading / Reversing Trades)
-        # If trade reached substantial profit (highest_r >= 0.40R) and has now pulled back
-        # to near entry (-0.05R <= floating_r <= 0.15R) with adverse momentum:
+        # =====================================================================
+        # RULE GROUP 1: Dynamic Profit Harvesting & Trade Health Study
+        # "Study if the trade can hold more or close" - don't rely passively on SL/TP!
+        # =====================================================================
+        is_profitable = (floating_r >= 0.50 or pos.highest_r_reached >= 0.85)
+
+        if is_profitable:
+            # Trigger C4: Peak Profit Protection (Surrendered >= 35% of peak profit)
+            if pos.highest_r_reached >= 0.85 and pos.peak_r_giveback_pct >= 35.0 and floating_r >= 0.20:
+                is_reversing_1m = (c1 < o1 or trend_1m == "BEAR") if pos.direction == "BUY" else (c1 > o1 or trend_1m == "BULL")
+                if is_reversing_1m:
+                    pos.exit_evaluation = "HARVEST_PROFIT_NOW"
+                    pos.exit_verdict_detail = (
+                        f"Peak Profit Protection: Surrendered {pos.peak_r_giveback_pct:.0f}% of peak "
+                        f"(+{pos.highest_r_reached:.2f}R down to +{floating_r:.2f}R | {pnl_note})"
+                    )
+                    return True, f"Dynamic Profit Harvest: {pos.exit_verdict_detail}"
+
+            # Trigger C1: Multi-Timeframe Structural Trend Breakdown & VWAP Loss
+            if floating_r >= 0.50:
+                if pos.direction == "BUY":
+                    is_vwap_lost = (vwap_val > 0 and c5 < vwap_val and c5 < o5)
+                    is_supertrend_lost = bool(st_5m.get("valid") and st_5m.get("is_bear"))
+                    if (trend_1m == "BEAR" and trend_5m == "BEAR" and is_vwap_lost) or (is_supertrend_lost and c1 < o1):
+                        pos.exit_evaluation = "HARVEST_PROFIT_NOW"
+                        pos.exit_verdict_detail = (
+                            f"Structural Breakdown: 1m & 5m Bearish below VWAP "
+                            f"({c5:.2f} < {vwap_val:.2f} | +{floating_r:.2f}R, {pnl_note})"
+                        )
+                        return True, f"Dynamic Profit Harvest: {pos.exit_verdict_detail}"
+                else: # SELL
+                    is_vwap_lost = (vwap_val > 0 and c5 > vwap_val and c5 > o5)
+                    is_supertrend_lost = bool(st_5m.get("valid") and st_5m.get("is_bull"))
+                    if (trend_1m == "BULL" and trend_5m == "BULL" and is_vwap_lost) or (is_supertrend_lost and c1 > o1):
+                        pos.exit_evaluation = "HARVEST_PROFIT_NOW"
+                        pos.exit_verdict_detail = (
+                            f"Structural Breakdown: 1m & 5m Bullish above VWAP "
+                            f"({c5:.2f} > {vwap_val:.2f} | +{floating_r:.2f}R, {pnl_note})"
+                        )
+                        return True, f"Dynamic Profit Harvest: {pos.exit_verdict_detail}"
+
+            # Trigger C2: Severe Exhaustion Rejection Wick at Liquidity Pool
+            if floating_r >= 0.60:
+                if pos.direction == "BUY":
+                    max_wick = max(upper_wick_5m, upper_wick_1m)
+                    if (upper_wick_5m >= 0.50 or upper_wick_1m >= 0.60) and c1 < o1 and stoch_val >= 78.0:
+                        pos.exit_evaluation = "HARVEST_PROFIT_NOW"
+                        pos.exit_verdict_detail = (
+                            f"Liquidity Rejection: {max_wick*100:.0f}% upper wick & StochRSI overbought "
+                            f"({stoch_val:.1f}) | +{floating_r:.2f}R, {pnl_note}"
+                        )
+                        return True, f"Dynamic Profit Harvest: {pos.exit_verdict_detail}"
+                else: # SELL
+                    max_wick = max(lower_wick_5m, lower_wick_1m)
+                    if (lower_wick_5m >= 0.50 or lower_wick_1m >= 0.60) and c1 > o1 and stoch_val <= 22.0:
+                        pos.exit_evaluation = "HARVEST_PROFIT_NOW"
+                        pos.exit_verdict_detail = (
+                            f"Liquidity Rejection: {max_wick*100:.0f}% lower wick & StochRSI oversold "
+                            f"({stoch_val:.1f}) | +{floating_r:.2f}R, {pnl_note}"
+                        )
+                        return True, f"Dynamic Profit Harvest: {pos.exit_verdict_detail}"
+
+            # Trigger C3: Institutional Order Flow Delta Inversion
+            if floating_r >= 0.60:
+                if pos.direction == "BUY" and ofi_delta <= -0.40 and c1 < o1:
+                    pos.exit_evaluation = "HARVEST_PROFIT_NOW"
+                    pos.exit_verdict_detail = (
+                        f"Order Flow Inversion: Aggressive seller delta ({ofi_delta:+.2f}) on red bar "
+                        f"| +{floating_r:.2f}R, {pnl_note}"
+                    )
+                    return True, f"Dynamic Profit Harvest: {pos.exit_verdict_detail}"
+                elif pos.direction == "SELL" and ofi_delta >= 0.40 and c1 > o1:
+                    pos.exit_evaluation = "HARVEST_PROFIT_NOW"
+                    pos.exit_verdict_detail = (
+                        f"Order Flow Inversion: Aggressive buyer delta ({ofi_delta:+.2f}) on green bar "
+                        f"| +{floating_r:.2f}R, {pnl_note}"
+                    )
+                    return True, f"Dynamic Profit Harvest: {pos.exit_verdict_detail}"
+
+            # Study shows trade can hold: check if we should tighten or hold for expansion
+            if floating_r >= 0.40:
+                wick_warn = (upper_wick_5m >= 0.35 or upper_wick_1m >= 0.40) if pos.direction == "BUY" else (lower_wick_5m >= 0.35 or lower_wick_1m >= 0.40)
+                stoch_warn = (stoch_val >= 75.0) if pos.direction == "BUY" else (stoch_val <= 25.0)
+                if wick_warn or stoch_warn:
+                    pos.exit_evaluation = "TIGHTEN_AND_PROTECT"
+                    pos.exit_verdict_detail = (
+                        f"Momentum Deceleration: Opposing wick / StochRSI ({stoch_val:.1f}). "
+                        f"Tightening ratchet stop floor behind price to lock gains."
+                    )
+                else:
+                    pos.exit_evaluation = "HOLD_AND_EXPAND"
+                    pos.exit_verdict_detail = (
+                        f"Healthy Runner: Multi-timeframe trend supportive (1m {trend_1m} / 5m {trend_5m}). "
+                        f"No exhaustion detected; holding runner for high targets (Peak: +{pos.highest_r_reached:.2f}R)."
+                    )
+
+        # =====================================================================
+        # RULE GROUP 2: Breakeven Scratch (Protecting Capital on Fading Trades)
+        # =====================================================================
         can_scratch_be = (
             pos.highest_r_reached >= 0.40 and
             -0.05 <= floating_r <= 0.15
@@ -1579,22 +1741,41 @@ class TradeManager:
                     rev_reasons.append("5m SuperTrend Bullish Break")
 
             if is_reversal:
-                pnl_note = f"+${floating_usd:.2f}" if floating_usd >= 0 else f"-${abs(floating_usd):.2f}"
+                pos.exit_evaluation = "HARVEST_PROFIT_NOW"
+                pos.exit_verdict_detail = f"Breakeven Scratch: {', '.join(rev_reasons)} | {floating_r:+.2f}R, {pnl_note}"
                 return True, f"Predictive Invalidation: Breakeven Scratch ({', '.join(rev_reasons)} | {floating_r:+.2f}R, {pnl_note})"
 
-        # CASE B: High-Certainty Adverse Invalidation (Only close when 100% sure it will lose full SL)
-        # Position is deep in drawdown (floating_r <= -0.70R) AND higher timeframe / shock confirms invalidation:
+        # =====================================================================
+        # RULE GROUP 3: High-Certainty Adverse Invalidation (Only close when 100% sure to lose)
+        # =====================================================================
         if floating_r <= -0.70:
             if st_5m.get("valid"):
                 if pos.direction == "BUY" and st_5m.get("is_bear"):
+                    pos.exit_evaluation = "HARVEST_PROFIT_NOW"
+                    pos.exit_verdict_detail = f"Confirmed Invalidation: 5m SuperTrend Bearish Break ({floating_r:.2f}R)"
                     return True, f"Confirmed Invalidation: 5m SuperTrend Bearish Break ({floating_r:.2f}R)"
                 elif pos.direction == "SELL" and st_5m.get("is_bull"):
+                    pos.exit_evaluation = "HARVEST_PROFIT_NOW"
+                    pos.exit_verdict_detail = f"Confirmed Invalidation: 5m SuperTrend Bullish Break ({floating_r:.2f}R)"
                     return True, f"Confirmed Invalidation: 5m SuperTrend Bullish Break ({floating_r:.2f}R)"
             if vel >= 3.5 * max(0.5, pos.entry_velocity):
                 if pos.direction == "BUY" and c1 < pos.open_price:
+                    pos.exit_evaluation = "HARVEST_PROFIT_NOW"
+                    pos.exit_verdict_detail = f"Confirmed Invalidation: Severe Adverse Velocity Shock ({vel:.1f}x | {floating_r:.2f}R)"
                     return True, f"Confirmed Invalidation: Severe Adverse Velocity Shock ({vel:.1f}x | {floating_r:.2f}R)"
                 elif pos.direction == "SELL" and c1 > pos.open_price:
+                    pos.exit_evaluation = "HARVEST_PROFIT_NOW"
+                    pos.exit_verdict_detail = f"Confirmed Invalidation: Severe Adverse Velocity Shock ({vel:.1f}x | {floating_r:.2f}R)"
                     return True, f"Confirmed Invalidation: Severe Adverse Velocity Shock ({vel:.1f}x | {floating_r:.2f}R)"
+
+        # Default trade health study status when open and holding
+        if not is_profitable:
+            if floating_r >= -0.20:
+                pos.exit_evaluation = "HOLD_AND_EXPAND"
+                pos.exit_verdict_detail = f"Trade developing ({floating_r:+.2f}R). Structure intact, allowing setup breathing room."
+            else:
+                pos.exit_evaluation = "HOLD_AND_EXPAND"
+                pos.exit_verdict_detail = f"Underlying structure holding ({floating_r:+.2f}R). Not invalidating unless 100% confirmed loss."
 
         return False, ""
 
@@ -1687,7 +1868,8 @@ class TradeManager:
         candidate_stage = pos.ratchet_stage
 
         # Stage 1: Breakeven Lock at +0.80R+ (gives trade full breathing room)
-        trigger_be = max(0.80, pos.be_lock_r)
+        # Or at +0.50R if AI Study detects deceleration and evaluates TIGHTEN_AND_PROTECT
+        trigger_be = 0.50 if getattr(pos, "exit_evaluation", "") == "TIGHTEN_AND_PROTECT" else max(0.80, pos.be_lock_r)
         if pos.ratchet_stage < 1 and floating_r >= trigger_be:
             candidate_stage = 1
             if pos.direction == "BUY":
@@ -1695,8 +1877,8 @@ class TradeManager:
             else:
                 new_sl = round(pos.open_price - spread_buf, 2 if is_gold else 5)
 
-        # Stage 2: Lock Profit at +1.00R (Locks +0.45R)
-        elif pos.ratchet_stage < 2 and floating_r >= 1.00:
+        # Stage 2: Lock Profit at +1.00R (Locks +0.45R) (or +0.75R if TIGHTEN_AND_PROTECT)
+        elif pos.ratchet_stage < 2 and (floating_r >= 1.00 or (floating_r >= 0.75 and getattr(pos, "exit_evaluation", "") == "TIGHTEN_AND_PROTECT")):
             candidate_stage = 2
             lock_dist = pos.risk_r_dist * 0.45
             if pos.direction == "BUY":

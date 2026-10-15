@@ -121,6 +121,7 @@ class ApexPredictiveBrain:
         news_reactor: Any = None,
         trade_manager: Any = None,
         now_ts: Optional[float] = None,
+        active_positions: Optional[List[Any]] = None,
     ) -> Dict[str, Any]:
         """
         Execute an end-to-end predictive evaluation cycle.
@@ -132,6 +133,21 @@ class ApexPredictiveBrain:
 
         dt_utc = datetime.fromtimestamp(now, tz=timezone.utc)
         time_str = dt_utc.strftime("%H:%M:%S UTC")
+
+        positions: List[Any] = []
+        if active_positions:
+            positions = active_positions
+        elif trade_manager:
+            if hasattr(trade_manager, "get_managed_positions"):
+                try:
+                    positions = trade_manager.get_managed_positions()
+                except Exception:
+                    pass
+            elif hasattr(trade_manager, "_managed_positions"):
+                try:
+                    positions = [p.to_dict() if hasattr(p, "to_dict") else p for p in trade_manager._managed_positions.values()]
+                except Exception:
+                    pass
 
         df_1h = dfs.get("1H")
         df_15m = dfs.get("15m")
@@ -576,6 +592,7 @@ class ApexPredictiveBrain:
             candle_pos_5m=candle_pos_5m,
             is_chasing_top=is_chasing_top,
             is_chasing_bottom=is_chasing_bottom,
+            active_positions=positions,
         )
 
         eval_record = PredictiveEvaluation(
@@ -654,6 +671,7 @@ class ApexPredictiveBrain:
         candle_pos_5m: float = 0.5,
         is_chasing_top: bool = False,
         is_chasing_bottom: bool = False,
+        active_positions: Optional[List[Any]] = None,
     ) -> str:
         """Construct a precise, institutional narrative explaining the bot's live thoughts."""
         candle_pct = int(round(candle_pos_5m * 100))
@@ -663,6 +681,28 @@ class ApexPredictiveBrain:
             f"• Valuation: Spot {current_bid:.2f} vs 5m VWAP {vwap_val:.2f} ({vwap_diff:+.2f} pts) | 5m Candle Pos: {candle_pct}% | 5m StochRSI: {stoch_k:.1f}",
             f"• Edge Metrics: P(Win) = {p_win * 100:.1f}% (Quant Calibrated) | Expected Value = {expected_value_r:+.2f}R",
         ]
+
+        if active_positions:
+            lines.append("────────────────────────────────────────")
+            lines.append("📊 REAL-TIME ACTIVE POSITION HEALTH & EXIT STUDY:")
+            for p in active_positions:
+                ticket = p.get("ticket") if isinstance(p, dict) else getattr(p, "ticket", "")
+                direction = p.get("direction") if isinstance(p, dict) else getattr(p, "direction", "")
+                volume = p.get("volume") if isinstance(p, dict) else getattr(p, "volume", 0.0)
+                open_p = p.get("open_price") if isinstance(p, dict) else getattr(p, "open_price", 0.0)
+                floating_r = p.get("r_multiple", 0.0) if isinstance(p, dict) else getattr(p, "r_multiple", 0.0)
+                highest_r = p.get("highest_r_reached", 0.0) if isinstance(p, dict) else getattr(p, "highest_r_reached", 0.0)
+                giveback = p.get("peak_r_giveback_pct", 0.0) if isinstance(p, dict) else getattr(p, "peak_r_giveback_pct", 0.0)
+                profit = p.get("profit", 0.0) if isinstance(p, dict) else getattr(p, "profit", 0.0)
+                exit_eval = p.get("exit_evaluation", "HOLD_AND_EXPAND") if isinstance(p, dict) else getattr(p, "exit_evaluation", "HOLD_AND_EXPAND")
+                exit_detail = p.get("exit_verdict_detail", "") if isinstance(p, dict) else getattr(p, "exit_verdict_detail", "")
+
+                status_icon = "🟢" if exit_eval == "HOLD_AND_EXPAND" else ("🟡" if exit_eval == "TIGHTEN_AND_PROTECT" else "🔴")
+                pnl_str = f"+${profit:.2f}" if profit >= 0 else f"-${abs(profit):.2f}"
+                lines.append(f"{status_icon} [TICKET #{ticket} {direction} {volume} LOTS @ {open_p:.2f}]")
+                lines.append(f"   • Floating: {floating_r:+.2f}R ({pnl_str}) | High-Water Mark: +{highest_r:.2f}R (Giveback: {giveback:.1f}%)")
+                lines.append(f"   • AI Study: [{exit_eval}] — {exit_detail}")
+            lines.append("────────────────────────────────────────")
 
         if ensemble_info:
             fvg_str = f"{ensemble_info.nearest_fvg['direction']} @ {ensemble_info.nearest_fvg['midpoint']:.2f}" if ensemble_info.nearest_fvg else "None"

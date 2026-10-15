@@ -218,8 +218,10 @@ async def get_status():
         broker_name = "DISCONNECTED"
 
     if hasattr(ctx.broker, "_positions") and ctx.broker._positions:
-        positions = [
-            {
+        positions = []
+        for p in ctx.broker._positions.values():
+            mp = ctx.trade_manager._managed_positions.get(p.ticket) if ctx.trade_manager else None
+            positions.append({
                 "ticket": p.ticket,
                 "symbol": p.symbol,
                 "direction": p.type.value if hasattr(p.type, "value") else str(p.type),
@@ -229,14 +231,16 @@ async def get_status():
                 "sl": p.sl,
                 "tp": p.tp,
                 "profit": getattr(p, "profit", 0.0),
-                "r_multiple": 0.0,
-                "ratchet_stage": 0,
+                "r_multiple": getattr(mp, "r_multiple", 0.0) if mp else 0.0,
+                "ratchet_stage": getattr(mp, "ratchet_stage", 0) if mp else 0,
+                "highest_r_reached": getattr(mp, "highest_r_reached", 0.0) if mp else 0.0,
+                "peak_r_giveback_pct": getattr(mp, "peak_r_giveback_pct", 0.0) if mp else 0.0,
+                "exit_evaluation": getattr(mp, "exit_evaluation", "HOLD_AND_EXPAND") if mp else "HOLD_AND_EXPAND",
+                "exit_verdict_detail": getattr(mp, "exit_verdict_detail", "Market structure intact. Holding for expansion.") if mp else "Market structure intact.",
                 "comment": getattr(p, "comment", ""),
                 "is_user_manual": getattr(p, "is_user_manual", False),
                 "origin": "USER (MT5)" if getattr(p, "is_user_manual", False) else "BOT (AUTO)",
-            }
-            for p in ctx.broker._positions.values()
-        ]
+            })
     else:
         positions = ctx.trade_manager.get_managed_positions() if ctx.trade_manager else []
     daily_stats = ctx.trade_manager.get_daily_status() if ctx.trade_manager else {}
@@ -1379,6 +1383,7 @@ async def broadcast_loop():
                     tick_velocity=tick_vel,
                     news_reactor=ctx.news_reactor,
                     symbol=ctx.active_symbol,
+                    trade_manager=ctx.trade_manager,
                 )
 
             buy_sig, sell_sig = (None, None)

@@ -309,6 +309,8 @@ class ConfluenceScorer:
                 else:
                     ref_bid = 2650.0
             ref_ask = current_ask if current_ask is not None else (ref_bid + current_spread)
+            active_pos = kwargs.get("active_positions")
+            tm = kwargs.get("trade_manager")
             self.predictive_brain.evaluate_market(
                 symbol=symbol,
                 dfs=dfs,
@@ -316,7 +318,9 @@ class ConfluenceScorer:
                 current_ask=ref_ask,
                 spread=current_spread,
                 news_reactor=news_reactor,
+                trade_manager=tm,
                 now_ts=now,
+                active_positions=active_pos,
             )
 
         # Rate-limit evaluation updates to once every 2.0s to avoid UI jitter (skip if now_ts provided)
