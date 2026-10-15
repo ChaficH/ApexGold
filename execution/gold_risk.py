@@ -330,9 +330,10 @@ class GoldRiskEngine:
         min_lot_risk = round(v_min * cost_per_lot, 2)
 
         # Strict risk check: If minimum volume risk exceeds permitted risk budget, reject the trade
-        # For small micro accounts (effective_budget <= 25.0) under aggressive profile, allow up to 55% risk cap for the single minimum lot (0.01)
+        # For micro accounts (effective_budget <= 25.0) under aggressive profile, allow the single minimum lot (0.01)
+        # to execute as long as monetary risk does not exceed account balance.
         is_small_micro = (effective_budget <= 25.0) and (self.risk_profile == "aggressive")
-        allowed_risk_cap = max(round(risk_amount, 2), round(effective_budget * 0.55, 2)) if is_small_micro else round(risk_amount, 2)
+        allowed_risk_cap = max(round(risk_amount, 2), round(effective_budget * 0.98, 2)) if is_small_micro else round(risk_amount, 2)
 
         if min_lot_risk > allowed_risk_cap:
             warning_msg = (
@@ -363,7 +364,7 @@ class GoldRiskEngine:
             lot = round(lot - v_step, 4)
 
         if lot < v_min:
-            if is_small_micro and min_lot_risk <= allowed_risk_cap:
+            if is_small_micro and min_lot_risk <= (effective_budget * 0.98):
                 lot = v_min
             else:
                 warning_msg = (
@@ -394,7 +395,7 @@ class GoldRiskEngine:
             lot = round(lot - v_step, 2)
 
         if lot < v_min:
-            if is_small_micro and min_lot_risk <= allowed_risk_cap:
+            if is_small_micro and min_lot_risk <= (effective_budget * 0.98):
                 lot = v_min
             else:
                 return 0.0, {

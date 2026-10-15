@@ -81,7 +81,7 @@ class ServerContext:
         self.mt5_last_seen = 0.0
         self.mt5_algo_trading_allowed = True
         self.planned_limits: Dict[str, Any] = {}
-        self.auto_limits_enabled: bool = True
+        self.auto_limits_enabled: bool = False
 
     def is_live_trading_active(self) -> bool:
         """Returns True only when live trading is explicitly enabled on a real MT5 broker adapter."""
@@ -1177,15 +1177,19 @@ async def action_test_trade(direction: str = "BUY", volume: float = 0.01):
     if ctx.risk_engine and ctx.broker:
         acc = await ctx.broker.get_account_info()
         if acc:
-            budget = ctx.risk_engine.calculate_risk_budget(acc)
-            monetary_risk = ctx.risk_engine.calculate_monetary_risk(sym_info, volume, abs(cur_p - sl))
             is_small_acc = (acc.balance <= 35.0) or (getattr(ctx.risk_engine, "account_type", "") in ["micro", "cent"])
-            max_allowed = max(budget, (acc.balance * 0.70) if is_small_acc else budget)
-            if monetary_risk > max_allowed:
-                return {
-                    "status": "REJECTED",
-                    "message": f"Monetary risk (${monetary_risk:.2f}) exceeds allowed budget (${max_allowed:.2f}).",
-                }
+            if is_small_acc and volume <= (sym_info.min_lot if sym_info else 0.01):
+                # Always allow the operator's direct 1-Click trade for the broker minimum lot
+                pass
+            else:
+                budget = ctx.risk_engine.calculate_risk_budget(acc)
+                monetary_risk = ctx.risk_engine.calculate_monetary_risk(sym_info, volume, abs(cur_p - sl))
+                max_allowed = max(budget, (acc.balance * 0.95) if is_small_acc else budget)
+                if monetary_risk > max_allowed:
+                    return {
+                        "status": "REJECTED",
+                        "message": f"Monetary risk (${monetary_risk:.2f}) exceeds allowed budget (${max_allowed:.2f}).",
+                    }
 
     # 5. Execution
     if not ctx.is_live_trading_active():

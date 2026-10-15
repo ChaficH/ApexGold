@@ -225,7 +225,7 @@ async def autonomous_trading_loop(
                 # Autonomous Institutional Limits Placement
                 # When waiting in full_auto mode with no active positions or pending limits,
                 # automatically stage the highest scoring studied limit setup without requiring user input!
-                if getattr(ctx, "auto_limits_enabled", True) and ctx.execution_mode == "full_auto" and trade_manager:
+                if getattr(ctx, "auto_limits_enabled", False) and ctx.execution_mode == "full_auto" and trade_manager:
                     active_pos_count = len(trade_manager._managed_positions)
                     pending_lo_count = len(trade_manager._pending_limit_orders)
                     if active_pos_count == 0 and pending_lo_count == 0 and not trade_manager.is_paused():

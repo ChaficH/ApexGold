@@ -559,7 +559,7 @@ class TradeManager:
             return True, f"Max consecutive losses reached ({self._consecutive_losses}/{self.max_consecutive_losses})"
         eff_base = self._start_of_day_balance if self._start_of_day_balance > 0 else (getattr(self.risk_engine, "base_budget_usd", 0.0) or 100.0)
         is_micro = eff_base <= 35.0
-        allowed_dd_pct = 50.0 if is_micro else self.max_daily_drawdown_pct
+        allowed_dd_pct = 75.0 if is_micro else self.max_daily_drawdown_pct
         if eff_base > 0 and self._daily_realized_pnl < 0:
             real_dd_usd = max(0.0, -self._daily_realized_pnl)
             real_dd_pct = (real_dd_usd / eff_base) * 100.0
@@ -590,7 +590,7 @@ class TradeManager:
 
         if acc and getattr(acc, "equity", 0.0) > 0 and self._start_of_day_balance > 1.0:
             is_micro = eff_balance <= 35.0
-            allowed_dd_pct = 50.0 if is_micro else self.max_daily_drawdown_pct
+            allowed_dd_pct = 75.0 if is_micro else self.max_daily_drawdown_pct
             
             eq_dd_usd = max(0.0, self._start_of_day_balance - acc.equity)
             eq_dd_pct = (eq_dd_usd / self._start_of_day_balance) * 100.0
@@ -699,7 +699,7 @@ class TradeManager:
         # 0. Daily Drawdown Circuit Breaker Enforcement
         if acc and getattr(acc, "equity", 0.0) > 0 and self._start_of_day_balance > 1.0:
             is_micro = eff_balance <= 35.0
-            allowed_dd_pct = 50.0 if is_micro else self.max_daily_drawdown_pct
+            allowed_dd_pct = 75.0 if is_micro else self.max_daily_drawdown_pct
 
             eq_dd_usd = max(0.0, self._start_of_day_balance - acc.equity)
             eq_dd_pct = (eq_dd_usd / self._start_of_day_balance) * 100.0
@@ -893,9 +893,9 @@ class TradeManager:
             )
             total_projected_risk_pct = ((total_open_risk_usd + cand_risk) / eff_balance) * 100.0
             if eff_balance <= 35.0 and total_open_risk_usd == 0.0:
-                allowed_max_risk = max(self.max_total_open_risk_pct, 70.0)
+                allowed_max_risk = max(self.max_total_open_risk_pct, 98.0)
             elif eff_balance <= 35.0:
-                allowed_max_risk = max(self.max_total_open_risk_pct, 35.0)
+                allowed_max_risk = max(self.max_total_open_risk_pct, 45.0)
             else:
                 allowed_max_risk = self.max_total_open_risk_pct
             if total_projected_risk_pct > allowed_max_risk:
