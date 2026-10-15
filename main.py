@@ -280,32 +280,32 @@ async def autonomous_trading_loop(
                             if mode == "full_auto":
                                 # Auto-Execute Live Order
                                 res = await trade_manager.execute_trade(candidate_signal)
-                            if res.success:
-                                await telegram.notify_order_filled(
-                                    ticket=int(res.ticket) if str(res.ticket).isdigit() else 0,
+                                if res.success:
+                                    await telegram.notify_order_filled(
+                                        ticket=int(res.ticket) if str(res.ticket).isdigit() else 0,
+                                        symbol=candidate_signal.symbol,
+                                        direction=candidate_signal.direction,
+                                        volume=res.volume,
+                                        price=res.price,
+                                        sl=candidate_signal.suggested_sl,
+                                        tp=candidate_signal.suggested_tp,
+                                        regime=candidate_signal.regime,
+                                    )
+                            elif mode == "confirm":
+                                # Send 1-Click Alert
+                                logger.info(f"[1-CLICK CONFIRM REQUIRED] {candidate_signal.direction} {primary_symbol} ({candidate_signal.score}/100)")
+                                await telegram.notify_signal(
                                     symbol=candidate_signal.symbol,
                                     direction=candidate_signal.direction,
-                                    volume=res.volume,
-                                    price=res.price,
+                                    score=candidate_signal.score,
+                                    tier=candidate_signal.tier,
+                                    regime=candidate_signal.regime,
+                                    entry=candidate_signal.entry_price,
                                     sl=candidate_signal.suggested_sl,
                                     tp=candidate_signal.suggested_tp,
-                                    regime=candidate_signal.regime,
                                 )
-                        elif mode == "confirm":
-                            # Send 1-Click Alert
-                            logger.info(f"[1-CLICK CONFIRM REQUIRED] {candidate_signal.direction} {primary_symbol} ({candidate_signal.score}/100)")
-                            await telegram.notify_signal(
-                                symbol=candidate_signal.symbol,
-                                direction=candidate_signal.direction,
-                                score=candidate_signal.score,
-                                tier=candidate_signal.tier,
-                                regime=candidate_signal.regime,
-                                entry=candidate_signal.entry_price,
-                                sl=candidate_signal.suggested_sl,
-                                tp=candidate_signal.suggested_tp,
-                            )
-                        elif mode == "scanner":
-                            logger.info(f"[SCANNER FLOW] {candidate_signal.direction} {primary_symbol} Score: {candidate_signal.score}/100 ({candidate_signal.regime})")
+                            elif mode == "scanner":
+                                logger.info(f"[SCANNER FLOW] {candidate_signal.direction} {primary_symbol} Score: {candidate_signal.score}/100 ({candidate_signal.regime})")
                 elif ctx.execution_mode == "full_auto" and trade_manager and ctx.is_live_trading_active():
                     # Planned limits auto-placement is strictly disabled to prevent resting orders from missing fast runs
                     limits_cfg = ctx.config.get("trading", {}).get("limits", {})
@@ -405,6 +405,7 @@ async def lifespan(app_instance):
         risk_engine=risk_engine,
         correlation_guard=trading_cfg.get("correlation_guard", True),
         max_daily_losses=int(trading_cfg.get("max_daily_losses", 0)),
+        max_consecutive_losses=int(trading_cfg.get("max_consecutive_losses", 0)),
         max_daily_drawdown_pct=float(trading_cfg.get("max_daily_drawdown_pct", 25.0)),
         max_open_positions=int(trading_cfg.get("max_open_positions", 1)),
         history_store=history_store,

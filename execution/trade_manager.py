@@ -86,7 +86,7 @@ class TradeManager:
         risk_engine: Optional[GoldRiskEngine] = None,
         correlation_guard: bool = True,
         max_daily_losses: int = 0,       # 0 = disabled (no daily loss limit)
-        max_consecutive_losses: int = 3,
+        max_consecutive_losses: int = 0, # 0 = disabled (no consecutive loss pause unless configured)
         max_daily_drawdown_pct: float = 25.0,
         max_total_open_risk_pct: float = 10.0,
         max_open_positions: int = 1,
