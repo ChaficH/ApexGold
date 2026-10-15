@@ -95,6 +95,9 @@ trading:
   correlation_guard: true   # Block opposing/redundant USD exposure across pairs
   post_loss_buffer_seconds: 12.0       # Fast broker settlement buffer (not a 2m/5m freeze)
   anti_revenge_window_seconds: 45.0    # Structural window preventing repeating same losing trade at same level
+  predictive_scratch_enabled: true     # Closes trades at breakeven when market reverses or cuts early with tiny budget scratch
+  micro_budget_loss_cap_pct: 15.0      # Max loss % relative to budget for mitigation scratch (e.g. 15% of $2.56 = $0.38)
+  max_mitigation_loss_r: 0.40          # Max floating R loss for early structural mitigation cut (saves 60-80% of SL)
 
   # Institutional Planned Limits Engine:
   limits:

@@ -686,3 +686,178 @@ async def test_anti_hedging_mutual_exclusion():
     assert can_exec is False
     assert "Anti-Hedging Guard" in exec_reason
 
+
+@pytest.mark.anyio
+async def test_predictive_breakeven_scratch_on_reversal():
+    """Verify that a trade in slight profit (+0.10R to +0.25R) scratches at breakeven when market turns adverse."""
+    from unittest.mock import MagicMock, AsyncMock
+    import pandas as pd
+    from execution.trade_manager import ManagedPosition
+
+    now = time.time()
+    pos = ManagedPosition(
+        ticket=8881,
+        symbol="XAUUSD",
+        direction="BUY",
+        volume=0.01,
+        open_price=2700.00,
+        sl=2697.50,
+        tp=2706.00,
+        entry_time=now - 25.0, # 25s hold
+        risk_r_dist=2.50,
+        highest_r_reached=0.25,
+        profit=0.25,
+    )
+
+    # 1m and 5m Bearish DataFrames
+    bear_prices = [2705.0 - i * 0.3 for i in range(30)]
+    df_bear = pd.DataFrame({
+        "open": [p + 0.1 for p in bear_prices],
+        "high": [p + 0.3 for p in bear_prices],
+        "low": [p - 0.3 for p in bear_prices],
+        "close": [p - 0.1 for p in bear_prices],
+        "volume": [100.0] * 30,
+    })
+
+    mock_hub = MagicMock()
+    mock_hub.get_dataframe = AsyncMock(return_value=df_bear)
+
+    mock_broker = MagicMock()
+    mock_broker.get_account_info = AsyncMock(return_value=AccountInfo(balance=10.0, equity=10.25, margin=0.0, free_margin=10.25, currency="USD", leverage=1000))
+
+    tm = TradeManager(
+        broker=mock_broker,
+        data_hub=mock_hub,
+        news_reactor=MagicMock(_latest_velocity=1.0),
+        risk_engine=MagicMock(base_budget_usd=10.0),
+        predictive_scratch_enabled=True,
+    )
+
+    should_exit, reason = await tm._check_market_flip(
+        pos=pos,
+        floating_r=0.10,
+        current_price=2700.25,
+        now=now,
+    )
+
+    assert should_exit is True
+    assert "Predictive Invalidation: Breakeven Scratch" in reason
+    assert "Trend Bearish" in reason or "SuperTrend" in reason
+
+
+@pytest.mark.anyio
+async def test_predictive_early_mitigation_cut_relative_to_budget():
+    """Verify that a small floating loss (-0.20R) cuts early when market structure invalidates, saving full SL."""
+    from unittest.mock import MagicMock, AsyncMock
+    import pandas as pd
+    from execution.trade_manager import ManagedPosition
+
+    now = time.time()
+    # Micro-budget account ($2.56 balance)
+    pos = ManagedPosition(
+        ticket=8882,
+        symbol="XAUUSD",
+        direction="BUY",
+        volume=0.01,
+        open_price=2700.00,
+        sl=2697.50,  # 1.0R = $2.50 risk (98% of $2.56 balance!)
+        tp=2706.00,
+        entry_time=now - 12.0, # 12s hold
+        risk_r_dist=2.50,
+        highest_r_reached=0.0,
+        profit=-0.35, # floating loss -$0.35
+    )
+
+    bear_prices = [2702.0 - i * 0.25 for i in range(30)]
+    df_bear = pd.DataFrame({
+        "open": [p + 0.1 for p in bear_prices],
+        "high": [p + 0.25 for p in bear_prices],
+        "low": [p - 0.25 for p in bear_prices],
+        "close": [p - 0.1 for p in bear_prices],
+        "volume": [100.0] * 30,
+    })
+
+    mock_hub = MagicMock()
+    mock_hub.get_dataframe = AsyncMock(return_value=df_bear)
+
+    mock_broker = MagicMock()
+    mock_broker.get_account_info = AsyncMock(return_value=AccountInfo(balance=2.56, equity=2.21, margin=0.0, free_margin=2.21, currency="USD", leverage=1000))
+
+    tm = TradeManager(
+        broker=mock_broker,
+        data_hub=mock_hub,
+        news_reactor=MagicMock(_latest_velocity=1.0),
+        risk_engine=MagicMock(base_budget_usd=2.56),
+        predictive_scratch_enabled=True,
+        micro_budget_loss_cap_pct=15.0, # 15% of $2.56 = $0.38
+        max_mitigation_loss_r=0.40,
+    )
+
+    should_exit, reason = await tm._check_market_flip(
+        pos=pos,
+        floating_r=-0.20,
+        current_price=2699.50,
+        now=now,
+    )
+
+    assert should_exit is True
+    assert "Predictive Invalidation: Early Mitigation Cut" in reason
+    assert "budget limit" in reason
+
+
+@pytest.mark.anyio
+async def test_predictive_does_not_cut_healthy_runners():
+    """Verify that healthy winning trades are not cut by predictive invalidation and continue running."""
+    from unittest.mock import MagicMock, AsyncMock
+    import pandas as pd
+    from execution.trade_manager import ManagedPosition
+
+    now = time.time()
+    pos = ManagedPosition(
+        ticket=8883,
+        symbol="XAUUSD",
+        direction="BUY",
+        volume=0.01,
+        open_price=2700.00,
+        sl=2697.50,
+        tp=2706.00,
+        entry_time=now - 45.0,
+        risk_r_dist=2.50,
+        highest_r_reached=0.85,
+        profit=2.00,
+    )
+
+    bull_prices = [2700.0 + i * 0.3 for i in range(30)]
+    df_bull = pd.DataFrame({
+        "open": [p - 0.1 for p in bull_prices],
+        "high": [p + 0.3 for p in bull_prices],
+        "low": [p - 0.3 for p in bull_prices],
+        "close": [p + 0.1 for p in bull_prices],
+        "volume": [100.0] * 30,
+    })
+
+    mock_hub = MagicMock()
+    mock_hub.get_dataframe = AsyncMock(return_value=df_bull)
+
+    mock_broker = MagicMock()
+    mock_broker.get_account_info = AsyncMock(return_value=AccountInfo(balance=25.0, equity=27.0, margin=0.0, free_margin=27.0, currency="USD", leverage=1000))
+
+    tm = TradeManager(
+        broker=mock_broker,
+        data_hub=mock_hub,
+        news_reactor=MagicMock(_latest_velocity=1.0),
+        risk_engine=MagicMock(base_budget_usd=25.0),
+        predictive_scratch_enabled=True,
+    )
+
+    should_exit, reason = await tm._check_market_flip(
+        pos=pos,
+        floating_r=0.80,
+        current_price=2702.00,
+        now=now,
+    )
+
+    assert should_exit is False
+    assert reason == ""
+
+

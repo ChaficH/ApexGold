@@ -94,6 +94,10 @@ class TradeManager:
         manage_manual_positions: bool = False,
         post_loss_buffer_seconds: float = 12.0,
         anti_revenge_window_seconds: float = 45.0,
+        predictive_scratch_enabled: bool = True,
+        micro_budget_loss_cap_pct: float = 15.0,
+        max_mitigation_loss_r: float = 0.40,
+        scorer: Optional[Any] = None,
     ):
         self.broker = broker
         self.data_hub = data_hub
@@ -109,6 +113,10 @@ class TradeManager:
         self.manage_manual_positions = manage_manual_positions
         self.post_loss_buffer_seconds = float(post_loss_buffer_seconds)
         self.anti_revenge_window_seconds = float(anti_revenge_window_seconds)
+        self.predictive_scratch_enabled = bool(predictive_scratch_enabled)
+        self.micro_budget_loss_cap_pct = float(micro_budget_loss_cap_pct)
+        self.max_mitigation_loss_r = float(max_mitigation_loss_r)
+        self.scorer = scorer
         self.magic_number: int = 15555
 
         self._managed_positions: Dict[Union[int, str], ManagedPosition] = {}
@@ -1465,39 +1473,241 @@ class TradeManager:
         now: float
     ) -> Tuple[bool, str]:
         """
-        Intelligent Market Flip & Adverse Transition Detector.
-        Determines if order flow or micro-structure has decisively flipped against our trade.
-        Returns:
-            (True, reason) -> Position must be closed immediately at market (cutting loss or locking profit).
+        Intelligent Market Flip, Breakeven Scratch & Budget-Scaled Early Mitigation Cut Engine.
+        Continuously studies live market structure, 1m/5m multi-timeframe trends, momentum collapse,
+        and opposing volatility/order-flow:
+        1. Breakeven Scratch: If trade was in profit (+0.05R+ or highest_r >= 0.15R) or is hovering flat,
+           and live market studies show setup is failing/reversing, immediately scratch at breakeven/micro-gain.
+        2. Early Mitigation Cut: If trade is floating slightly negative (-0.08R to -0.40R, loss within
+           budget percentage limit) and structure breaks against it, close early to save 70%+ of SL risk.
+        3. Asymmetric Deep Invalidation: If trade reaches <= -0.50R with severe adverse shock or SuperTrend break,
+           cut before full -1.0R / -2.0R SL.
         """
-        # 1. Minimum Hold Time: Give trade at least 60s to breathe past spread and develop!
-        if (now - pos.entry_time) < 60.0:
+        # 1. Grace Period: Allow 5.0s for broker execution and initial bid/ask spread settlement
+        hold_time = now - pos.entry_time
+        if hold_time < 5.0:
             return False, ""
 
-        # 2. Asymmetric Risk Guard: Early Adverse Invalidation for Losing Trades!
-        # When a trade is underwater (floating_r <= -0.65R), check if institutional structure has invalidated the setup.
-        # This prevents taking full -1.0R / -2.5R losses by cutting at ~ -0.70R when market decisively breaks against us.
-        if floating_r <= -0.65:
-            # Check 5m SuperTrend structural alignment
-            df_5m = await self.data_hub.get_dataframe(pos.symbol, "5m", count=25)
-            if df_5m is not None and len(df_5m) >= 20:
+        if not getattr(self, "predictive_scratch_enabled", True):
+            # Fallback to minimal legacy check if disabled
+            if hold_time < 60.0 or floating_r > -0.65:
+                return False, ""
+
+        # 2. Extract Account Equity & Budget Limits for Sizing Protection
+        eff_balance = 100.0
+        if hasattr(self.broker, "get_account_info"):
+            try:
+                acc = await self.broker.get_account_info()
+                if acc and getattr(acc, "balance", 0.0) > 0:
+                    eff_balance = acc.balance
+            except Exception:
+                pass
+        if eff_balance == 100.0 and self._start_of_day_balance > 0:
+            eff_balance = self._start_of_day_balance
+        elif eff_balance == 100.0 and hasattr(self, "risk_engine") and getattr(self.risk_engine, "base_budget_usd", 0.0) > 0:
+            eff_balance = self.risk_engine.base_budget_usd
+
+        # Calculate floating USD profit / loss
+        is_gold = any(k in pos.symbol.upper() for k in ["XAU", "GOLD"])
+        lot_mult = 100.0 if is_gold else 100000.0
+        if hasattr(pos, "profit") and pos.profit != 0.0:
+            floating_usd = pos.profit
+        else:
+            price_diff = (current_price - pos.open_price) if pos.direction == "BUY" else (pos.open_price - current_price)
+            floating_usd = price_diff * pos.volume * lot_mult
+
+        # Budget-relative loss allowance for early mitigation scratch
+        micro_cap_pct = getattr(self, "micro_budget_loss_cap_pct", 15.0)
+        max_budget_scratch_loss_usd = max(0.20, eff_balance * (micro_cap_pct / 100.0))
+
+        # 3. Multi-Timeframe Technical & Market Studies
+        dfs: Dict[str, Any] = {}
+        if self.data_hub:
+            try:
+                for tf, cnt in [("1m", 30), ("5m", 30), ("15m", 25)]:
+                    df_tf = await self.data_hub.get_dataframe(pos.symbol, tf, count=cnt)
+                    if df_tf is not None and len(df_tf) >= 8:
+                        dfs[tf] = df_tf
+            except Exception as e:
+                logger.debug(f"Could not load dataframes for market study: {e}")
+
+        trend_1m = "NEUTRAL"
+        trend_5m = "NEUTRAL"
+        if dfs:
+            try:
+                trends = TechnicalIndicators.get_4tf_trends(dfs)
+                trend_1m = trends.get("1m", "NEUTRAL")
+                trend_5m = trends.get("5m", "NEUTRAL")
+            except Exception:
+                pass
+
+        # Check 5m SuperTrend
+        st_5m = {}
+        df_5m = dfs.get("5m")
+        if df_5m is not None and len(df_5m) >= 15:
+            try:
                 st_5m = TechnicalIndicators.calculate_supertrend(
                     df_5m["high"], df_5m["low"], df_5m["close"], period=10, multiplier=2.5
                 )
-                if st_5m.get("valid"):
-                    if pos.direction == "BUY" and st_5m.get("is_bear"):
-                        return True, f"Adverse 5m SuperTrend Bearish Break: Early Invalidation ({floating_r:.2f}R)"
-                    elif pos.direction == "SELL" and st_5m.get("is_bull"):
-                        return True, f"Adverse 5m SuperTrend Bullish Break: Early Invalidation ({floating_r:.2f}R)"
+            except Exception:
+                pass
 
-            # Check Severe Opposing Velocity Shock
-            vel = self.news_reactor._latest_velocity or 1.0
+        # Check 1m Structure & Candle Impulse
+        df_1m = dfs.get("1m")
+        st_1m = {}
+        is_1m_adverse_candle = False
+        struct_invalidated = False
+        c1 = current_price
+        if df_1m is not None and len(df_1m) >= 6:
+            try:
+                st_1m = TechnicalIndicators.calculate_supertrend(
+                    df_1m["high"], df_1m["low"], df_1m["close"], period=10, multiplier=2.0
+                )
+            except Exception:
+                pass
+
+            try:
+                struct = TechnicalIndicators.detect_market_structure(
+                    df_1m["high"], df_1m["low"], df_1m["close"], window=2
+                )
+                if pos.direction == "BUY" and (struct.get("bos_bear") or struct.get("choch_bear") or struct.get("is_bearish")):
+                    struct_invalidated = True
+                elif pos.direction == "SELL" and (struct.get("bos_bull") or struct.get("choch_bull") or struct.get("is_bullish")):
+                    struct_invalidated = True
+            except Exception:
+                pass
+
+            c1 = float(df_1m["close"].iloc[-1])
+            o1 = float(df_1m["open"].iloc[-1])
+            h1 = float(df_1m["high"].iloc[-1])
+            l1 = float(df_1m["low"].iloc[-1])
+            rng1 = max(0.01, h1 - l1)
+            if pos.direction == "BUY":
+                if (o1 - c1) > 0 and ((o1 - c1) / rng1) > 0.60 and c1 < pos.open_price:
+                    is_1m_adverse_candle = True
+            else:
+                if (c1 - o1) > 0 and ((c1 - o1) / rng1) > 0.60 and c1 > pos.open_price:
+                    is_1m_adverse_candle = True
+
+        # Check Velocity Shock
+        vel = getattr(self.news_reactor, "_latest_velocity", 1.0) or 1.0
+        velocity_shock = (vel >= 2.8 * max(0.5, pos.entry_velocity))
+
+        # Check Opposing Scorer Bias (if available)
+        opposing_scorer_alert = False
+        scorer_inst = getattr(self, "scorer", None)
+        if not scorer_inst:
+            try:
+                from ui.server import ctx as server_ctx
+                scorer_inst = getattr(server_ctx, "scorer", None)
+            except Exception:
+                scorer_inst = None
+
+        if scorer_inst and "1m" in dfs and "5m" in dfs:
+            try:
+                opposing_dir = "SELL" if pos.direction == "BUY" else "BUY"
+                opp_sig = scorer_inst.evaluate(
+                    symbol=pos.symbol,
+                    dfs=dfs,
+                    regime=pos.current_regime,
+                    current_price=current_price,
+                    direction_override=opposing_dir,
+                )
+                if opp_sig and getattr(opp_sig, "score", 0) >= 75:
+                    opposing_scorer_alert = True
+            except Exception:
+                pass
+
+        # 4. Synthesize Market Invalidation Signals
+        is_adverse_setup = False
+        adverse_reasons = []
+
+        if pos.direction == "BUY":
+            if trend_1m == "BEAR" and trend_5m == "BEAR":
+                is_adverse_setup = True
+                adverse_reasons.append("1m & 5m Trend Bearish")
+            elif st_5m.get("valid") and st_5m.get("is_bear"):
+                is_adverse_setup = True
+                adverse_reasons.append("5m SuperTrend Bearish Break")
+            elif (st_1m.get("valid") and st_1m.get("is_bear")) and (trend_1m == "BEAR" or is_1m_adverse_candle):
+                is_adverse_setup = True
+                adverse_reasons.append("1m SuperTrend & Momentum Breakdown")
+            elif struct_invalidated and (is_1m_adverse_candle or trend_1m == "BEAR"):
+                is_adverse_setup = True
+                adverse_reasons.append("1m Structure Bearish BOS/CHoCH")
+            elif opposing_scorer_alert:
+                is_adverse_setup = True
+                adverse_reasons.append("Opposing Confluence Signal (Score >= 75)")
+            elif velocity_shock:
+                if df_1m is not None and len(df_1m) > 0 and c1 < pos.open_price:
+                    is_adverse_setup = True
+                    adverse_reasons.append(f"Adverse Velocity Shock ({vel:.1f}x)")
+                elif df_1m is None:
+                    is_adverse_setup = True
+                    adverse_reasons.append(f"Adverse Velocity Shock ({vel:.1f}x)")
+
+        elif pos.direction == "SELL":
+            if trend_1m == "BULL" and trend_5m == "BULL":
+                is_adverse_setup = True
+                adverse_reasons.append("1m & 5m Trend Bullish")
+            elif st_5m.get("valid") and st_5m.get("is_bull"):
+                is_adverse_setup = True
+                adverse_reasons.append("5m SuperTrend Bullish Break")
+            elif (st_1m.get("valid") and st_1m.get("is_bull")) and (trend_1m == "BULL" or is_1m_adverse_candle):
+                is_adverse_setup = True
+                adverse_reasons.append("1m SuperTrend & Momentum Breakdown")
+            elif struct_invalidated and (is_1m_adverse_candle or trend_1m == "BULL"):
+                is_adverse_setup = True
+                adverse_reasons.append("1m Structure Bullish BOS/CHoCH")
+            elif opposing_scorer_alert:
+                is_adverse_setup = True
+                adverse_reasons.append("Opposing Confluence Signal (Score >= 75)")
+            elif velocity_shock:
+                if df_1m is not None and len(df_1m) > 0 and c1 > pos.open_price:
+                    is_adverse_setup = True
+                    adverse_reasons.append(f"Adverse Velocity Shock ({vel:.1f}x)")
+                elif df_1m is None:
+                    is_adverse_setup = True
+                    adverse_reasons.append(f"Adverse Velocity Shock ({vel:.1f}x)")
+
+        reason_str = ", ".join(adverse_reasons) if adverse_reasons else "Adverse Momentum Invalidation"
+
+        # 5. Evaluate Decision Rules:
+
+        # CASE A: Breakeven Scratch (Protecting Capital on Fading / Reversing Trades)
+        # If trade was in profit (highest_r >= 0.15R) or is currently hovering near breakeven/slight profit
+        # (floating_r >= -0.05R and floating_usd >= -0.10) and market study shows trade is reversing against us:
+        can_scratch_be = (
+            (floating_r >= 0.05 or floating_usd >= 0.05) or
+            (pos.highest_r_reached >= 0.15 and floating_r >= -0.08) or
+            (hold_time >= 15.0 and -0.08 <= floating_r <= 0.30)
+        )
+        if can_scratch_be and is_adverse_setup:
+            pnl_note = f"+${floating_usd:.2f}" if floating_usd >= 0 else f"-${abs(floating_usd):.2f}"
+            return True, f"Predictive Invalidation: Breakeven Scratch ({reason_str} | {floating_r:+.2f}R, {pnl_note})"
+
+        # CASE B: Early Mitigation Cut (Budget-Scaled Scratch Loss)
+        # If trade is floating slightly negative (-0.08R to -0.40R) and dollar loss is within small budget cap
+        # (e.g. <= 15% of account balance / <= $0.38 on micro account) and structure breaks against us:
+        can_mitigate_early = (
+            (-self.max_mitigation_loss_r <= floating_r < -0.08) and
+            (abs(floating_usd) <= max_budget_scratch_loss_usd or floating_r >= -0.35) and
+            (hold_time >= 8.0)
+        )
+        if can_mitigate_early and is_adverse_setup:
+            return True, f"Predictive Invalidation: Early Mitigation Cut ({reason_str} | {floating_r:+.2f}R, loss -${abs(floating_usd):.2f} <= budget limit ${max_budget_scratch_loss_usd:.2f})"
+
+        # CASE C: Asymmetric Deep Invalidation
+        # When trade is further underwater (floating_r <= -0.50R), cut if 5m SuperTrend breaks or severe shock
+        if floating_r <= -0.50:
+            if st_5m.get("valid"):
+                if pos.direction == "BUY" and st_5m.get("is_bear"):
+                    return True, f"Adverse 5m SuperTrend Bearish Break: Early Invalidation ({floating_r:.2f}R)"
+                elif pos.direction == "SELL" and st_5m.get("is_bull"):
+                    return True, f"Adverse 5m SuperTrend Bullish Break: Early Invalidation ({floating_r:.2f}R)"
             if vel >= 3.5 * max(0.5, pos.entry_velocity):
                 return True, f"Severe Opposing Velocity Shock ({vel:.1f}x): Early Invalidation ({floating_r:.2f}R)"
 
-        # Note: Winning trades (floating_r > 0) are NOT choked by 1m noise!
-        # They are protected by the One-Way Ratchet Floor (BE at +0.65R, lock profit at +1.0R, +1.5R, +2.0R)
-        # to ensure positive mathematical expectancy.
         return False, ""
 
     async def _evaluate_dynamic_tp(

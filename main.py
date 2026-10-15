@@ -444,6 +444,9 @@ async def lifespan(app_instance):
         manage_manual_positions=ctx.manage_manual_positions,
         post_loss_buffer_seconds=float(trading_cfg.get("post_loss_buffer_seconds", 12.0)),
         anti_revenge_window_seconds=float(trading_cfg.get("anti_revenge_window_seconds", 45.0)),
+        predictive_scratch_enabled=trading_cfg.get("predictive_scratch_enabled", True),
+        micro_budget_loss_cap_pct=float(trading_cfg.get("micro_budget_loss_cap_pct", 15.0)),
+        max_mitigation_loss_r=float(trading_cfg.get("max_mitigation_loss_r", 0.40)),
     )
     await trade_manager.start()
     ctx.trade_manager = trade_manager
@@ -458,6 +461,7 @@ async def lifespan(app_instance):
         mode=ctx.strategy_mode,
     )
     ctx.scorer = scorer
+    trade_manager.scorer = scorer
 
     # 7. Initialize Backtest Engine
     ctx.backtester = BacktestEngine(scorer=scorer, initial_balance=float(trading_cfg.get("budget_usd", 10.0)))
