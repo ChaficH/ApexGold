@@ -34,6 +34,7 @@ import numpy as np
 import pandas as pd
 
 from engine.indicators import TechnicalIndicators
+from strategy.ensemble_models import EnsembleQuantSuite, EnsembleTelemetry
 
 logger = logging.getLogger("ApexGold.PredictiveBrain")
 
@@ -73,6 +74,7 @@ class PredictiveEvaluation:
     # Narrative Chain of Thought
     narrative: str
     target_zone: Dict[str, Any]
+    ensemble: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -91,6 +93,12 @@ class ApexPredictiveBrain:
         self.history: Deque[Dict[str, Any]] = deque(maxlen=history_capacity)
         self.latest_evaluation: Optional[PredictiveEvaluation] = None
         self._cached_state: Dict[str, Any] = {}
+        self.ensemble_suite = EnsembleQuantSuite()
+
+    def on_tick(self, bid: float, ask: float, now_ts: Optional[float] = None) -> None:
+        """Register live tick into the ensemble suite."""
+        if hasattr(self, "ensemble_suite") and self.ensemble_suite:
+            self.ensemble_suite.on_tick(bid, ask, now_ts)
 
     def _sigmoid(self, x: float) -> float:
         """Numerically stable sigmoid function."""
@@ -131,6 +139,9 @@ class ApexPredictiveBrain:
         # Insufficient data fallback
         if df_5m is None or len(df_5m) < 20:
             return self._build_standby_state(symbol, now, time_str, current_bid, current_ask, spread, "Warming up multi-timeframe historical candles...")
+
+        # Register live tick to ensemble order flow tracker
+        self.ensemble_suite.on_tick(current_bid, current_ask, now)
 
         # ----------------------------------------------------------------------
         # 1. Multi-Timeframe Directional Bias & Trends
@@ -180,6 +191,19 @@ class ApexPredictiveBrain:
         stoch_rsi = TechnicalIndicators.calculate_stoch_rsi(c_5m, period=14, smooth_k=3, smooth_d=3)
         stoch_k = float(stoch_rsi.get("k", 50.0))
         stoch_d = float(stoch_rsi.get("d", 50.0))
+
+        # ----------------------------------------------------------------------
+        # 4b. Quantitative Ensemble Models (OFI Delta, FVG Support, Parkinson Vol)
+        # ----------------------------------------------------------------------
+        ensemble_telemetry = self.ensemble_suite.evaluate_ensemble(
+            symbol=symbol,
+            dfs=dfs,
+            current_bid=current_bid,
+            macro_1h=trend_1h,
+            macro_15m=trend_15m,
+            macro_5m=trend_5m,
+            kaufman_er=efficiency_ratio,
+        )
 
         # ----------------------------------------------------------------------
         # 5. Probabilistic Directional Distribution: P(BULL), P(BEAR), P(CHOP)
@@ -285,10 +309,24 @@ class ApexPredictiveBrain:
                 logit += 0.45  # Selling the rally/consolidation in bear trend!
                 pullback_ready = True
 
+        # Factor 4: Quantitative Ensemble Suite (OFI Delta + Institutional FVG + Parkinson Volatility)
+        if ensemble_telemetry:
+            is_bias_bull = "BULL" in ensemble_telemetry.ensemble_bias
+            is_bias_bear = "BEAR" in ensemble_telemetry.ensemble_bias
+            if dominant_dir == "BUY" and is_bias_bull:
+                logit += 0.35 * (ensemble_telemetry.ensemble_score / 100.0)
+            elif dominant_dir == "BUY" and is_bias_bear:
+                logit -= 0.50  # Opposing order flow/liquidity structure
+            elif dominant_dir == "SELL" and is_bias_bear:
+                logit += 0.35 * (ensemble_telemetry.ensemble_score / 100.0)
+            elif dominant_dir == "SELL" and is_bias_bull:
+                logit -= 0.50  # Opposing order flow/liquidity structure
+
         p_win = round(self._sigmoid(logit), 3)
 
-        # Target reward-to-risk (adaptive based on trend strength, aiming for high profits)
-        target_rr = 4.2 if efficiency_ratio >= 0.50 else 3.2
+        # Target reward-to-risk (adaptive based on trend strength and ensemble volatility expansion, aiming for high profits)
+        base_rr = 4.2 if efficiency_ratio >= 0.50 else 3.2
+        target_rr = base_rr + (ensemble_telemetry.rr_expansion_boost if ensemble_telemetry else 0.0)
         spread_cost_r = (spread / 1.50) * 0.08  # Normalized spread impact
         
         # Mathematical EV in R-multiples: EV = P(win) * RR - (1 - P(win)) * 1.0 - Cost
@@ -377,6 +415,27 @@ class ApexPredictiveBrain:
             "passed": ev_pass,
         })
 
+        # Gate 6: Ensemble Order Flow & Volatility Consensus
+        ensemble_pass = True
+        ensemble_detail = "Ensemble models confirm order flow and volatility."
+        if ensemble_telemetry:
+            is_bias_bull = "BULL" in ensemble_telemetry.ensemble_bias
+            is_bias_bear = "BEAR" in ensemble_telemetry.ensemble_bias
+            fvg_desc = f"{ensemble_telemetry.nearest_fvg['direction']} FVG @ {ensemble_telemetry.nearest_fvg['midpoint']:.2f}" if ensemble_telemetry.nearest_fvg else "None"
+            
+            if (dominant_dir == "BUY" and is_bias_bear) or (dominant_dir == "SELL" and is_bias_bull):
+                ensemble_pass = False
+                ensemble_detail = f"Order Flow Delta opposes {dominant_dir}: bias {ensemble_telemetry.ensemble_bias} (ratio: {ensemble_telemetry.delta_ratio_60s:+.2f})."
+            else:
+                ensemble_detail = f"Consensus: {ensemble_telemetry.ensemble_bias} (Score: {ensemble_telemetry.ensemble_score:.0f}/100) | OFI Delta: {ensemble_telemetry.delta_ratio_60s:+.2f} | FVG: {fvg_desc}"
+
+        gates.append({
+            "name": "Ensemble Order Flow & Volatility Consensus",
+            "status": "PASS" if ensemble_pass else "WAITING",
+            "detail": ensemble_detail,
+            "passed": ensemble_pass,
+        })
+
         # ----------------------------------------------------------------------
         # 9. Verdict, State & Narrative Chain-of-Thought Generation
         # ----------------------------------------------------------------------
@@ -393,12 +452,15 @@ class ApexPredictiveBrain:
         elif not macro_pass:
             status = "WAITING_FOR_ALIGNMENT"
             verdict_badge = "WAITING FOR TIMEFRAME ALIGNMENT"
+        elif not ensemble_pass:
+            status = "WAITING_FOR_ALIGNMENT"
+            verdict_badge = f"WAITING FOR ORDER FLOW CONSENSUS ({ensemble_telemetry.ensemble_bias if ensemble_telemetry else 'OFI'} OPPOSES)"
         elif not value_pass:
             status = "WAITING_FOR_PULLBACK"
             verdict_badge = f"WAITING FOR PULLBACK ({dominant_dir} EXTENDED)"
         elif not ev_pass:
             status = "HUNTING_SETUP"
-            verdict_badge = "HUNTING SETUP (BUILDING CONVCTION)"
+            verdict_badge = "HUNTING SETUP (BUILDING CONVICTION)"
         else:
             status = "QUALIFIED_TRADE"
             verdict_badge = f"SETUP QUALIFIED ({dominant_dir} EV: {expected_value_r:+.2f}R)"
@@ -448,6 +510,7 @@ class ApexPredictiveBrain:
             status=status,
             target_zone=target_zone,
             chop_val=chop_val,
+            ensemble_info=ensemble_telemetry,
         )
 
         eval_record = PredictiveEvaluation(
@@ -475,6 +538,7 @@ class ApexPredictiveBrain:
             gates=gates,
             narrative=narrative,
             target_zone=target_zone,
+            ensemble=ensemble_telemetry.to_dict() if ensemble_telemetry else None,
         )
 
         self.latest_evaluation = eval_record
@@ -520,6 +584,7 @@ class ApexPredictiveBrain:
         status: str,
         target_zone: Dict[str, Any],
         chop_val: float,
+        ensemble_info: Optional[EnsembleTelemetry] = None,
     ) -> str:
         """Construct a precise, institutional narrative explaining the bot's live thoughts."""
         lines = [
@@ -528,6 +593,15 @@ class ApexPredictiveBrain:
             f"• Valuation: Spot {current_bid:.2f} vs 5m VWAP {vwap_val:.2f} ({vwap_diff:+.2f} pts) | 5m StochRSI: {stoch_k:.1f}",
             f"• Edge Metrics: P(Win) = {p_win * 100:.1f}% | Expected Value = {expected_value_r:+.2f}R",
         ]
+
+        if ensemble_info:
+            fvg_str = f"{ensemble_info.nearest_fvg['direction']} @ {ensemble_info.nearest_fvg['midpoint']:.2f}" if ensemble_info.nearest_fvg else "None"
+            lines.append(
+                f"• Quant Ensemble: Bias={ensemble_info.ensemble_bias} ({ensemble_info.ensemble_score:.0f}/100) | "
+                f"OFI Delta={ensemble_info.delta_ratio_60s:+.2f} | "
+                f"Vol={ensemble_info.volatility_regime} (Parkinson Ratio: {ensemble_info.parkinson_ratio:.2f}) | "
+                f"FVG={fvg_str}"
+            )
 
         if status == "WAITING_FOR_PULLBACK":
             lines.append(

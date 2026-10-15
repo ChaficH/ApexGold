@@ -147,8 +147,10 @@ async def autonomous_trading_loop(
             if not tick:
                 continue
 
-            # 2. Feed tick into NewsReactor
+            # 2. Feed tick into NewsReactor and Ensemble Order Flow Tracker
             tick_metrics = news_reactor.on_tick(tick)
+            if hasattr(scorer, "predictive_brain") and scorer.predictive_brain:
+                scorer.predictive_brain.on_tick(tick.bid, tick.ask, getattr(tick, "time", None))
 
             # 3. Periodically evaluate closed candles & high-velocity breakout triggers
             # Check every 2 seconds or immediately on high-velocity impulse

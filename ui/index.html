@@ -513,8 +513,8 @@
             </div>
           </div>
 
-          <!-- Quantitative Predictor Gauges (4 Grid Cards) -->
-          <div class="grid grid-cols-2 md:grid-cols-4 gap-1.5 font-mono text-[11px]">
+          <!-- Quantitative Predictor Gauges (5 Grid Cards) -->
+          <div class="grid grid-cols-2 md:grid-cols-5 gap-1.5 font-mono text-[11px]">
             <!-- Card 1: Expected Value (EV) -->
             <div class="bg-[#11131A] p-2 rounded-sm border border-[#1E2028] flex flex-col justify-between">
               <span class="text-zinc-500 text-[9px] uppercase tracking-wider">Expected Value (EV)</span>
@@ -555,6 +555,16 @@
                 <div class="flex justify-between"><span class="text-zinc-500">5m StochRSI:</span> <span id="brain-stoch-k" class="text-zinc-200 tabular-nums font-semibold">50.0</span></div>
               </div>
               <span id="brain-kaufman-er" class="text-[9px] text-zinc-400">Kaufman ER: 0.50</span>
+            </div>
+
+            <!-- Card 5: Ensemble Suite (OFI + FVG + Parkinson Vol) -->
+            <div class="bg-[#11131A] p-2 rounded-sm border border-[#1E2028] flex flex-col justify-between">
+              <span class="text-zinc-500 text-[9px] uppercase tracking-wider">Quant Ensemble</span>
+              <div class="text-[10px] mt-0.5 space-y-0.5">
+                <div class="flex justify-between"><span class="text-zinc-500">Consensus:</span> <span id="brain-ensemble-bias" class="text-emerald-400 font-semibold">NEUTRAL</span></div>
+                <div class="flex justify-between"><span class="text-zinc-500">OFI Delta:</span> <span id="brain-ensemble-ofi" class="text-zinc-200 tabular-nums font-semibold">0.00</span></div>
+              </div>
+              <span id="brain-ensemble-vol" class="text-[9px] text-zinc-400 truncate">Vol: NORMAL</span>
             </div>
           </div>
 
@@ -2092,6 +2102,27 @@
       if (kaufEl) {
         const er = pb.kaufman_er || 0.5;
         kaufEl.innerText = `Kaufman ER: ${er.toFixed(2)} (${er >= 0.5 ? 'Trend' : 'Noise'})`;
+      }
+
+      // Card 5: Ensemble Suite DOM sync
+      const ens = pb.ensemble;
+      const ensBiasEl = document.getElementById('brain-ensemble-bias');
+      const ensOfiEl = document.getElementById('brain-ensemble-ofi');
+      const ensVolEl = document.getElementById('brain-ensemble-vol');
+      if (ens) {
+        if (ensBiasEl) {
+          ensBiasEl.innerText = `${ens.ensemble_bias || 'NEUTRAL'} (${Math.round((ens.ensemble_confidence || 0.5) * 100)}%)`;
+          ensBiasEl.className = ens.ensemble_bias === 'BUY' ? 'text-emerald-400 font-semibold' : (ens.ensemble_bias === 'SELL' ? 'text-rose-400 font-semibold' : 'text-zinc-400 font-semibold');
+        }
+        if (ensOfiEl) {
+          const delta = ens.delta_ratio_60s || 0;
+          ensOfiEl.innerText = `${delta >= 0 ? '+' : ''}${delta.toFixed(2)}`;
+          ensOfiEl.className = delta > 0.20 ? 'text-emerald-400 tabular-nums font-semibold' : (delta < -0.20 ? 'text-rose-400 tabular-nums font-semibold' : 'text-zinc-200 tabular-nums font-semibold');
+        }
+        if (ensVolEl) {
+          const fvgText = ens.active_fvg_type ? ` | ${ens.active_fvg_type} FVG` : '';
+          ensVolEl.innerText = `Vol: ${ens.volatility_regime || 'NORMAL'}${fvgText}`;
+        }
       }
 
       // Gates Checklist

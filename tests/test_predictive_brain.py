@@ -155,3 +155,96 @@ def test_predictive_brain_history_tracking():
     state = brain.get_state()
     assert len(state["history"]) >= 1
     assert state["cycle_index"] == 5
+
+
+def test_ensemble_gate_and_telemetry_in_predictive_brain():
+    """Verify Gate 6 and ensemble telemetry dictionary exist in state."""
+    brain = ApexPredictiveBrain()
+    dfs = _generate_synthetic_dfs(trend="BULL")
+
+    # Feed ticks into ensemble order flow tracker
+    brain.on_tick(2680.0, 2680.25)
+    brain.on_tick(2680.20, 2680.45)
+
+    brain.evaluate_market(
+        symbol="XAUUSD",
+        dfs=dfs,
+        current_bid=2680.20,
+        current_ask=2680.45,
+        spread=0.25,
+    )
+
+    state = brain.get_state()
+    assert "gates" in state
+    gate_names = [g["name"] for g in state["gates"]]
+    assert "Ensemble Order Flow & Volatility Consensus" in gate_names
+
+    # Check ensemble telemetry payload
+    assert "ensemble" in state
+    ens = state["ensemble"]
+    assert ens is not None
+    assert "ensemble_bias" in ens
+    assert "delta_ratio_60s" in ens
+    assert "volatility_regime" in ens
+    assert "conviction_boost" in ens
+    assert "rr_expansion_boost" in ens
+
+
+def test_order_flow_imbalance_tracker():
+    """Verify OrderFlowImbalanceTracker buyer/seller delta tracking."""
+    from strategy.ensemble_models import OrderFlowImbalanceTracker
+
+    ofi = OrderFlowImbalanceTracker()
+    now = 1000.0
+
+    # 1st tick establishes reference
+    ofi.on_tick(bid=2600.0, ask=2600.30, now_ts=now)
+    # Price rises (buyer initiated)
+    ofi.on_tick(bid=2600.20, ask=2600.50, now_ts=now + 1)
+    ofi.on_tick(bid=2600.40, ask=2600.70, now_ts=now + 2)
+
+    metrics = ofi.compute_metrics(window_sec=60.0)
+    assert metrics["buyer_ticks"] >= 2
+    assert metrics["delta_ratio"] > 0.0
+
+
+def test_fair_value_gap_engine():
+    """Verify 3-candle Fair Value Gap detection."""
+    from strategy.ensemble_models import FairValueGapEngine
+
+    # Candle 0: Low 2600, High 2602
+    # Candle 1: Big impulse up: Low 2602, High 2608
+    # Candle 2: Pullback/pause: Low 2605, High 2609
+    # -> FVG between High[0]=2602 and Low[2]=2605 (Gap of 3.0 points)
+    df = pd.DataFrame({
+        "open": [2600.0, 2602.0, 2606.0, 2607.0, 2607.0],
+        "high": [2602.0, 2608.0, 2609.0, 2610.0, 2610.0],
+        "low": [2599.0, 2602.0, 2605.0, 2606.0, 2606.0],
+        "close": [2601.0, 2607.0, 2608.0, 2609.0, 2609.0],
+        "volume": [100.0] * 5,
+    })
+
+    fvgs = FairValueGapEngine.detect_fvgs(df, timeframe="5m")
+    assert len(fvgs) >= 1
+    bull_fvg = [f for f in fvgs if f.direction == "BULL"][0]
+    assert bull_fvg.bottom == 2602.0
+    assert bull_fvg.top == 2605.0
+    assert bull_fvg.midpoint == 2603.50
+
+
+def test_parkinson_volatility_classifier():
+    """Verify Parkinson extreme-value volatility estimation."""
+    from strategy.ensemble_models import ParkinsonVolatilityClassifier
+
+    df = pd.DataFrame({
+        "high": [2610.0 + i * 2.0 for i in range(25)],
+        "low": [2600.0 + i * 2.0 for i in range(25)],
+        "close": [2605.0 + i * 2.0 for i in range(25)],
+        "open": [2602.0 + i * 2.0 for i in range(25)],
+    })
+
+    metrics = ParkinsonVolatilityClassifier.calculate(df, window=20)
+    assert "parkinson_vol" in metrics
+    assert metrics["parkinson_vol"] > 0.0
+    assert "volatility_regime" in metrics
+
